@@ -6,4 +6,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = 'AndroidBody'
-include ':app'
+include ':app', ':ble-probe'
