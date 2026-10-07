@@ -51,6 +51,7 @@ This is not public/LAN cleartext deployment.
 ```sh
 python3 experiments/perception/watch.py view --site "$SITE"
 python3 experiments/perception/watch.py events --site "$SITE"
+python3 experiments/perception/watch.py space --site "$SITE"
 ```
 
 `view` is the detailed upper-pane/sensor-check surface: source endpoint, observation
@@ -70,12 +71,38 @@ magnitude in 1 m/s² steps. They are **change filters**, not substitute measurem
 read `view` for exact raw evidence. Capability/freshness/error/session transitions
 and action receipts also change this surface. No occupancy claim is made.
 
-Both commands recompute freshness against the current host clock, including when
-the follower has died. Use the CLI rather than blindly trusting an old cached
-`view.txt`/`events.txt`. While running, the follower publishes these files beneath
-`SITE/body/perception/`. `events.txt` is rewritten only if its text changes; stdout
-also contains only meaningful transition lines, not every polled snapshot. Exit
-zero from a view means it rendered evidence, **not** that any phone is healthy.
+When two adjacent retained light observations in the same phone session are both
+fresh, not delayed at receipt, within the configured freshness interval, neither
+was received on a page marked as having more records, and no backlog is pending, a
+bucket crossing adds a `measured-light-bucket-transition` row to `events`. It
+includes both protocol sequence IDs, lux values, phone sample times and consumer
+receipt times, plus source/session. This is a historical measured light change, not
+a room, person, motion, or occupancy event. A missing, stale, delayed,
+session-reset, or backlog boundary seeds a new baseline rather than inventing a
+transition. The protocol provides no phone monotonic timestamp, host monotonic/boot
+receipt, or server-receipt time; the consumer does not synthesize them.
+
+`space` is the stable, credential-free JSON read-only adapter for core consumers.
+It prints a recomputed snapshot; the follower also atomically publishes the latest
+snapshot at `SITE/body/space.json`, outside the node-state directory. Schema v1
+includes producer entry point, source/node/session/cursor, transport/backlog/errors,
+last poll, capabilities, current light status/reason and validity window, usable lux
+with sequence/units/accuracy/age, phone sample and consumer receipt times, and the
+delayed-at-receipt flag. `last_light_transition` includes stable event ID and both
+endpoint readings as historical evidence. Missing protocol v1 phone monotonic time,
+host monotonic/boot receipt, server receipt, and acquisition span are explicit nulls;
+consumers must not infer them. Use the CLI for current freshness; the published file
+is a cache whose `generated_at_utc` can age if the follower stops.
+With no saved node state, the same schema reports `status=unknown/no-perception-state`
+and an empty node list; absence of data is not an empty-space claim.
+
+The `view`, `events`, and `space` CLI modes recompute freshness against the current
+host clock, including when the follower has died. Use the CLI rather than blindly
+trusting old cached files. While running, the follower publishes view/events beneath
+`SITE/body/perception/` and the structured snapshot at `SITE/body/space.json`.
+`events.txt` is rewritten only if its text changes; stdout contains meaningful
+transition lines, not every polled snapshot. Exit zero means rendered evidence,
+**not** that any phone is healthy.
 
 ## Freshness and honest limits
 

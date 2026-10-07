@@ -51,8 +51,10 @@ def save(path, state):
 def initial(node, source):
     return {"version": 1, "node": node, "source": source, "cursor": 0,
             "session": None, "capabilities": {}, "latest": {}, "history": [],
-            "actions": [], "events": [], "event_key": None, "poll_at": None,
-            "ok_at": None, "error": None, "has_more": False}
+            "actions": [], "events": [], "event_key": None, "last_light_sequence": None,
+            "last_light_transition": None, "last_light_event_cursor": None,
+            "poll_start_cursor": 0, "poll_at": None, "ok_at": None,
+            "error": None, "has_more": False}
 
 
 def load(path, node=None, source=None):
@@ -91,18 +93,20 @@ def parse_page(body, cursor):
     return records
 
 
-def record(sequence, raw, received):
+def record(sequence, raw, received, backlog_pending):
     words = raw.split(" ")
     collected = int(words[0]) if words[0].isdigit() and len(words[0]) <= 12 else None
     kind = words[1] if collected is not None and len(words) > 1 else "unknown"
     fields = dict(word.split("=", 1) for word in words[2:] if "=" in word)
     return {"sequence": sequence, "raw": raw, "collected": collected,
-            "received": received, "kind": kind, "fields": fields}
+            "received": received, "kind": kind, "fields": fields,
+            "backlog_page_pending_at_receipt": backlog_pending}
 
 
 def apply_page(state, records, received, has_more):
+    state["poll_start_cursor"] = state["cursor"]
     for sequence, raw in records:
-        item = record(sequence, raw, received)
+        item = record(sequence, raw, received, has_more)
         words = raw.split(" ")
         kind = item["kind"]
         if kind == "hello":
@@ -112,6 +116,8 @@ def apply_page(state, records, received, has_more):
                 state["latest"] = {}
                 state["history"] = []
                 state["session"] = session
+                state["last_light_sequence"] = None
+                state["last_light_transition"] = None
         if kind == "cap" and len(words) >= 3:
             if words[2] in CAPABILITIES:
                 state["capabilities"][words[2]] = "present"
@@ -237,17 +243,94 @@ def compact_key(state, now, stale):
             state["session"], dict(state["capabilities"]), measured, actions]
 
 
+def light_bucket_transition(state, previous, current, now, stale):
+    if (state["has_more"] or state["session"] is None or previous is None or
+            previous.get("backlog_page_pending_at_receipt", False) or
+            current.get("backlog_page_pending_at_receipt", False) or
+            sensor_status(previous, now, stale) != "fresh-clock-conditional" or
+            sensor_status(current, now, stale) != "fresh-clock-conditional"):
+        return None
+    if any(item["collected"] is None or item["received"] - item["collected"] > stale
+           for item in (previous, current)):
+        return None
+    previous_lux = number(previous["fields"], "lux")
+    current_lux = number(current["fields"], "lux")
+    previous_bucket = math.floor(math.log2(1 + previous_lux))
+    current_bucket = math.floor(math.log2(1 + current_lux))
+    if current_bucket == previous_bucket:
+        return None
+    if not 0 <= current["collected"] - previous["collected"] <= stale:
+        return None
+    def endpoint(item, lux):
+        return {"sequence": item["sequence"], "lux": lux,
+                "phone_sample_epoch_s": item["collected"],
+                "phone_sample_utc": stamp(item["collected"]),
+                "consumer_receipt_epoch_s": item["received"],
+                "consumer_receipt_utc": stamp(item["received"])}
+    event_id = f"{state['node']}:{state['session']}:{current['sequence']}"
+    return {"event_id": event_id, "kind": "measured_light_bucket_transition",
+            "source": state["source"], "session": state["session"],
+            "bucket_from": previous_bucket, "bucket_to": current_bucket,
+            "from": endpoint(previous, previous_lux), "to": endpoint(current, current_lux),
+            "freshness_at_detection": "fresh-clock-conditional",
+            "validity_seconds": stale,
+            "claim": "historical-measured-light-change-only"}
+
+
+def transition_text(event, node):
+    start, end = event["from"], event["to"]
+    return (f"measured-light-bucket-transition id={event['event_id']} {node} "
+            f"source={event['source']} session={event['session']} "
+            f"bucket={event['bucket_from']}->{event['bucket_to']}; "
+            f"from=#{start['sequence']} lux={start['lux']} "
+            f"phone_sample={start['phone_sample_utc']} "
+            f"consumer_receipt={start['consumer_receipt_utc']}; "
+            f"to=#{end['sequence']} lux={end['lux']} "
+            f"phone_sample={end['phone_sample_utc']} "
+            f"consumer_receipt={end['consumer_receipt_utc']} "
+            "freshness=fresh-clock-conditional; historical-measurement-only")
+
+
+def new_light_transitions(state, now, stale):
+    lights = [item for item in state["history"] if item["kind"] == "light"]
+    last_sequence = state.get("last_light_sequence")
+    prior_index = next((i for i, item in enumerate(lights)
+                        if item["sequence"] == last_sequence), None)
+    continuous = (state.get("last_light_event_cursor") ==
+                  state.get("poll_start_cursor"))
+    if not lights or not continuous or prior_index is None:
+        state["last_light_sequence"] = lights[-1]["sequence"] if lights else None
+        state["last_light_event_cursor"] = state["cursor"]
+        return []
+    transitions = []
+    for previous, current in zip(lights[prior_index:], lights[prior_index + 1:]):
+        event = light_bucket_transition(state, previous, current, now, stale)
+        if event:
+            transitions.append(event)
+    state["last_light_sequence"] = lights[-1]["sequence"]
+    state["last_light_event_cursor"] = state["cursor"]
+    return transitions
+
+
 def update_events(state, now, stale):
     key = compact_key(state, now, stale)
-    if key == state["event_key"]:
-        return False
-    state["event_key"] = key
-    summary = (f"{stamp(now)} {state['node']} phone={key[0]} transport={key[1]} "
-               f"battery={key[4][0][1:]} light={key[4][1][1:]} acceleration={key[4][2][1:]} "
-               f"caps={state['capabilities']} action_receipts={len(state['actions'])}")
-    state["events"].append(summary)
+    changed = key != state["event_key"]
+    if changed:
+        state["event_key"] = key
+        summary = (f"{stamp(now)} {state['node']} phone={key[0]} transport={key[1]} "
+                   f"battery={key[4][0][1:]} light={key[4][1][1:]} acceleration={key[4][2][1:]} "
+                   f"caps={state['capabilities']} action_receipts={len(state['actions'])}")
+        state["events"].append(summary)
+    transitions = new_light_transitions(state, now, stale)
+    for event in transitions:
+        state["last_light_transition"] = event
+        state["events"].append(transition_text(event, state["node"]))
     state["events"] = state["events"][-EVENTS:]
-    return True
+    return changed or bool(transitions)
+
+
+
+
 
 
 def stamp(value):
@@ -307,6 +390,68 @@ def render_events(state, now, stale):
     return "\n".join(lines)
 
 
+
+def space_snapshot(states, now, stale):
+    nodes = []
+    for state in states:
+        item = state["latest"].get("light")
+        status = ("backlog/draining" if state["has_more"]
+                  else sensor_status(item, now, stale))
+        fields = item["fields"] if item else {}
+        nodes.append({
+            "node": state["node"], "source": state["source"], "session": state["session"],
+            "cursor": state["cursor"], "phone_status": node_status(state, now, stale),
+            "transport": transport(state, now, stale), "last_error": state["error"],
+            "last_poll_utc": stamp(state["poll_at"]),
+            "backlog_page_pending": state["has_more"],
+            "capabilities": {key: state["capabilities"].get(key, "unknown")
+                             for key in CAPABILITIES},
+            "light": {
+                "status": status,
+                "status_reason": (fields.get("reason") or
+                                  ("no-light-observation" if item is None else
+                                   status if status != "fresh-clock-conditional" else
+                                   "phone/host clock agreement is unverified")),
+                "validity_seconds": stale,
+                "freshness_basis": "phone event time and age_ms compared with host clock",
+                "sequence": item["sequence"] if item else None,
+                "lux": number(fields, "lux") if status == "fresh-clock-conditional" else None,
+                "units": "lux", "accuracy": fields.get("accuracy") if item else None,
+                "age_ms_at_phone_collection": number(fields, "age_ms") if item else None,
+                "phone_sample_epoch_s": item["collected"] if item else None,
+                "phone_sample_utc": stamp(item["collected"]) if item else None,
+                "consumer_receipt_epoch_s": item["received"] if item else None,
+                "consumer_receipt_utc": stamp(item["received"]) if item else None,
+                "delayed_at_receipt": (item["received"] - item["collected"] > stale)
+                                      if item and item["collected"] is not None else None,
+                "phone_elapsed_realtime_ms": None,
+                "phone_elapsed_realtime_reason": "not provided by protocol v1",
+                "host_receipt_monotonic_ns": None,
+                "host_boot_id": None,
+                "server_receipt_utc": None,
+                "acquisition_span_ms": None
+            },
+            "last_light_transition": state.get("last_light_transition")
+        })
+    return {"schema_version": 1, "generated_at_utc": stamp(now),
+            "producer": {"name": "android-body-perception", "entry_point": "watch.py",
+                         "mode": "space", "contract": 1},
+            "nodes": nodes}
+
+
+def read_space(directory, now, stale):
+    paths = sorted(directory.glob("*.json")) if directory.exists() else []
+    if not paths:
+        return {"schema_version": 1, "generated_at_utc": stamp(now),
+                "producer": {"name": "android-body-perception", "entry_point": "watch.py",
+                             "mode": "space", "contract": 1},
+                "nodes": [], "status": "unknown/no-perception-state"}
+    return space_snapshot([load(path) for path in paths], now, stale)
+
+
+def render_space(directory, now, stale):
+    return json.dumps(read_space(directory, now, stale), ensure_ascii=False,
+                      allow_nan=False, sort_keys=True) + "\n"
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -402,6 +547,10 @@ def follow(args, directory):
             cached = directory / "events.txt"
             if not cached.exists() or cached.read_text(encoding="utf-8") != compact:
                 atomic(cached, compact)
+            space_file = directory.parent / "space.json"
+            space = render_space(directory, now, args.stale_seconds)
+            if not space_file.exists() or space_file.read_text(encoding="utf-8") != space:
+                atomic(space_file, space)
             # Bounded one page per node per cycle; backlog cannot starve another node.
             until = time.monotonic() + args.poll_seconds
             while running and time.monotonic() < until:
@@ -410,7 +559,7 @@ def follow(args, directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("follow", "view", "events"))
+    parser.add_argument("mode", choices=("follow", "view", "events", "space"))
     parser.add_argument("--site", type=Path, required=True)
     parser.add_argument("--url", default="http://127.0.0.1:8765")
     parser.add_argument("--node", action="append", default=[], metavar="NODE:SECRET_ENV_NAME")
@@ -427,8 +576,11 @@ def main():
             if not args.node:
                 parser.error("follow requires at least one --node")
             follow(args, directory)
+        elif args.mode == "space":
+            print(render_space(directory, time.time(), args.stale_seconds), end="")
         else:
-            print(read_views(directory, time.time(), args.stale_seconds, args.mode == "events"), end="")
+            print(read_views(directory, time.time(), args.stale_seconds,
+                             args.mode == "events"), end="")
     except (OSError, ValueError, KeyError, TypeError) as error:
         parser.exit(1, f"perception: {error}\n")
 
