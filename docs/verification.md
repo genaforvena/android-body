@@ -116,6 +116,12 @@ Four loopback cases per frozen version exercised first-cycle and existing-map pu
 
 Witness independently reviewed Health's controls, three live apply/revert/reapply transitions, frozen runtime hash and actual caller; the bounded activation is accepted. The review does not establish a worst-case shutdown deadline, cause of the historical seven-second incident, autonomous detection coverage, cross-plant consumer acceptance or physical/RF effects. Socket inactivity timeout is **not** a total shutdown deadline. No APK, USB bridge, radio or actuator change occurred.
 
+## Isolated BLE capability diagnostic
+
+On 2026-10-07, the separate `:ble-probe` diagnostic was built with JDK21 and Android SDK34 from commits `3480d45` and `c3f44d1`. `:ble-probe:testProbeReport`, `:ble-probe:assembleDebug` and `:ble-probe:lintDebug` passed. The regression asserts one complete report row for adapter OFF, ON and caller-visible `SecurityException`, followed by scanner success, advertiser error, multiple-advertisement false and a null-returning query. The build emitted Java8 source/target obsolescence warnings; lint reported no warnings. Debug APK SHA-256: `5d0c005cc4525fb8edd15eff847b32ffb31a17008ea2823598ffe7ab9503b2bc`; `apksigner` verified v1 and v2.
+
+This verifies JVM report formatting and Android compile/package/lint/signature only. No APK installation, Note3 API result, Bluetooth operation, RF result, cleanup, or production observation was verified. Device BLE capability and RF feasibility remain unknown. The diagnostic does not scan, advertise, toggle Bluetooth, or enter production observation history; preserve Android Body's existing package and data.
+
 ## Reproduce the host checks
 
 ```sh
