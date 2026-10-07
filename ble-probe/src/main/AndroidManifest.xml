@@ -15,4 +15,10 @@
             </intent-filter>
         </activity>
     </application>
+    <instrumentation
+        android:name=".ProbeInstrumentation"
+        android:targetPackage="org.androidbody.bleprobe"
+        android:functionalTest="false"
+        android:handleProfiling="false" />
+    
 </manifest>
