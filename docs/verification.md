@@ -35,6 +35,14 @@ The queue tests cover process exit/reopen, per-endpoint isolation, durable appen
 
 Persistent-state checks cover endpoint-matching enable markers, failed preference OFF with independent marker deletion, newer user-stop records and explicit-ON overrides, API18 guards and the eight-destination limit. Source review also covered stopped-session ordering, OFF/clear races, mode-save failures, notification modes, local-storage errors versus network errors, and durable action receipts. No remaining known high/medium source blocker was found in this freeze. These checks do not certify OEM survival or physical effects.
 
+## Published repository and CI
+
+The public [GitHub repository](https://github.com/genaforvena/android-body) contains the full source, CC0 license, third-party notices and the installable debug APK. The initial 54-file upload was verified against the staged Git tree, including executable modes and binary blob hashes.
+
+[GitHub Actions run 37584419974](https://github.com/genaforvena/android-body/actions/runs/37584419974) **PASSED** for commit `d76f9badcd427ee102ad1d0ea923fe85525a76bc`: SDK setup, the boundary tests, Android build, lint and artifact uploads. The first run stopped before tests because the setup action tried to install the obsolete SDK package `tools`; the workflow now requests only `platform-tools` and avoids blanket acceptance of unrelated SDK add-on agreements.
+
+The committed APK's download was exercised through GitHub and independently checked at 88,103 bytes with the SHA-256 above. The CI workflow builds another debug-signed APK; its bytes/signing identity are not claimed to match the committed download. A green build does not add physical-device evidence.
+
 ## Android runtime evidence for this version
 
 The full **API18 / Android 4.3.1 emulator** acceptance suite below ran on the preliminary version 0.2 APK `ff03c32eccb690fb330ec2b3c22167938c0e4f4ff2905c7bfe0dc1a260dd8ee7`. The final APK above changes only the queue's default retention constants to 2 MiB / 24,576 lines; queue format, algorithms, service and UI logic are unchanged. The final defaults passed both Java suites and a bounded-heap host stress test. The focused final-artifact smoke **PASSED** on API18: install, ON, observation/vibration roundtrip, live collect-only (nine saved records and zero HTTP after transition), live backlog drain and OFF. After OFF there was no queue growth, upload, running service or held CPU wake lock. The queue inspector used the final constants. The full complex suite below was not silently claimed as repeated against the final bytes.
