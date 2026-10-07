@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="endpoint" type="id" />
+    <item name="secret" type="id" />
+    <item name="status" type="id" />
+    <item name="collect_only" type="id" />
+</resources>

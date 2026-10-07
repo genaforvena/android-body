@@ -1,0 +1,17 @@
+.gradle/
+**/build/
+local.properties
+*.iml
+.idea/
+*.apk
+*.aab
+*.jks
+*.keystore
+.env
+__pycache__/
+*.py[cod]
+.DS_Store
+body-data/
+
+# Checked, installable milestone artifact
+!downloads/android-body-debug.apk

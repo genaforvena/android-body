@@ -1,0 +1,9 @@
+Android Body original source and documentation: CC0-1.0 (see LICENSE).
+
+The Gradle wrapper scripts and wrapper JAR are distributed by Gradle under
+Apache License 2.0. Their original notices are preserved. The CC0 dedication
+of this project does not replace licenses of third-party build tools.
+
+Android SDK/Android Gradle Plugin, Gradle, JDK, CI actions and other development
+tools are obtained separately under their respective licenses. The Android
+application has no third-party runtime library dependencies.

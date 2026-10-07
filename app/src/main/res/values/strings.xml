@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="allow_http">Allow insecure HTTP on a trusted test network</string>
+    <string name="turn_on">Turn ON</string>
+    <string name="reset_cursor">Reset action cursor…</string>
+    <string name="starting">Starting…</string>
+    <string name="collect_only">Collect only / upload later</string>
+    <string name="connection_settings">Connection settings</string>
+    <string name="clear_saved">Clear this node’s saved observations…</string>
+</resources>
