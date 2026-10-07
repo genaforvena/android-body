@@ -497,6 +497,13 @@ def read_views(directory, now, stale, compact=False):
     return "\n\n".join(view(load(path), now, stale) for path in paths) + "\n"
 
 
+def publish_space(directory, nodes, now, stale):
+    path = directory.parent / "space.json"
+    content = render_space(directory, now, stale)
+    if not path.exists() or path.read_text(encoding="utf-8") != content:
+        atomic(path, content)
+
+
 def follow(args, directory):
     root = endpoint(args.url)
     nodes = []
@@ -524,6 +531,10 @@ def follow(args, directory):
     signal.signal(signal.SIGINT, stop)
     with (directory / "follow.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        for path, state, _ in nodes:
+            if not path.exists():
+                save(path, state)
+        publish_space(directory, nodes, time.time(), args.stale_seconds)
         while running:
             for path, state, secret in nodes:
                 if not running:
@@ -541,16 +552,15 @@ def follow(args, directory):
                 save(path, state)
                 if changed:
                     print(state["events"][-1], flush=True)
+                # Publish each durable node result before polling the next node.
+                # A slow later request must not hide an earlier node's new error.
+                publish_space(directory, nodes, time.time(), args.stale_seconds)
             now = time.time()
             atomic(directory / "view.txt", read_views(directory, now, args.stale_seconds))
             compact = read_views(directory, now, args.stale_seconds, compact=True)
             cached = directory / "events.txt"
             if not cached.exists() or cached.read_text(encoding="utf-8") != compact:
                 atomic(cached, compact)
-            space_file = directory.parent / "space.json"
-            space = render_space(directory, now, args.stale_seconds)
-            if not space_file.exists() or space_file.read_text(encoding="utf-8") != space:
-                atomic(space_file, space)
             # Bounded one page per node per cycle; backlog cannot starve another node.
             until = time.monotonic() + args.poll_seconds
             while running and time.monotonic() < until:

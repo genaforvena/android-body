@@ -93,6 +93,14 @@ endpoint readings as historical evidence. Missing protocol v1 phone monotonic ti
 host monotonic/boot receipt, server receipt, and acquisition span are explicit nulls;
 consumers must not infer them. Use the CLI for current freshness; the published file
 is a cache whose `generated_at_utc` can age if the follower stops.
+During follow, each node checkpoint is durably saved and the complete multi-node
+snapshot is atomically refreshed before the next node is polled. A slow or stalled
+later endpoint therefore cannot hide an earlier node's newly observed transport
+error. On first start, empty per-node checkpoints are created before publishing the
+initial complete map, so later nodes are not temporarily omitted. Snapshot freshness
+still ages independently; a timed-out request is not treated as a completed result
+until its configured timeout returns.
+
 With no saved node state, the same schema reports `status=unknown/no-perception-state`
 and an empty node list; absence of data is not an empty-space claim.
 

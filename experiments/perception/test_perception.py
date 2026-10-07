@@ -206,6 +206,34 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(len(transitions), 1)
         self.assertIn("to=#3 lux=20.0", transitions[0])
         self.assertEqual(state["last_light_transition"]["to"]["sequence"], 3)
+
+    def test_space_publication_replaces_fast_node_before_later_node_completes(self):
+        fast = self.state()
+        slow = watch.initial("redmi10", "http://127.0.0.1:8765/node/redmi10")
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            directory = root / "body" / "perception"
+            directory.mkdir(parents=True)
+            fast_path = directory / "note3.json"
+            slow_path = directory / "redmi10.json"
+            watch.save(fast_path, fast)
+            watch.save(slow_path, slow)
+            nodes = [(fast_path, fast, ""), (slow_path, slow, "")]
+            watch.publish_space(directory, nodes, 1000, 30)
+
+            self.page(fast, ["1000 hello node=note3 protocol=1 session=s1",
+                             "1000 light lux=20 accuracy=3 age_ms=0"])
+            fast.update(poll_at=1000, error="http-502")
+            watch.save(fast_path, fast)
+            watch.publish_space(directory, nodes, 1000, 30)
+
+            snapshot = watch.read_space(directory, 1000, 30)
+            by_node = {node["node"]: node for node in snapshot["nodes"]}
+            self.assertEqual(by_node["note3"]["transport"], "offline-or-rejected/http-502")
+            self.assertEqual(by_node["note3"]["light"]["status"], "fresh-clock-conditional")
+            self.assertEqual(by_node["note3"]["light"]["lux"], 20)
+            self.assertEqual(by_node["redmi10"]["phone_status"], "unknown/no-observations")
+            self.assertIsNone(by_node["redmi10"]["light"]["lux"])
     def test_stalled_follower_preserves_last_transport_failure(self):
         state = self.state()
         self.page(state, ["1000 battery level=0.5 charging=false"])
