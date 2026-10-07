@@ -104,6 +104,8 @@ All three actual manager stops returned success with normal exit (`ExecMainCode=
 
 The final actual caller ran `follow` from the pinned runtime path; the deployed `space --site SITE` command returned real Note3 observations at cursor 5756 without a reported error. Rendezvous and USB service PIDs were unchanged, and all three body services remained running with zero automatic restarts. Private operation journals, bindings and live observations are retained under the ignored site's `evidence/health-wake2336-*.json`.
 
+Witness independently accepted this bounded lifecycle at 10:36:40 UTC, using a fresh manager/journal/process/cgroup capture, runtime hash and deployed space/cache comparison (`evidence/witness-wake2357-review.md` and `witness-wake2357-live.json` under the ignored site). The independent live Note3 cursor was 5762 with no error; no labeled transition or core delivery was established.
+
 This establishes a bounded live host snapshot lifecycle, not a worst-case graceful-stop bound, an independently labeled light event, RF sensing, core consumer delivery or physical-effect verification. Note3 clock-dependent freshness remains conditional; Redmi10 still has no observations. No APK installation, radio change or actuator request occurred.
 
 ## Reproduce the host checks
