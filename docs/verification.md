@@ -20,7 +20,7 @@ The version 0.1 and 0.2 signer certificate SHA-256 digests were compared and mat
 | Check | Result |
 |---|---|
 | `:app:assembleDebug` | PASS |
-| `:app:lintDebug` | PASS, zero errors and one expected warning |
+| `:app:lintDebug` | PASS, zero errors and two warnings |
 | `:app:testProtocol` / standalone protocol harness | PASS, 68 assertions |
 | `:app:testSpool` / standalone spool harness | PASS, 2,788 assertions |
 | Rendezvous unittest suite | PASS, 18 tests |
@@ -29,7 +29,7 @@ The version 0.1 and 0.2 signer certificate SHA-256 digests were compared and mat
 | Additional independent journal truncation/CRC checks | PASS, 189 checks |
 | Additional independent persistent-settings checks | PASS, 24 checks |
 
-The lint warning is `UnusedAttribute`: Android below 23 ignores `usesCleartextTraffic`. Endpoint/transport validation enforces the explicit HTTP opt-in on every supported API. Legacy service/vibration paths are intentionally guarded by SDK checks; compilation reports deprecation notes.
+The lint report for run 37593836353 lists two warnings: `UnusedAttribute` because API18 ignores manifest `usesCleartextTraffic` (transport validation still requires explicit HTTP opt-in), and `AndroidGradlePluginVersion` because the pinned Gradle wrapper 8.11.1 is older than the reported 8.14.5. Neither is an Android source finding; legacy service/vibration paths are intentionally guarded by SDK checks and compilation also reports deprecation notes.
 
 The queue tests cover process exit/reopen, per-endpoint isolation, durable append/acknowledgment, immutable in-flight tokens, overflow bounds/loss notices, every incomplete transaction tail, complete corruption rejection, compaction, single-owner locks, explicit corrupted-queue discard, and randomized state replay. File-descriptor checks establish that ordinary enqueue/ACK extends the journal instead of rewriting the retained data. The full queue is compacted only at its bounded threshold.
 
