@@ -70,6 +70,13 @@ The POST returns the assigned action ID. Poll observations for its result. `succ
 
 Try the [light/vibration experiment](experiments/light-vibrate/README.md). Its consumer logic works with shell and awk; Mishe can use exactly the same text boundary. No Mishe code or model credential is embedded in the phone.
 
+For ongoing sensation without physical actions, run the [read-only perception
+consumer](experiments/perception/README.md). It preserves per-node cursors, raw
+evidence and freshness uncertainty, derives acceleration magnitude with its source,
+and offers a compact meaningful-change view for Mishe's senses pane. See
+[integration](docs/integration.md) for a separate development plant and private USB
+connection; no agent runtime is added to Android.
+
 ## Checks and truthful scope
 
 ```sh
@@ -77,6 +84,7 @@ tools/test-protocol.sh
 tools/test-spool.sh
 python3 -m unittest discover -s rendezvous/minimal-server
 python3 -m unittest discover -s experiments/light-vibrate
+python3 -m unittest discover -s experiments/perception
 ./gradlew :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool
 ```
 

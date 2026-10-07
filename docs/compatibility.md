@@ -1,6 +1,6 @@
 # Android compatibility and physical validation
 
-Research checked: 2026-10-07. This is a compatibility plan and a list of known limits, not a hardware certification. **Physical tests on Samsung Note 3, Xiaomi, and current Android devices have not been run.**
+Research checked: 2026-10-07. This is a compatibility plan and a list of known limits, not a hardware certification. A bounded physical smoke ran on Samsung SM-N900 / Android5 / API21; Xiaomi and current-device checks remain unrun. See [verification](verification.md) for the exact observed scope.
 
 ## Scope and build baseline
 
@@ -97,13 +97,13 @@ HTTP requires the explicit insecure-transport checkbox, off by default. Manifest
 
 For the target-36 baseline, Android documents LAN access under `INTERNET`; Android 16 also offers opt-in local-network restriction testing. Revisit permissions before raising target SDK to 37, where Android documents a dedicated LAN permission. Do not add an unneeded runtime LAN permission to the target-36 build. [Local-network permission](https://developer.android.com/privacy-and-security/local-network-permission)
 
-## Physical validation checklist — all unrun
+## Physical validation checklist
 
-Run the same signed APK against the same controlled bridge, and record APK hash, exact device model, OS/API, firmware, endpoint scheme, test time, battery mode, and result. No row below has a claimed pass.
+Run the same signed APK against the same controlled bridge, and record APK hash, exact device model, OS/API, firmware, endpoint scheme, test time, battery mode, and result. The checklist remains open where a row combines tested and untested cases; the bounded Note3 observations below do not certify it.
 
 | Device | Required baseline | Status |
 | --- | --- | --- |
-| Old Samsung Note 3 | Exact model; API 18 or newer (API19 is the primary legacy test target); original sensor hardware | NOT RUN |
+| Old Samsung Note 3 | SM-N900, Android5/API21, firmware `LRX21V.N900XXSEBRH3`; charging, private USB-loopback HTTP; final 0.2.0 APK | BOUNDED SMOKE PASS: installation, native ON/OFF, actual sensor delivery, collect-only/backlog, process-loss restoration, 15s screen-off; full checklist incomplete |
 | Xiaomi | Exact model; MIUI/HyperOS and Android version | NOT RUN |
 | Current Android device | API 34+; preferably API 36; notification/type checks | NOT RUN |
 
