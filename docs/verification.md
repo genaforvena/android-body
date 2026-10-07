@@ -108,6 +108,14 @@ Witness independently accepted this bounded lifecycle at 10:36:40 UTC, using a f
 
 This establishes a bounded live host snapshot lifecycle, not a worst-case graceful-stop bound, an independently labeled light event, RF sensing, core consumer delivery or physical-effect verification. Note3 clock-dependent freshness remains conditional; Redmi10 still has no observations. No APK installation, radio change or actuator request occurred.
 
+### Per-node publication repair
+
+On 2026-10-07, Health applied, reverted and reapplied the reviewed publication repair from source commit `199c898d9fa81e0645785a3b77698b6a1dab074e`, using the same independently reviewed quiescence guard and byte-switch procedure. The final runtime SHA-256 was `2e85481e5a15e13b75f94352eb479fa44741f4ebb44d95d95319330ca34125ed`; rollback used `e86032e8d3fc9335b388a0db83889422a9fc05590cd48d3153909986e8587598`. All three stops exited normally, preserved authoritative checkpoints under the original retained lock, and resumed the same Note3 session at advancing cursors 6680, 6683 and 6686. Rendezvous and USB service PIDs were unchanged. Private operation and live-caller evidence is in `evidence/health-wake2666-{apply,revert,reapply}*.json`.
+
+Four loopback cases per frozen version exercised first-cycle and existing-map publication, each with release and in-flight stop. The rollback reproduced the missing first-cycle snapshot and hidden earlier HTTP 502; the repaired version exposed a complete map and that durable error before the later endpoint completed. All eight cases exited cleanly with null light values. Two additional repaired-version controls stopped during the first response: an inactivity stall stopped in 0.518 seconds, while 20 trickled newline bytes extended stop to 2.019 seconds despite a 0.5-second socket timeout. The second node was never requested but remained an explicitly unpolled checkpoint in the complete snapshot. The 14 perception tests passed.
+
+These are author-observed bounded controls and live lifecycle evidence; independent acceptance of this new activation remains pending. Socket inactivity timeout is **not** a total shutdown deadline. The historical seven-second incident cause, worst-case stop timing, autonomous detection coverage, cross-plant consumer acceptance and physical/RF effects remain unproved. No APK, USB bridge, radio or actuator change occurred.
+
 ## Reproduce the host checks
 
 ```sh
