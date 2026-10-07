@@ -114,7 +114,7 @@ On 2026-10-07, Health applied, reverted and reapplied the reviewed publication r
 
 Four loopback cases per frozen version exercised first-cycle and existing-map publication, each with release and in-flight stop. The rollback reproduced the missing first-cycle snapshot and hidden earlier HTTP 502; the repaired version exposed a complete map and that durable error before the later endpoint completed. All eight cases exited cleanly with null light values. Two additional repaired-version controls stopped during the first response: an inactivity stall stopped in 0.518 seconds, while 20 trickled newline bytes extended stop to 2.019 seconds despite a 0.5-second socket timeout. The second node was never requested but remained an explicitly unpolled checkpoint in the complete snapshot. The 14 perception tests passed.
 
-These are author-observed bounded controls and live lifecycle evidence; independent acceptance of this new activation remains pending. Socket inactivity timeout is **not** a total shutdown deadline. The historical seven-second incident cause, worst-case stop timing, autonomous detection coverage, cross-plant consumer acceptance and physical/RF effects remain unproved. No APK, USB bridge, radio or actuator change occurred.
+Witness independently reviewed Health's controls, three live apply/revert/reapply transitions, frozen runtime hash and actual caller; the bounded activation is accepted. The review does not establish a worst-case shutdown deadline, cause of the historical seven-second incident, autonomous detection coverage, cross-plant consumer acceptance or physical/RF effects. Socket inactivity timeout is **not** a total shutdown deadline. No APK, USB bridge, radio or actuator change occurred.
 
 ## Reproduce the host checks
 
