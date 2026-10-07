@@ -36,6 +36,8 @@ The queue tests cover process exit/reopen, per-endpoint isolation, durable appen
 Persistent-state checks cover endpoint-matching enable markers, failed preference OFF with independent marker deletion, newer user-stop records and explicit-ON overrides, API18 guards and the eight-destination limit. Source review also covered stopped-session ordering, OFF/clear races, mode-save failures, notification modes, local-storage errors versus network errors, and durable action receipts. No remaining known high/medium source blocker was found in this freeze. These checks do not certify OEM survival or physical effects.
 
 ## Published repository and CI
+The latest published source checkpoint recorded for this docs review is commit `b51ebbafb415fcce5fbee5952a0009c22497e945`. [GitHub Actions run 37592181603](https://github.com/genaforvena/android-body/actions/runs/37592181603) **PASSED** for that exact SHA: protocol (68 assertions), spool (2,788), rendezvous (18 tests), light/vibration (8), perception (7), Android build, lint and artifact upload. The run reported Java deprecation/bootstrap, Node 20-to-24 action migration, setup-java v4 retirement and `ubuntu-latest` migration warnings. This is CI evidence for that commit; it does not identify the installed APK bytes, establish a physical-device result, or prove a physical actuator effect.
+
 
 The public [GitHub repository](https://github.com/genaforvena/android-body) contains the full source, CC0 license, third-party notices and the installable debug APK. The initial 54-file upload was verified against the staged Git tree, including executable modes and binary blob hashes.
 
