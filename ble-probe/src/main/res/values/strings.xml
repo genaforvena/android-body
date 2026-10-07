@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BLE capability diagnostic</string>
+    <string name="title">BLE capability diagnostic — no radio operations</string>
+    <string name="refresh">Read capabilities</string>
+</resources>

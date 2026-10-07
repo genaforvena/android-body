@@ -1,0 +1,29 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'org.androidbody.bleprobe'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'org.androidbody.bleprobe'
+        minSdk 18
+        targetSdk 28
+        versionCode 1
+        versionName '0.1.0'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    // This local diagnostic is not Play-distributed. Keep target 28 for legacy BLE permission behavior
+    // while retaining API18 installability; lint flags both deliberate SDK choices as current-policy errors.
+    lint {
+        disable 'ExpiredTargetSdkVersion', 'GradleDependency'
+    }
+}
+
+tasks.register('testProbeReport', JavaExec) {
+    dependsOn 'compileDebugUnitTestJavaWithJavac'
+    classpath = files("$buildDir/intermediates/javac/debugUnitTest/compileDebugUnitTestJavaWithJavac/classes",
+                      "$buildDir/intermediates/javac/debug/compileDebugJavaWithJavac/classes")
+    mainClass = 'org.androidbody.bleprobe.ProbeReportTest'
+}
