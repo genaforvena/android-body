@@ -96,6 +96,16 @@ Real Xiaomi/Redmi10 and contemporary physical Android validation are **NOT RUN**
 
 Neither `START_STICKY` nor the ON-only partial wake lock guarantees uptime or bypasses Doze, Force stop, notification controls or OEM restrictions. The saved ON bit is an intention, not proof of live collection. Android's vibration API return remains `verification=unverified` without independent physical evidence.
 
+## Host perception snapshot activation
+
+On 2026-10-07 at 10:35–10:36 UTC, Health exercised the independently reviewed production apply, revert and reapply procedure for the frozen perception consumer from source commit `fbb62ac8b24a6310c467c422a6b65116435e9921`. The final running `watch.py` SHA-256 was `e86032e8d3fc9335b388a0db83889422a9fc05590cd48d3153909986e8587598`; the exercised rollback was `1396d352d8868bc421937a538e4e073cdd8f2a5df8261cae637ebfe9c359cd3d`.
+
+All three actual manager stops returned success with normal exit (`ExecMainCode=1`, `ExecMainStatus=0`), inactive/dead state and PID zero. Each operation freshly bound its original process and lock, checked original PID/cgroup cessation, retained the same exclusive lock through the byte switch, and preserved the complete authoritative output hash map. Final stopped Note3 cursors were 5714, 5738 and 5744, with the same session; no pre-stop state was restored. Revert removed the derived space cache, and the old consumer resumed real observations before reapply.
+
+The final actual caller ran `follow` from the pinned runtime path; the deployed `space --site SITE` command returned real Note3 observations at cursor 5756 without a reported error. Rendezvous and USB service PIDs were unchanged, and all three body services remained running with zero automatic restarts. Private operation journals, bindings and live observations are retained under the ignored site's `evidence/health-wake2336-*.json`.
+
+This establishes a bounded live host snapshot lifecycle, not a worst-case graceful-stop bound, an independently labeled light event, RF sensing, core consumer delivery or physical-effect verification. Note3 clock-dependent freshness remains conditional; Redmi10 still has no observations. No APK installation, radio change or actuator request occurred.
+
 ## Reproduce the host checks
 
 ```sh
