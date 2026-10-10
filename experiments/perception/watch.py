@@ -19,7 +19,7 @@ MAX_SEQUENCE = 9007199254740991
 HISTORY = 32
 EVENTS = 16
 SENSORS = ("battery", "light", "acceleration")
-CAPABILITIES = ("battery", "light", "accelerometer", "vibration")
+CAPABILITIES = ("battery", "light", "accelerometer", "vibration", "wifi_link_rssi", "bluetooth_le")
 
 
 def atomic(path, content):
@@ -96,8 +96,8 @@ def parse_page(body, cursor):
 def record(sequence, raw, received, backlog_pending):
     words = raw.split(" ")
     collected = int(words[0]) if words[0].isdigit() and len(words[0]) <= 12 else None
-    kind = words[1] if collected is not None and len(words) > 1 else "unknown"
-    fields = dict(word.split("=", 1) for word in words[2:] if "=" in word)
+    kind = words[1].split("=", 1)[0] if collected is not None and len(words) > 1 else "unknown"
+    fields = dict(word.split("=", 1) for word in words[1:] if "=" in word)
     return {"sequence": sequence, "raw": raw, "collected": collected,
             "received": received, "kind": kind, "fields": fields,
             "backlog_page_pending_at_receipt": backlog_pending}
@@ -146,6 +146,19 @@ def number(fields, key):
         return None
 
 
+def sensor_time_scope(item, session):
+    """Return raw per-sensor monotonic time only with a usable session boundary."""
+    value = item["fields"].get("sensor_time_ns") if item else None
+    if (not session or value is None or
+            not re.fullmatch(r"(?:0|[1-9][0-9]*)", value)):
+        return None
+    timestamp = int(value)
+    if timestamp > 9223372036854775807:
+        return None
+    return {"sensor_time_ns": timestamp, "scope": [item["kind"], session],
+            "status": "same-sensor-session-only"}
+
+
 def freshness(item, now, stale):
     if item is None or item["collected"] is None:
         return "unknown"
@@ -182,6 +195,74 @@ def sensor_status(item, now, stale):
         if age > stale * 1000:
             return "stale"
     return status
+
+
+def wifi_rssi_status(item, now, stale):
+    if item is None:
+        return "unknown/no-observation"
+    fields = item["fields"]
+    if fields.get("source") != "androidbody_wifi_api":
+        return "unknown/unrecognized-source"
+    if " unavailable" in item["raw"]:
+        return "unavailable/" + freshness(item, now, stale)
+    value = number(fields, "wifi_link_rssi_dbm")
+    if value is None or not -126 <= value < 0:
+        return "unknown/invalid-or-missing-rssi"
+    return freshness(item, now, stale)
+
+
+def wifi_rssi_snapshot(item, now, stale):
+    fields = item["fields"] if item else {}
+    unavailable = item is not None and " unavailable" in item["raw"]
+    return {
+        "status": wifi_rssi_status(item, now, stale),
+        "sequence": item["sequence"] if item else None,
+        "source": fields.get("source") if item else None,
+        "rssi_dbm": (number(fields, "wifi_link_rssi_dbm")
+                     if item and not unavailable and
+                     wifi_rssi_status(item, now, stale) == "fresh-clock-conditional"
+                     else None),
+        "units": "dBm",
+        "protocol_event_time_epoch_s": item["collected"] if item else None,
+        "consumer_receipt_epoch_s": item["received"] if item else None,
+        "observed_at_api_read_time": fields.get("observed_at") if item else None,
+        "acquisition_age": None,
+        "acquisition_age_reason": "not provided; observed_at is API read time, not measurement age",
+        "unavailable_reason": fields.get("reason") if unavailable else None
+    }
+
+BLE_STATES = {
+    "feature_ble": {"present", "absent", "query_error"},
+    "adapter": {"enabled", "disabled", "unavailable", "error"},
+    "scanner_api": {"present", "absent", "unavailable", "error"},
+    "advertiser_api": {"present", "absent", "unavailable", "error"},
+    "scanner_getter": {"returned", "null", "unavailable", "error"},
+    "advertiser_getter": {"returned", "null", "unavailable", "error"},
+    "advertiser_supported": {"supported", "unsupported", "unavailable", "error"},
+}
+
+def ble_status_snapshot(item, now, stale):
+    fields = item["fields"] if item else {}
+    recognized = item is not None and fields.get("source") == "androidbody_bluetooth_api"
+    status = (freshness(item, now, stale) if recognized else
+              "unknown/unrecognized-source" if item else "unknown/no-observation")
+    current = status == "fresh-clock-conditional"
+    values = {key: fields.get(key) if current and fields.get(key) in states else None
+              for key, states in BLE_STATES.items()}
+    return {
+        "status": status,
+        "sequence": item["sequence"] if item else None,
+        "source": fields.get("source") if item else None,
+        "api": fields.get("api") if item else None,
+        "api_surface": (fields.get("api_surface")
+                        if current and fields.get("api_surface") == "platform_sdk"
+                        else None),
+        **values,
+        "errors": ({key[:-6]: value for key, value in fields.items()
+                    if key.endswith("_error")} if current else {}),
+    }
+
+
 
 
 def node_status(state, now, stale):
@@ -239,8 +320,16 @@ def compact_key(state, now, stale):
         reason = item["fields"].get("reason") if item else None
         measured.append([kind, status, bucket, reason])
     actions = [item["raw"] for item in state["actions"]]
+    rssi = wifi_rssi_snapshot(state["latest"].get("wifi_link_rssi_dbm"), now, stale)
+    rssi_key = [rssi["status"], rssi["rssi_dbm"], rssi["unavailable_reason"],
+                rssi["source"]]
+    ble = ble_status_snapshot(state["latest"].get("ble_status"), now, stale)
+    ble_key = [ble["status"], ble["source"], ble["api"], ble["api_surface"],
+               *(ble[field] for field in BLE_STATES),
+               sorted(ble["errors"].items())]
     return [node_status(state, now, stale), transport(state, now, stale),
-            state["session"], dict(state["capabilities"]), measured, actions]
+            state["session"], dict(state["capabilities"]), measured, actions,
+            rssi_key, ble_key]
 
 
 def light_bucket_transition(state, previous, current, now, stale):
@@ -307,18 +396,31 @@ def new_light_transitions(state, now, stale):
         event = light_bucket_transition(state, previous, current, now, stale)
         if event:
             transitions.append(event)
-    state["last_light_sequence"] = lights[-1]["sequence"]
     state["last_light_event_cursor"] = state["cursor"]
     return transitions
-
 
 def update_events(state, now, stale):
     key = compact_key(state, now, stale)
     changed = key != state["event_key"]
     if changed:
         state["event_key"] = key
+        rssi_status, rssi_dbm, rssi_reason, rssi_source = key[6]
+        rssi_text = (f"wifi_link_rssi={rssi_status} rssi_dbm={rssi_dbm} "
+                     f"reason={rssi_reason or 'unspecified'} "
+                     f"source={rssi_source or 'unknown'}")
+        (ble_status, ble_source, ble_api, ble_surface, feature, adapter,
+         scanner, advertiser, scanner_getter, advertiser_getter, supported, errors) = key[7]
+        ble_text = (f"bluetooth_le={ble_status} source={ble_source or 'unknown'} "
+                    f"api={ble_api or 'unknown'} surface={ble_surface or 'unknown'} "
+                    f"feature={feature or 'unknown'} adapter={adapter or 'unknown'} "
+                    f"scanner={scanner or 'unknown'} advertiser={advertiser or 'unknown'} "
+                    f"scanner_getter={scanner_getter or 'unknown'} "
+                    f"advertiser_getter={advertiser_getter or 'unknown'} "
+                    f"advertiser_supported={supported or 'unknown'} "
+                    f"errors={dict(errors)}")
         summary = (f"{stamp(now)} {state['node']} phone={key[0]} transport={key[1]} "
-                   f"battery={key[4][0][1:]} light={key[4][1][1:]} acceleration={key[4][2][1:]} "
+                   f"battery={key[4][0][1:]} light={key[4][1][1:]} "
+                   f"acceleration={key[4][2][1:]} {rssi_text} {ble_text} "
                    f"caps={state['capabilities']} action_receipts={len(state['actions'])}")
         state["events"].append(summary)
     transitions = new_light_transitions(state, now, stale)
@@ -327,10 +429,6 @@ def update_events(state, now, stale):
         state["events"].append(transition_text(event, state["node"]))
     state["events"] = state["events"][-EVENTS:]
     return changed or bool(transitions)
-
-
-
-
 
 
 def stamp(value):
@@ -359,6 +457,25 @@ def render(state, now, stale):
         item = state["latest"].get(kind)
         lines.append(f"{kind} [{sensor_status(item, now, stale)}]: " +
                      (describe(item, now, stale) if item else "unknown; no observation"))
+    rssi = state["latest"].get("wifi_link_rssi_dbm")
+    lines.append("Wi-Fi link RSSI (connected-link API observation; not room proximity):")
+    lines.append("  status=" + wifi_rssi_status(rssi, now, stale) +
+                 ("; " + describe(rssi, now, stale) if rssi else
+                  "; unknown; no observation"))
+    lines.append("  observed_at is API read time; acquisition age=unknown")
+    ble = state["latest"].get("ble_status")
+    ble_view = ble_status_snapshot(ble, now, stale)
+    lines.append("Bluetooth LE status (scanner_api/advertiser_api are SDK API surface only; "
+                 "not device or RF availability; no scan/advertise performed):")
+    lines.append(f"  status={ble_view['status']} " +
+                 (describe(ble, now, stale) if ble else "unknown; no observation"))
+    lines.append(f"  api_surface={ble_view['api_surface'] or 'unknown'} "
+                 "(SDK surface only; not usable hardware)")
+    lines.append("  scanner_getter/advertiser_getter report accessor outcomes only; "
+                 "returned is not scan/advertising success or RF evidence")
+    lines.append("  " + " ".join(
+        f"{key}={ble_view[key] if ble_view[key] is not None else 'unknown'}"
+        for key in BLE_STATES))
     acceleration = state["latest"].get("acceleration")
     norm = magnitude(acceleration)
     if norm is not None and sensor_status(acceleration, now, stale) == "fresh-clock-conditional":
@@ -382,8 +499,19 @@ def render_events(state, now, stale):
     lines = [f"{state['node']} source={state['source']} phone={key[0]} "
              f"transport={key[1]} caps=" +
              ",".join(f"{cap}:{state['capabilities'].get(cap, 'unknown')}" for cap in CAPABILITIES)]
-    for kind, status, bucket, reason in key[4]:
-        lines.append(f"  {kind} {status} coarse_bucket={bucket} reason={reason or 'unspecified'}")
+    rssi_status, rssi_dbm, rssi_reason, rssi_source = key[6]
+    lines.append(f"  wifi_link_rssi {rssi_status} rssi_dbm={rssi_dbm} "
+                 f"reason={rssi_reason or 'unspecified'} source={rssi_source or 'unknown'}")
+    (ble_status, ble_source, ble_api, ble_surface, feature, adapter,
+     scanner, advertiser, scanner_getter, advertiser_getter, supported, errors) = key[7]
+    lines.append(
+        f"  bluetooth_le {ble_status} source={ble_source or 'unknown'} "
+        f"api={ble_api or 'unknown'} surface={ble_surface or 'unknown'} "
+        f"feature={feature or 'unknown'} adapter={adapter or 'unknown'} "
+        f"scanner={scanner or 'unknown'} advertiser={advertiser or 'unknown'} "
+        f"scanner_getter={scanner_getter or 'unknown'} "
+        f"advertiser_getter={advertiser_getter or 'unknown'} "
+        f"advertiser_supported={supported or 'unknown'} errors={dict(errors)}")
     lines.extend("  " + event for event in state["events"][-4:])
     if state["actions"]:
         lines.append("  receipt: " + state["actions"][-1]["raw"])
@@ -406,6 +534,10 @@ def space_snapshot(states, now, stale):
             "backlog_page_pending": state["has_more"],
             "capabilities": {key: state["capabilities"].get(key, "unknown")
                              for key in CAPABILITIES},
+            "wifi_link_rssi": wifi_rssi_snapshot(
+                state["latest"].get("wifi_link_rssi_dbm"), now, stale),
+            "bluetooth_le": ble_status_snapshot(
+                state["latest"].get("ble_status"), now, stale),
             "light": {
                 "status": status,
                 "status_reason": (fields.get("reason") or
@@ -421,6 +553,11 @@ def space_snapshot(states, now, stale):
                 "phone_sample_epoch_s": item["collected"] if item else None,
                 "phone_sample_utc": stamp(item["collected"]) if item else None,
                 "consumer_receipt_epoch_s": item["received"] if item else None,
+                "sensor_time": sensor_time_scope(item, state["session"]) if item else None,
+                "sensor_time_reason": (
+                    "missing/invalid timestamp or session; incomparable"
+                    if item and sensor_time_scope(item, state["session"]) is None
+                    else None),
                 "consumer_receipt_utc": stamp(item["received"]) if item else None,
                 "delayed_at_receipt": (item["received"] - item["collected"] > stale)
                                       if item and item["collected"] is not None else None,

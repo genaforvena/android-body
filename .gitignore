@@ -12,6 +12,11 @@ __pycache__/
 *.py[cod]
 .DS_Store
 body-data/
+# Wall-write temp file (shared path causes cross-role collisions)
+NOTES
+.mishe-tauftau*
+.mishe-tauftauf-artifacts/
+NOTES-*
 
 # Checked, installable milestone artifact
 !downloads/android-body-debug.apk

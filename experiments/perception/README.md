@@ -56,20 +56,39 @@ python3 experiments/perception/watch.py space --site "$SITE"
 
 `view` is the detailed upper-pane/sensor-check surface: source endpoint, observation
 cursor, capability presence/absence/unknown, original battery fraction/charging,
-light lux, acceleration axes (m/s²), accuracy/age fields, original phone event/sample
-time, and consumer receipt time. Unknown names and extra fields remain raw rather
-than being rejected or silently stripped. The bounded state retains the latest 32
-event kinds, last 32 observations and last 16 action receipts. An unknown event
-is not treated as evidence of a known sensor.
+light lux, acceleration axes (m/s²), connected-link Wi-Fi RSSI (dBm), and Bluetooth LE
+API/feature status, accuracy/age fields, original phone event/sample time, and
+consumer receipt time. RSSI is only the phone API's current-link reading, not room
+proximity; `observed_at` is API read time, not acquisition age. The consumer keeps
+protocol event time, API-read time, and consumer receipt distinct, reports
+acquisition age as unknown, and preserves unavailable reasons. The `ble_status`
+projection preserves feature declaration, adapter, scanner and advertiser SDK API
+surface, scanner and advertiser getter outcomes, and multi-advertisement support as
+separate values, including unavailable/error states. Getter `returned` means only
+that the accessor returned an object; it does not prove scanner/advertiser operation,
+an over-air event, or RF reception. These are declarations/status, not proof of an
+operational scanner, advertiser, or over-air event. The Android source emits this
+candidate event, but the installed phone has not been shown to run it; deployed live
+BLE status therefore remains unknown.
+The bounded state retains the latest 32 event kinds, last 32 observations and last
+16 action receipts. An unknown event is not treated as evidence of a known sensor.
+
+The RSSI consumer accepts only the Android candidate's supported numeric range
+(-126 through -1 dBm). Zero, the -127 unavailable sentinel, and values outside the
+range remain UNKNOWN and are never surfaced as measurements.
 
 `events` is a compact wake-friendly surface with source, current freshness/errors,
 capabilities and coarse measured buckets plus the last four meaningful transitions
 and latest action receipt. Ordinary sequence, sample timestamp, receipt timestamp,
 accuracy and `age_ms` churn do not produce a new event. Coarse buckets are battery
 fraction in 0.05 steps (with charging state), `floor(log2(1 + lux))`, and acceleration
-magnitude in 1 m/s² steps. They are **change filters**, not substitute measurements:
-read `view` for exact raw evidence. Capability/freshness/error/session transitions
-and action receipts also change this surface. No occupancy claim is made.
+in 1 m/s² steps. They are **change filters**, not substitute measurements:
+read `view` for exact raw evidence. Capability/freshness/error/session transitions,
+connected-link RSSI status/value/reason changes, Bluetooth LE status/value/error/
+freshness changes, and action receipts also change this surface. RSSI dBm is included
+only while fresh; stale and unavailable statuses remain visible without a value.
+Sequence and timestamp churn with unchanged RSSI or BLE evidence does not repeat an
+event. No occupancy claim is made.
 
 When two adjacent retained light observations in the same phone session are both
 fresh, not delayed at receipt, within the configured freshness interval, neither
@@ -85,12 +104,13 @@ receipt, or server-receipt time; the consumer does not synthesize them.
 `space` is the stable, credential-free JSON read-only adapter for core consumers.
 It prints a recomputed snapshot; the follower also atomically publishes the latest
 snapshot at `SITE/body/space.json`, outside the node-state directory. Schema v1
-includes producer entry point, source/node/session/cursor, transport/backlog/errors,
 last poll, capabilities, current light status/reason and validity window, usable lux
-with sequence/units/accuracy/age, phone sample and consumer receipt times, and the
-delayed-at-receipt flag. `last_light_transition` includes stable event ID and both
-endpoint readings as historical evidence. Missing protocol v1 phone monotonic time,
-host monotonic/boot receipt, server receipt, and acquisition span are explicit nulls;
+with sequence/units/accuracy/age, and connected-link `wifi_link_rssi` status,
+sequence, dBm, source, protocol event time, API `observed_at`, and consumer receipt.
+RSSI acquisition age and its unavailable reason are explicit; no room-proximity
+claim is made. `last_light_transition` includes stable event ID and both endpoint
+readings as historical evidence. Missing protocol v1 phone monotonic time, host
+monotonic/boot receipt, server receipt, and acquisition span are explicit nulls;
 consumers must not infer them. Use the CLI for current freshness; the published file
 is a cache whose `generated_at_utc` can age if the follower stops.
 During follow, each node checkpoint is durably saved and the complete multi-node

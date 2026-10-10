@@ -80,7 +80,10 @@ Subsequent observations:
 
 The app advertises only implemented hardware capabilities, not every Android API. `cap` reports hardware/API availability, not permission, freshness, reliability or proof of future success. Consumers must tolerate unknown event names and added key/value fields; an action command is deliberately parsed strictly. Never substitute zero for absent data.
 
+The current-link Wi-Fi RSSI observation uses `wifi_link_rssi_dbm=<signed dBm> source=androidbody_wifi_api observed_at=<phone Unix seconds>`. `observed_at` is when the app read the Android Wi-Fi API, not a timestamp supplied for the underlying RSSI measurement; its measurement age is unknown. Consumer receipt time is separate. Disconnected, invalid, and read-failure outcomes retain the same field name as `unavailable`, with a reason and the API-read observation time. No network identity or scan result is included.
+
 Times are integer Unix seconds according to the phone's wall clock. They are not server receipt times, synchronized clocks or ordering authorities. `age_ms` uses Android's elapsed real-time clock; sensor sample timestamps are mapped to approximate wall time when collected. Queue IDs, not timestamps, order records within one queue. `session` changes each ON session and contains no hardware identifier.
+For light and acceleration sample records, `sensor_time_ns` preserves the raw decimal `SensorEvent.timestamp` in nanoseconds (a nonnegative signed 64-bit value). It is an Android monotonic event timestamp, not Unix time or a receipt time. Consumers may compare only records for the same sensor and the same hello `session`; missing/out-of-range timestamps or missing sessions are incomparable. A session partitions ON sessions but does not prove boot identity. This field does not change existing wall-time or `age_ms` freshness behavior.
 
 ## Delivery, collection and restart semantics
 

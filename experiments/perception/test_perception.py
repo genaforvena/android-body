@@ -15,6 +15,39 @@ class PerceptionTests(unittest.TestCase):
                        for offset, line in enumerate(lines, 1)).encode()
         watch.apply_page(state, watch.parse_page(body, state["cursor"]), received, more)
 
+    def test_sensor_monotonic_time_is_scoped_and_invalid_inputs_are_incomparable(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21 sensor_time_ns=123456789"])
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
+        self.assertEqual(node["light"]["sensor_time"],
+                         {"sensor_time_ns": 123456789,
+                          "scope": ["light", "s1"],
+                          "status": "same-sensor-session-only"})
+        self.assertEqual(node["light"]["phone_sample_epoch_s"], 1000)
+        self.assertEqual(node["light"]["age_ms_at_phone_collection"], 21)
+
+        for field, session in (("sensor_time_ns=01", "s1"),
+                               ("sensor_time_ns=-1", "s1"),
+                               ("sensor_time_ns=9223372036854775808", "s1"),
+                               ("sensor_time_ns=4", None),
+                               ("sensor_time_ns=4", "")):
+            item = watch.record(3, f"1000 light lux=12.5 accuracy=3 age_ms=21 {field}",
+                                1000, False)
+            self.assertIsNone(watch.sensor_time_scope(item, session))
+        missing = watch.record(3, "1000 light lux=12.5 accuracy=3 age_ms=21", 1000, False)
+        self.assertIsNone(watch.sensor_time_scope(missing, "s1"))
+
+        empty_session_state = self.state()
+        self.page(empty_session_state, [
+            "1000 hello node=note3 protocol=1 session=",
+            "1000 light lux=12.5 accuracy=3 age_ms=21 sensor_time_ns=4"])
+        light = watch.space_snapshot([empty_session_state], 1000, 30)["nodes"][0]["light"]
+        self.assertIsNone(light["sensor_time"])
+        self.assertEqual(light["sensor_time_reason"],
+                         "missing/invalid timestamp or session; incomparable")
+
+
     def test_dead_follower_views_age_without_mutating_checkpoint(self):
         state = self.state()
         self.page(state, ["1000 battery level=0.6 charging=false",
@@ -249,6 +282,265 @@ class PerceptionTests(unittest.TestCase):
         self.assertNotIn("magnitude=10.000", watch.render(state, 1000, 30))
         self.page(state, ["1000 acceleration x=0 y=0 z=10 age_ms=60000"])
         self.assertNotIn("magnitude=10.000", watch.render(state, 1000, 30))
+
+    def test_wifi_rssi_projection_separates_api_time_and_unknown_acquisition_age(self):
+        state = self.state()
+        self.page(state, ["1000 wifi_link_rssi_dbm=-57 source=androidbody_wifi_api "
+                          "observed_at=1700000000"], received=1002)
+        node = watch.space_snapshot([state], 1003, 30)["nodes"][0]
+        rssi = node["wifi_link_rssi"]
+        self.assertEqual(rssi["status"], "fresh-clock-conditional")
+        self.assertEqual(rssi["rssi_dbm"], -57)
+        self.assertEqual(rssi["units"], "dBm")
+        self.assertEqual(rssi["protocol_event_time_epoch_s"], 1000)
+        self.assertEqual(rssi["consumer_receipt_epoch_s"], 1002)
+        self.assertEqual(rssi["observed_at_api_read_time"], "1700000000")
+        self.assertIsNone(rssi["acquisition_age"])
+        rendered = watch.render(state, 1003, 30)
+        self.assertIn("acquisition age=unknown", rendered)
+
+        self.page(state, ["1003 wifi_link_rssi_dbm unavailable "
+                          "reason=disconnected source=androidbody_wifi_api "
+                          "observed_at=1700000003"], received=1004)
+        unavailable = watch.space_snapshot([state], 1005, 30)["nodes"][0]["wifi_link_rssi"]
+        self.assertEqual(unavailable["status"], "unavailable/fresh-clock-conditional")
+        self.assertIsNone(unavailable["rssi_dbm"])
+        self.assertEqual(unavailable["unavailable_reason"], "disconnected")
+        self.assertEqual(unavailable["sequence"], 2)
+
+    def test_wifi_rssi_capability_is_session_scoped_and_new_session_clears_sample(self):
+        state = self.state()
+        self.page(state, [
+            "1000 hello node=note3 protocol=1 session=s1",
+            "1000 cap wifi_link_rssi",
+            "1000 wifi_link_rssi_dbm=-57 source=androidbody_wifi_api "
+            "observed_at=1700000000",
+        ], received=1000)
+        node = watch.space_snapshot([state], 1001, 30)["nodes"][0]
+        self.assertEqual(node["capabilities"]["wifi_link_rssi"], "present")
+        self.assertEqual(node["wifi_link_rssi"]["rssi_dbm"], -57)
+
+        self.page(state, ["1002 hello node=note3 protocol=1 session=s2"], received=1002)
+        node = watch.space_snapshot([state], 1003, 30)["nodes"][0]
+        self.assertEqual(node["capabilities"]["wifi_link_rssi"], "unknown")
+        self.assertEqual(node["wifi_link_rssi"]["status"], "unknown/no-observation")
+        self.assertIsNone(node["wifi_link_rssi"]["rssi_dbm"])
+
+    def test_ble_status_projection_preserves_unknown_error_and_session_scope(self):
+        state = self.state()
+        initial = watch.space_snapshot([state], 1000, 30)["nodes"][0]
+        self.assertEqual(initial["bluetooth_le"]["status"], "unknown/no-observation")
+        self.page(state, [
+            "1000 hello node=note3 protocol=1 session=s1",
+            "1000 ble_status source=androidbody_bluetooth_api api=21 "
+            "api_surface=platform_sdk feature_ble=present adapter=enabled scanner_api=present "
+            "advertiser_api=present scanner_getter=returned advertiser_getter=null "
+            "advertiser_supported=unsupported "
+            "adapter_error=SecurityException",
+        ], received=1001)
+        view = watch.space_snapshot([state], 1002, 30)["nodes"][0]["bluetooth_le"]
+        self.assertEqual(view["status"], "fresh-clock-conditional")
+        self.assertEqual(view["api_surface"], "platform_sdk")
+        self.assertEqual(view["adapter"], "enabled")
+        self.assertEqual(view["advertiser_supported"], "unsupported")
+        self.assertEqual(view["errors"], {"adapter": "SecurityException"})
+        self.assertEqual(view["scanner_getter"], "returned")
+        self.assertEqual(view["advertiser_getter"], "null")
+        self.assertEqual(view["sequence"], 2)
+        self.assertNotIn("bluetooth_le", state["capabilities"])
+
+        self.page(state, [
+            "1002 ble_status source=androidbody_bluetooth_api api=21 "
+            "feature_ble=query_error adapter=error scanner_api=unavailable "
+            "advertiser_api=error advertiser_supported=error "
+            "feature_ble_error=SecurityException",
+        ], received=1003)
+        view = watch.space_snapshot([state], 1004, 30)["nodes"][0]["bluetooth_le"]
+        self.assertEqual(view["feature_ble"], "query_error")
+        self.assertEqual(view["adapter"], "error")
+        self.assertEqual(view["errors"], {"feature_ble": "SecurityException"})
+        self.assertNotIn("bluetooth_le", state["capabilities"])
+        stale = watch.space_snapshot([state], 1034, 30)["nodes"][0]["bluetooth_le"]
+        self.assertEqual(stale["status"], "stale")
+        self.assertIsNone(stale["feature_ble"])
+        self.assertIsNone(stale["adapter"])
+        self.assertIsNone(stale["api_surface"])
+        self.assertIsNone(stale["scanner_getter"])
+        self.assertIsNone(stale["advertiser_getter"])
+        self.assertEqual(stale["errors"], {})
+        self.page(state, [
+            "1004 ble_status source=androidbody_bluetooth_api api=21 "
+            "feature_ble=present adapter=enabled scanner_api=present "
+            "advertiser_api=present advertiser_supported=supported",
+        ], received=1004)
+        view = watch.space_snapshot([state], 1005, 30)["nodes"][0]["bluetooth_le"]
+        self.assertIsNone(view["api_surface"])
+
+        self.page(state, [
+            "1005 ble_status source=androidbody_bluetooth_api api=21 "
+            "api_surface=hardware_supported feature_ble=present adapter=enabled "
+            "scanner_api=present advertiser_api=present advertiser_supported=supported",
+        ], received=1005)
+        view = watch.space_snapshot([state], 1006, 30)["nodes"][0]["bluetooth_le"]
+        self.assertIsNone(view["api_surface"])
+
+        self.page(state, ["1005 hello node=note3 protocol=1 session=s2"], received=1005)
+        view = watch.space_snapshot([state], 1006, 30)["nodes"][0]["bluetooth_le"]
+        self.assertEqual(view["status"], "unknown/no-observation")
+        self.assertIsNone(view["feature_ble"])
+
+    def test_wifi_rssi_rejects_invalid_sentinels_and_out_of_range_values(self):
+
+        for value in ("0", "1", "-127", "-128", "nan", "inf"):
+            with self.subTest(value=value):
+                state = self.state()
+                self.page(state, [
+                    "1000 wifi_link_rssi_dbm=" + value
+                    + " source=androidbody_wifi_api observed_at=1700000000"
+                ], received=1002)
+                item = state["latest"]["wifi_link_rssi_dbm"]
+                self.assertEqual(
+                    watch.wifi_rssi_status(item, 1003, 30),
+                    "unknown/invalid-or-missing-rssi")
+                snapshot = watch.wifi_rssi_snapshot(item, 1003, 30)
+                self.assertIsNone(snapshot["rssi_dbm"])
+
+    def test_wifi_rssi_compact_events_track_value_freshness_and_unavailable(self):
+        state = self.state()
+        self.page(state, [
+            "1000 wifi_link_rssi_dbm=-57 source=androidbody_wifi_api "
+            "observed_at=1700000000",
+        ], received=1000)
+        self.assertTrue(watch.update_events(state, 1000, 30))
+        self.assertIn("wifi_link_rssi=fresh-clock-conditional rssi_dbm=-57",
+                      state["events"][-1])
+
+        self.page(state, [
+            "1001 wifi_link_rssi_dbm=-63 source=androidbody_wifi_api "
+            "observed_at=1700000001",
+        ], received=1001)
+        self.assertTrue(watch.update_events(state, 1001, 30))
+        self.assertIn("rssi_dbm=-63", state["events"][-1])
+        count = len(state["events"])
+        self.page(state, [
+            "1002 wifi_link_rssi_dbm=-63 source=androidbody_wifi_api "
+            "observed_at=1700000002",
+        ], received=1002)
+        self.assertFalse(watch.update_events(state, 1002, 30))
+        self.assertEqual(len(state["events"]), count)
+
+        self.assertTrue(watch.update_events(state, 1033, 30))
+        self.assertIn("wifi_link_rssi=stale rssi_dbm=None", state["events"][-1])
+        self.assertIn("rssi_dbm=None", watch.render_events(state, 1033, 30))
+
+        self.page(state, [
+            "1033 wifi_link_rssi_dbm unavailable reason=disconnected "
+            "source=androidbody_wifi_api observed_at=1700000033",
+        ], received=1033)
+        self.assertTrue(watch.update_events(state, 1033, 30))
+        self.assertIn("wifi_link_rssi=unavailable/fresh-clock-conditional "
+                      "rssi_dbm=None reason=disconnected", state["events"][-1])
+        count = len(state["events"])
+        self.page(state, [
+            "1034 wifi_link_rssi_dbm unavailable reason=permission_denied "
+            "source=androidbody_wifi_api observed_at=1700000034",
+        ], received=1034)
+        self.assertTrue(watch.update_events(state, 1034, 30))
+        self.assertEqual(len(state["events"]), count + 1)
+        self.assertIn("wifi_link_rssi=unavailable/fresh-clock-conditional "
+                      "rssi_dbm=None reason=permission_denied",
+                      state["events"][-1])
+
+    def test_ble_compact_events_track_status_errors_freshness_not_timestamps(self):
+        state = self.state()
+        self.page(state, [
+            "1000 ble_status source=androidbody_bluetooth_api api=21 "
+            "api_surface=platform_sdk feature_ble=present adapter=enabled "
+            "scanner_api=present advertiser_api=present advertiser_supported=supported",
+        ], received=1000)
+        self.assertTrue(watch.update_events(state, 1000, 30))
+        self.assertIn("bluetooth_le=fresh-clock-conditional", state["events"][-1])
+        self.assertIn("adapter=enabled", state["events"][-1])
+        self.assertIn("bluetooth_le fresh-clock-conditional",
+                      watch.render_events(state, 1000, 30))
+
+        self.page(state, [
+            "1001 ble_status source=androidbody_bluetooth_api api=21 "
+            "api_surface=platform_sdk feature_ble=present adapter=enabled "
+            "scanner_api=present advertiser_api=present advertiser_supported=supported",
+        ], received=1001)
+        count = len(state["events"])
+        self.assertFalse(watch.update_events(state, 1001, 30))
+        self.assertEqual(len(state["events"]), count)
+
+        self.page(state, [
+            "1002 ble_status source=androidbody_bluetooth_api api=21 "
+            "api_surface=platform_sdk feature_ble=present adapter=disabled "
+            "scanner_api=present advertiser_api=present advertiser_supported=supported",
+        ], received=1002)
+        self.assertTrue(watch.update_events(state, 1002, 30))
+        self.assertIn("adapter=disabled", state["events"][-1])
+
+        self.page(state, [
+            "1003 ble_status source=androidbody_bluetooth_api api=21 "
+            "api_surface=platform_sdk feature_ble=query_error adapter=error "
+            "feature_ble_error=SecurityException",
+        ], received=1003)
+        self.assertTrue(watch.update_events(state, 1003, 30))
+        self.assertIn("feature=query_error", state["events"][-1])
+        self.assertIn("'feature_ble': 'SecurityException'", state["events"][-1])
+
+        self.assertTrue(watch.update_events(state, 1034, 30))
+        self.assertIn("bluetooth_le=stale", state["events"][-1])
+
+
+    def test_ble_compact_key_tracks_provenance_support_and_stale_recovery(self):
+        state = self.state()
+        base = (
+            "api=21 api_surface=platform_sdk feature_ble=present "
+            "adapter=enabled scanner_api=present advertiser_api=present "
+            "scanner_getter=returned advertiser_getter=unavailable "
+            "advertiser_supported=supported")
+
+        def add(sequence, details, received):
+            self.page(state, [
+                f"{sequence} ble_status source=androidbody_bluetooth_api "
+                f"{details}",
+            ], received=received)
+
+        add(1000, base, 1000)
+        self.assertTrue(watch.update_events(state, 1000, 30))
+        for index, (old, new) in enumerate((
+                ("api=21", "api=22"),
+                ("scanner_api=present", "scanner_api=error"),
+                ("advertiser_api=present", "advertiser_api=error"),
+                ("advertiser_supported=supported", "advertiser_supported=unsupported"),
+                ("scanner_getter=returned", "scanner_getter=null"))):
+            details = base.replace(old, new)
+            add(1001 + index, details, 1001 + index)
+            self.assertTrue(watch.update_events(state, 1001 + index, 30))
+        self.assertIn("scanner_getter=null", state["events"][-1])
+        self.assertIn("api=22", state["events"][1])
+        count = len(state["events"])
+        errors = ("scanner_api_error=SecurityException "
+                  "adapter_error=IllegalStateException")
+        add(1005, base + " " + errors, 1005)
+        self.assertTrue(watch.update_events(state, 1005, 30))
+        add(1006, base + " adapter_error=IllegalStateException "
+            "scanner_api_error=SecurityException", 1006)
+        self.assertFalse(watch.update_events(state, 1006, 30))
+        key = watch.compact_key(state, 1006, 30)[7]
+        self.assertEqual(key[-1], [("adapter", "IllegalStateException"),
+                                   ("scanner_api", "SecurityException")])
+        self.assertEqual(len(state["events"]), count + 1)
+        self.assertTrue(watch.update_events(state, 1037, 30))
+        add(1037, base, 1037)
+        self.assertTrue(watch.update_events(state, 1037, 30))
+        self.assertIn("bluetooth_le=fresh-clock-conditional", state["events"][-1])
+
+
+
+
 
     def test_invalid_page_cannot_advance_checkpoint(self):
         state = self.state()

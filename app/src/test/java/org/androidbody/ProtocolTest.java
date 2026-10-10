@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: CC0-1.0
 package org.androidbody;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.nio.charset.Charset;
 import java.util.List;
 
 /** Zero-dependency JVM tests: run tools/test-protocol.sh. */
@@ -15,9 +18,32 @@ public final class ProtocolTest {
         try { block.run(); } catch (IllegalArgumentException expected) { return; }
         throw new AssertionError("Expected rejection");
     }
+    private static void probeRejects(final int uid, final java.io.InputStream status, Class<? extends Exception> type) {
+        count++;
+        try { ExecutionProbe.observation(uid, status); }
+        catch (Exception e) { if (type.isInstance(e)) return; throw new AssertionError(e); }
+        throw new AssertionError("Expected " + type.getSimpleName());
+    }
+    private static void probeRejects(final int uid, final byte[] status, Class<? extends Exception> type) {
+        probeRejects(uid, new ByteArrayInputStream(status), type);
+    }
     private static void badBody(final String body) { rejects(new Runnable() { public void run() { Protocol.actions(body, 0); } }); }
     private static void badEndpoint(final String endpoint) { rejects(new Runnable() { public void run() { Protocol.endpoint(endpoint, true); } }); }
     public static void main(String[] ignored) {
+        equal("wifi_link_rssi_dbm=-61 source=androidbody_wifi_api observed_at=123",
+                WifiRssi.event(true, -61, 123));
+        equal("wifi_link_rssi_dbm unavailable reason=disconnected source=androidbody_wifi_api observed_at=123",
+                WifiRssi.event(false, -61, 123));
+        equal("wifi_link_rssi_dbm unavailable reason=invalid_rssi source=androidbody_wifi_api observed_at=123",
+                WifiRssi.event(true, -127, 123));
+        equal("wifi_link_rssi_dbm unavailable reason=invalid_rssi source=androidbody_wifi_api observed_at=123",
+                WifiRssi.event(true, 0, 123));
+        equal("wifi_link_rssi_dbm unavailable reason=invalid_rssi source=androidbody_wifi_api observed_at=123",
+                WifiRssi.event(true, 1, 123));
+        equal("wifi_link_rssi_dbm unavailable reason=invalid_rssi source=androidbody_wifi_api observed_at=123",
+                WifiRssi.event(true, Integer.MAX_VALUE, 123));
+        equal("wifi_link_rssi_dbm unavailable reason=permission_denied source=androidbody_wifi_api observed_at=123",
+                WifiRssi.unavailable("permission_denied", 123));
         equal("https://example.org/node/note3", Protocol.endpoint(" https://example.org/node/note3/ ", false));
         equal("http://192.168.1.2:8080/node/xiaomi", Protocol.endpoint("http://192.168.1.2:8080/node/xiaomi", true));
         equal("https://[::1]/node/a", Protocol.endpoint("https://[::1]/node/a", false));
@@ -63,6 +89,22 @@ public final class ProtocolTest {
         rejects(new Runnable() { public void run() { Protocol.acknowledgment("0\n", 1); } });
         rejects(new Runnable() { public void run() { Protocol.acknowledgment("01\n", 1); } });
         rejects(new Runnable() { public void run() { Protocol.acknowledgment("9007199254740992\n", 1); } });
+        try {
+            equal("probe identity uid=10452 groups=1003 3003", ExecutionProbe.observation(10452,
+                    new ByteArrayInputStream("Name:\\tapp\\nGroups:\\t1003 3003\\n".replace("\\t", "\t").replace("\\n", "\n").getBytes(Charset.forName("US-ASCII")))));
+        } catch (IOException e) { throw new AssertionError(e); }
+        try {
+            ExecutionProbe.observation(10452, new ByteArrayInputStream("Name:\\tapp\\n".replace("\\t", "\t").replace("\\n", "\n").getBytes(Charset.forName("US-ASCII"))));
+            throw new AssertionError("Missing Groups row accepted");
+        } catch (IOException expected) { count++; }
+        probeRejects(1, "Name:\\tapp\\nGroups:\\t1 x\\n".replace("\\t", "\t").replace("\\n", "\n").getBytes(Charset.forName("US-ASCII")), IOException.class);
+        byte[] oversized = new byte[4097];
+        java.util.Arrays.fill(oversized, (byte) 'x');
+        probeRejects(1, oversized, IOException.class);
+        probeRejects(1, new ByteArrayInputStream(new byte[1]) {
+            @Override public synchronized int read(byte[] target, int offset, int length) { return 0; }
+        }, IOException.class);
+        probeRejects(-1, new byte[0], IllegalArgumentException.class);
         System.out.println("Protocol: " + count + " assertions passed");
     }
 }

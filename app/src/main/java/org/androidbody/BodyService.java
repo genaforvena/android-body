@@ -19,6 +19,7 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
@@ -207,9 +208,19 @@ public final class BodyService extends Service {
             if (!session.active) return;
             session.spool = new ObservationSpool(Settings.spoolDirectory(this, session.endpoint, true));
             if (!session.active) return;
-            String hello = Protocol.event("hello node=" + Protocol.node(session.endpoint) + " protocol=1 session=" + UUID.randomUUID())
+            String sessionId = UUID.randomUUID().toString();
+            String hello = Protocol.event("hello node=" + Protocol.node(session.endpoint) + " protocol=1 session=" + sessionId)
                     + Protocol.event("android sdk=" + Build.VERSION.SDK_INT) + session.sensors.capabilities()
                     + Protocol.event(session.vibrator != null && session.vibrator.hasVibrator() ? "cap vibration" : "actuator vibration absent");
+            try {
+                FileInputStream statusFile = new FileInputStream("/proc/self/status");
+                String identity;
+                try { identity = ExecutionProbe.observation(android.os.Process.myUid(), statusFile); }
+                finally { statusFile.close(); }
+                hello += Protocol.event(identity + " session=" + sessionId);
+            } catch (IOException | SecurityException e) {
+                hello += Protocol.event("probe identity unavailable reason=" + e.getClass().getSimpleName() + " session=" + sessionId);
+            }
             long pending = session.preferences.getLong(session.cursorKey + "_pending", 0);
             if (pending > 0) hello += Protocol.event("action " + pending + " unknown reason=interrupted verification=unverified");
             session.spool.enqueue(hello);

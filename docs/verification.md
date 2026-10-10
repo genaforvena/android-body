@@ -122,6 +122,8 @@ On 2026-10-07, the separate `:ble-probe` diagnostic was rebuilt from committed s
 
 This verifies JVM report formatting and Android compile/package/lint/signature only. No APK installation, Note3 API result, Bluetooth operation, RF result, cleanup, or production observation was verified. Device BLE capability and RF feasibility remain unknown. The diagnostic does not scan, advertise, toggle Bluetooth, or enter production observation history; preserve Android Body's existing package and data.
 
+The production `BleStatus` source now calls the API21 scanner and advertiser getters and records `scanner_getter` / `advertiser_getter` as `returned`, `null`, `error`, or `unavailable`, distinct from `scanner_api` / `advertiser_api` SDK-surface fields. This is read-only getter access; it does not scan, advertise, toggle Bluetooth, or establish radio reception/transmission. API<21 and a null adapter report `unavailable`. Verification attempt on 2026-10-08 could not compile this source: Gradle requires Java 11+, but only Java 8 is installed and `javac` is unavailable. `tools/test-protocol.sh` also failed because it fell back to `java -m`, unsupported by this Java 8 runtime. No source-level build, lint, install or Note3 observation passed; installed APK and physical getter/RF behavior remain unchanged and unknown.
+
 ## Reproduce the host checks
 
 ```sh

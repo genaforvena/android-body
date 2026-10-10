@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: CC0-1.0
 package org.androidbody;
 
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -9,6 +8,8 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
 import android.os.BatteryManager;
 import android.os.SystemClock;
 
@@ -16,6 +17,7 @@ import android.os.SystemClock;
 final class Sensors implements SensorEventListener {
     private final Context context;
     private final SensorManager manager;
+    private final WifiManager wifi;
     private final Sensor light;
     private final Sensor acceleration;
     private String lightError = "no_sample";
@@ -25,6 +27,8 @@ final class Sensors implements SensorEventListener {
     private float x, y, z;
     private long lightTime;
     private long accelerationTime;
+    private long lightSensorTimeNs;
+    private long accelerationSensorTimeNs;
     private int lightAccuracy;
     private int accelerationAccuracy;
     private String battery = "battery unavailable reason=no_sample";
@@ -34,6 +38,7 @@ final class Sensors implements SensorEventListener {
     Sensors(Context context) {
         this.context = context;
         manager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
+        wifi = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         light = manager == null ? null : manager.getDefaultSensor(Sensor.TYPE_LIGHT);
         acceleration = manager == null ? null : manager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
     }
@@ -55,7 +60,8 @@ final class Sensors implements SensorEventListener {
     String capabilities() {
         return Protocol.event("cap battery")
                 + Protocol.event(light == null ? "sensor light absent" : "cap light")
-                + Protocol.event(acceleration == null ? "sensor accelerometer absent" : "cap accelerometer");
+                + Protocol.event(acceleration == null ? "sensor accelerometer absent" : "cap accelerometer")
+                + Protocol.event("cap wifi_link_rssi");
     }
     private synchronized void battery(Intent intent) {
         int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
@@ -70,33 +76,48 @@ final class Sensors implements SensorEventListener {
         long time = event.timestamp / 1000000L;
         if (event.sensor.getType() == Sensor.TYPE_LIGHT) {
             if (event.values.length < 1 || !finite(event.values[0]) || event.values[0] < 0) { lightError = "invalid_sample"; lightTime = 0; return; }
-            lux = event.values[0]; lightTime = time; lightAccuracy = event.accuracy; lightError = null;
+            lux = event.values[0]; lightTime = time; lightSensorTimeNs = event.timestamp; lightAccuracy = event.accuracy; lightError = null;
         } else if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
             if (event.values.length < 3 || !finite(event.values[0]) || !finite(event.values[1]) || !finite(event.values[2])) {
                 accelerationError = "invalid_sample"; accelerationTime = 0; return;
             }
             x = event.values[0]; y = event.values[1]; z = event.values[2];
-            accelerationTime = time; accelerationAccuracy = event.accuracy; accelerationError = null;
+            accelerationTime = time; accelerationSensorTimeNs = event.timestamp; accelerationAccuracy = event.accuracy; accelerationError = null;
         }
     }
     @Override public void onAccuracyChanged(Sensor sensor, int accuracy) { }
     synchronized String snapshot() {
         long now = SystemClock.elapsedRealtime();
         StringBuilder body = new StringBuilder(Protocol.event(battery));
+        body.append(Protocol.event(wifiRssi()));
+        body.append(Protocol.event(BleStatus.snapshot(context)));
         if (light == null) body.append(Protocol.event("light unavailable reason=absent"));
         else if (lightError != null) body.append(Protocol.event("light unavailable reason=" + lightError));
         else if (now < lightTime || now - lightTime > 60000) body.append(Protocol.event("light unavailable reason=stale"));
-        else body.append(sample(lightTime, now, "light lux=" + lux + " accuracy=" + lightAccuracy));
+        else body.append(sample(lightTime, lightSensorTimeNs, now, "light lux=" + lux + " accuracy=" + lightAccuracy));
         if (acceleration == null) body.append(Protocol.event("acceleration unavailable reason=absent"));
         else if (accelerationError != null) body.append(Protocol.event("acceleration unavailable reason=" + accelerationError));
         else if (now < accelerationTime || now - accelerationTime > 15000) body.append(Protocol.event("acceleration unavailable reason=stale"));
-        else body.append(sample(accelerationTime, now, "acceleration x=" + x + " y=" + y + " z=" + z + " accuracy=" + accelerationAccuracy));
+        else body.append(sample(accelerationTime, accelerationSensorTimeNs, now, "acceleration x=" + x + " y=" + y + " z=" + z + " accuracy=" + accelerationAccuracy));
         return body.toString();
     }
-    private String sample(long time, long now, String value) {
+    private String wifiRssi() {
+        long observedAt = System.currentTimeMillis() / 1000L;
+        if (wifi == null) return WifiRssi.unavailable("service_absent", observedAt);
+        try {
+            WifiInfo info = wifi.getConnectionInfo();
+            return WifiRssi.event(info != null && info.getNetworkId() >= 0,
+                    info == null ? -127 : info.getRssi(), observedAt);
+        } catch (SecurityException e) {
+            return WifiRssi.unavailable("permission_denied", observedAt);
+        } catch (RuntimeException e) {
+            return WifiRssi.unavailable("read_failed", observedAt);
+        }
+    }
+    private String sample(long time, long sensorTimeNs, long now, String value) {
         long age = now - time;
         long epoch = (System.currentTimeMillis() - age) / 1000L;
-        return epoch + " " + value + " age_ms=" + age + "\n";
+        return epoch + " " + value + " age_ms=" + age + " sensor_time_ns=" + sensorTimeNs + "\n";
     }
     private static boolean finite(float value) { return !Float.isNaN(value) && !Float.isInfinite(value); }
 }
