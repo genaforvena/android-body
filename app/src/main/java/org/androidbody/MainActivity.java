@@ -191,6 +191,23 @@ public final class MainActivity extends Activity {
     private TextView label(String text, int size) { TextView v = new TextView(this); v.setText(text); v.setTextSize(size); v.setTextColor(Color.rgb(32, 50, 41)); return v; }
     private int dp(int value) { return (int) (value * getResources().getDisplayMetrics().density + 0.5f); }
     private void addGap(LinearLayout root, int size) { root.addView(new View(this), new LinearLayout.LayoutParams(1, dp(size))); }
-    @Override protected void onResume() { super.onResume(); Settings.honorUserStop(this); refresh.post(update); }
+    @Override protected void onResume() {
+        super.onResume();
+        Settings.honorUserStop(this);
+        restoreIfEnabled();
+        refresh.post(update);
+    }
     @Override protected void onPause() { refresh.removeCallbacks(update); super.onPause(); }
+
+    /** Restore a durably enabled session after a fresh install, update or process kill. */
+    private void restoreIfEnabled() {
+        if (clearing || !Settings.desiredOn(this) || BodyService.running) return;
+        try {
+            BodyService.createChannel(this);
+            Intent intent = new Intent(this, BodyService.class).setAction(BodyService.RESTORE);
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent); else startService(intent);
+        } catch (RuntimeException e) {
+            BodyService.status = "Paused by Android: open Body and press ON";
+        }
+    }
 }
