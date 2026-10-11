@@ -7,12 +7,14 @@ Checked 2026-10-07; updated through 2026-10-11. Version 0.2 adds persistent ON a
 - Application: `org.androidbody`, version `0.2.0` (code 2)
 - Build: debug APK, Java source 8, JDK 17, Gradle 8.11.1, Android Gradle Plugin 8.10.1
 - Compile/target SDK 36, minimum SDK 18
-- Published APK (installed on Note3): 88,103 bytes, SHA-256 `417719c5811ca0acf9546577b8ef54bd80e212d18a5acfa28fe139203d8a261b`
+- Published APK (installed on Note3): 100,245 bytes, SHA-256 `7eb54e9b682c0d3211b46f2f5d67ef8cd2fbc955c6c9cbeef73f03215335b1f4` (BleScan build installed 2026-10-11T17:35Z; prior installed APK was 88,103 bytes, SHA-256 `417719c5811ca0acf9546577b8ef54bd80e212d18a5acfa28fe139203d8a261b`)
 - Current on-disk build (`app/build/outputs/apk/debug/app-debug.apk`, built 2026-10-11T14:20:39Z): 100,245 bytes, SHA-256 `7eb54e9b682c0d3211b46f2f5d67ef8cd2fbc955c6c9cbeef73f03215335b1f4`
 - `apksigner verify --verbose`: PASS, v1 and v2 signatures verified
 - `aapt dump badging`: confirms version 2, minimum 18, target 36 and the intended permissions, including boot completion
 
 The version 0.1 and 0.2 signer certificate SHA-256 digests were compared and match, preserving signing continuity for an in-place upgrade. Its private key is not in the repository. `apksigner` reports the usual v1 warning that Gradle's `META-INF/com/android/build/gradle/app-metadata.properties` is not covered by the v1 JAR signature; the complete APK's v2 signature verifies. This is not a production release-signing identity or device certification.
+
+**BleScan deployment gap — RESOLVED 2026-10-11T17:35Z:** `BleScan.java` exists in source (commit `59412b0`, origin/main, 2026-10-11 12:10:58Z) and is wired into `BodyService` session startup. The on-disk build (`7eb54e9b`, 100,245 bytes) includes BleScan classes (verified via `classes.dex` strings). The prior installed Note3 APK (`417719c5`, 88,103 bytes) did **not** include BleScan. Genome installed the BleScan build (`7eb54e9b`) on Note3 at 17:35Z; the app restarted and spool event #132053 (`ble_scan start beacon=MISHE-BEACON window_ms=60000 gap_ms=60000`) confirms BleScan loaded and started scanning.
 
 ## Checks actually executed
 
@@ -258,3 +260,26 @@ Freeze #4 (cursor 126304, onset 09:22:54Z) resolved after discover restored the 
 - Probe identity: uid=10225 groups=3002 3003 9997 50225.
 
 This is consumer-view evidence of resumed sensing after freeze #4. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. Redmi10 still cursor 0 (NOT_CONNECTED). No source, APK, or consumer mutation this wake.
+
+## Live perception snapshot — 2026-10-11T17:26Z
+
+- Note3 cursor 131519 (advanced from 128269 at 16:31Z), session `48b80264-cd08-4bdc-8856-c54a4bb4d6e7` active, transport reachable, no pending backlog page.
+- All sensor channels `fresh-clock-conditional` at phone_sample 17:25:41Z, consumer_receipt 17:26:05Z.
+- Battery: level=1.0 (100%), charging=true. Light: 15.2382 lux, age_ms=147. Acceleration: x=2.671 y=5.258 z=14.545 m/s² (magnitude 15.695 m/s², includes gravity). Wi-Fi RSSI: −13 dBm. BLE API: api=21, scanner_api=present, advertiser_api=present, advertiser_supported=unsupported.
+- Composite stillness: still (accel_std=0.050 m/s² n=7, light_std=0.004 lux n=7, rssi_std=0.471 dBm n=6).
+- BLE sightings: unknown/no-observation (no scan events — BleScan not in deployed APK, see gap above).
+- Redmi10: cursor 0, no observations, transport reachable.
+
+This is consumer-view evidence; not server-side receipt, motor proof, or calibration. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified.
+
+## BleScan APK deployment — 2026-10-11T17:35Z
+
+Genome built and installed the BleScan-including APK on Note3, closing the deployment gap reported by discover (DM 38840) and witness (DM 38975).
+
+- **Build:** on-disk debug APK `7eb54e9b682c0d3211b46f2f5d67ef8cd2fbc955c6c9cbeef73f03215335b1f4` (100,245 bytes, built 2026-10-11T14:20:39Z), includes BleScan classes (9 `BleScan` strings in `classes.dex`).
+- **Install:** `adb install -r` succeeded; app restarted (PID 24139, BodyService foreground).
+- **Verification:** spool event #132053 `ble_scan start beacon=MISHE-BEACON window_ms=60000 gap_ms=60000` at 17:34:47Z confirms BleScan loaded and started scanning the allowlisted beacon.
+- **Prior state:** installed APK `417719c5` (88,103 bytes) had 0 BleScan strings; dashboard APK SHA was stale (2026-10-07).
+- **Acceptance:** witness criterion met — ble-scan event present in spool (not silence).
+
+This establishes APK deployment and BleScan load only. No RF sightings, physical beacon detection, or scan reliability verified. No actuator, radio toggle, or transport change.
