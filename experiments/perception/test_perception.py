@@ -549,6 +549,59 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(state["cursor"], 0)
         self.assertEqual(state["history"], [])
 
+    def test_node_status_hysteresis_requires_enter_and_exit_margins(self):
+        stale = 30
+        state = self.state()
+        self.page(state, ["1000 battery level=0.5 charging=true"], received=1000)
+        # No persisted label yet: raw status.
+        self.assertEqual(watch.node_status(state, 1020, stale), "fresh-clock-conditional")
+        state["node_status"] = "fresh-clock-conditional"
+        # Age 40 crosses the 30s threshold but not the 45s enter margin: damped fresh.
+        self.assertEqual(watch.node_status(state, 1040, stale), "fresh-clock-conditional")
+        # Sensor-level freshness is undamped.
+        self.assertEqual(watch.sensor_status(state["latest"]["battery"], 1040, stale), "stale")
+        # Age 46 exceeds the enter margin: node label flips.
+        self.assertEqual(watch.node_status(state, 1046, stale), "stale/phone-silent-or-delayed")
+        state["node_status"] = "stale/phone-silent-or-delayed"
+        # Age 30 recovery is not below the 20s exit margin: stays stale.
+        self.assertEqual(watch.node_status(state, 1030, stale), "stale/phone-silent-or-delayed")
+        # Age 19 is below the exit margin: returns fresh.
+        self.assertEqual(watch.node_status(state, 1019, stale), "fresh-clock-conditional")
+
+    def test_node_status_hysteresis_passes_through_anomalies_and_unknown_label(self):
+        state = self.state()
+        self.page(state, ["1000 battery level=0.5 charging=true"], received=1000)
+        # Phone clock ahead of the consumer: anomaly stays visible.
+        self.assertEqual(watch.node_status(state, 990, 30), "unknown-clock-future")
+        state["node_status"] = "fresh-clock-conditional"
+        self.assertEqual(watch.node_status(state, 990, 30), "unknown-clock-future")
+        # A non-steady persisted label returns the threshold status without hysteresis.
+        state["node_status"] = "unknown/no-observations"
+        self.assertEqual(watch.node_status(state, 1040, 30), "stale/phone-silent-or-delayed")
+
+    def test_node_status_hysteresis_survives_state_round_trip(self):
+        stale = 30
+        state = self.state()
+        self.page(state, ["1000 battery level=0.5 charging=true"], received=1000)
+        state["node_status"] = "stale/phone-silent-or-delayed"
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "note3.json"
+            watch.save(path, state)
+            loaded = watch.load(path, "note3", "http://127.0.0.1:8765/node/note3")
+        self.assertEqual(loaded["node_status"], "stale/phone-silent-or-delayed")
+        self.assertEqual(watch.node_status(loaded, 1030, stale), "stale/phone-silent-or-delayed")
+        self.assertEqual(watch.node_status(loaded, 1019, stale), "fresh-clock-conditional")
+
+    def test_node_status_hysteresis_keeps_flap_out_of_compact_key(self):
+        state = self.state()
+        self.page(state, ["1000 battery level=0.5 charging=true"], received=1000)
+        state["node_status"] = "fresh-clock-conditional"
+        # The damped node label stays fresh at age 40 while the battery
+        # sensor evidence honestly reports stale.
+        key = watch.compact_key(state, 1040, 30)
+        self.assertEqual(key[0], "fresh-clock-conditional")
+        self.assertEqual(key[4][0][1], "stale")
+
 
 if __name__ == "__main__":
     unittest.main()

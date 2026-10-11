@@ -21,6 +21,9 @@ EVENTS = 16
 SENSORS = ("battery", "light", "acceleration")
 CAPABILITIES = ("battery", "light", "accelerometer", "vibration", "wifi_link_rssi", "bluetooth_le")
 
+NODE_STATUS_ENTER_MARGIN = 15.0
+NODE_STATUS_EXIT_MARGIN = 10.0
+
 
 def atomic(path, content):
     """Commit one private file, including its directory entry, on a local filesystem."""
@@ -266,6 +269,14 @@ def ble_status_snapshot(item, now, stale):
 
 
 def node_status(state, now, stale):
+    """Node liveness with hysteresis against publish-cadence flap.
+
+    Enter stale only when the latest sample age exceeds the threshold by
+    NODE_STATUS_ENTER_MARGIN; return fresh only once it falls back below the
+    threshold minus NODE_STATUS_EXIT_MARGIN. Sensor-level freshness semantics
+    are unchanged; only the node label is damped. The follower persists the
+    emitted label in node state so the next poll applies the margins.
+    """
     if not state["history"]:
         return "unknown/no-observations"
     if state["has_more"]:
@@ -276,9 +287,20 @@ def node_status(state, now, stale):
         return "unknown/no-phone-clock"
     latest = max(recent, key=lambda item: item["collected"])
     status = freshness(latest, now, stale)
+    previous = state.get("node_status")
     if status == "stale":
+        status = "stale/phone-silent-or-delayed"
+    if status == "unknown-clock-future" or previous not in (
+            "fresh-clock-conditional", "stale/phone-silent-or-delayed"):
+        return status
+    age = now - latest["collected"]
+    if previous == "stale/phone-silent-or-delayed":
+        if status == "fresh-clock-conditional" and age < stale - NODE_STATUS_EXIT_MARGIN:
+            return "fresh-clock-conditional"
+        return previous
+    if status == "stale/phone-silent-or-delayed" and age > stale + NODE_STATUS_ENTER_MARGIN:
         return "stale/phone-silent-or-delayed"
-    return status
+    return previous
 
 
 def transport(state, now, stale):
@@ -686,6 +708,7 @@ def follow(args, directory):
                     state.update(poll_at=time.time(), error="invalid-response")
                 now = time.time()
                 changed = update_events(state, now, args.stale_seconds)
+                state["node_status"] = node_status(state, now, args.stale_seconds)
                 save(path, state)
                 if changed:
                     print(state["events"][-1], flush=True)
