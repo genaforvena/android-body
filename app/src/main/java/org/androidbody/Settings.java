@@ -42,6 +42,7 @@ final class Settings {
         } catch (IOException | IllegalArgumentException e) { return false; }
     }
     static synchronized boolean arm(Context context, String endpoint) {
+        if (desiredOn(context)) return true;
         File file = marker(context);
         File temp = new File(context.getFilesDir(), "run-enabled.tmp");
         try {
