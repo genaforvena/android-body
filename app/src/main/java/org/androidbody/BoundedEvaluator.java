@@ -2,11 +2,11 @@
 package org.androidbody;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.Charset;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -185,7 +185,7 @@ public final class BoundedEvaluator {
 
     private static String identity() {
         try {
-            byte[] bytes = Files.readAllBytes(Paths.get("/proc/self/status"));
+            byte[] bytes = readBoundedBytes("/proc/self/status", MAX_STATUS_BYTES);
             String text = new String(bytes, ASCII);
             int uid = -1;
             for (String line : text.split("\\n")) {
@@ -202,9 +202,30 @@ public final class BoundedEvaluator {
         }
     }
 
+    /**
+     * Read at most {@code maxBytes} from {@code path} using only API-1 classes.
+     * @throws IOException if the file cannot be read or exceeds the bound
+     */
+    private static byte[] readBoundedBytes(String path, int maxBytes) throws IOException {
+        InputStream in = new FileInputStream(path);
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] chunk = new byte[1024];
+            int total = 0;
+            int n;
+            while ((n = in.read(chunk)) != -1) {
+                total += n;
+                if (total > maxBytes) throw new IOException("read exceeds bound");
+                out.write(chunk, 0, n);
+            }
+            return out.toByteArray();
+        } finally {
+            in.close();
+        }
+    }
+
     private static String read(String path) throws IOException {
-        byte[] bytes = Files.readAllBytes(Paths.get(path));
-        if (bytes.length > MAX_STATUS_BYTES) throw new IOException("read exceeds bound");
+        byte[] bytes = readBoundedBytes(path, MAX_STATUS_BYTES);
         return new String(bytes, ASCII);
     }
 
