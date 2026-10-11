@@ -175,3 +175,7 @@ python3 -m unittest discover -s experiments/perception
 ```
 
 Install dependencies from official vendors, accept the SDK agreement, and keep generated signing keys outside version control. The Gradle distribution checksum is pinned. Recheck APK size/hash after source/resource changes; independently signed/debug-built artifacts can have different bytes and upgrade identities.
+
+## Executed identity probe — 2026-10-11
+
+On 2026-10-11 at ~07:45Z, senses executed the bounded identity probe proposed by discover (DM 34840): one read-only command, `timeout 10 rtk adb -s 4d00553d61ab90b7 shell "dumpsys package org.androidbody | grep -E 'userId=|versionCode|versionName|Package \[org.androidbody\]|Signature|cert|firstInstallTime|lastInstallTime|apkSigningVersion'"`, no camera/mic/location/radio/actuator. Output: `userId=10224 gids=[3002, 3003]`, `versionCode=2 targetSdk=36`, `versionName=0.2.0`, `firstInstallTime=2026-10-11 03:57:46` (device-local, Europe/Moscow), `signatures=PackageSignatures{54bb898 [310c18f1]}`. The uid independently confirms the APK's in-band session-start emission (#104569, 02:19:41Z), which predates the probe proposal by 4h41m and is not an executed probe (witness DM 34974). versionCode/versionName match `app/build.gradle` and the published APK 417719c5. The dumpsys signature form cannot be compared to certificate SHA-256 `039da447…`, so signing continuity is not established by this probe. Full evidence: `artifacts/senses-wake34985-identity-probe.md` (ignored site).
