@@ -51,7 +51,13 @@ public final class BoundedEvaluator {
         paths.add("/proc/meminfo");
         ALLOWED_READS = paths;
     }
-    private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool();
+    private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool(new java.util.concurrent.ThreadFactory() {
+        @Override public Thread newThread(Runnable r) {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        }
+    });
 
     /** Clock abstraction for testability (defaults to SystemClock.elapsedRealtime()). */
     public interface Clock {

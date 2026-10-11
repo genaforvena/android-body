@@ -167,5 +167,6 @@ public final class BoundedEvaluatorTest {
 
         // Summary
         System.out.println("BoundedEvaluatorTest: " + count + " tests passed");
+        BoundedEvaluator.shutdown();
     }
 }
