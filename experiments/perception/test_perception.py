@@ -1050,5 +1050,88 @@ class PerceptionTests(unittest.TestCase):
             self.assertIn("light_oscillation=0->1->0", line)
             self.assertIn("light_transient=revert", line)
 
+    def test_class_b_detector_fires_on_cursor_freeze_with_null_lux(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            # Session s1: two null-lux reads
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                      received=1000, log_dir=log_dir)
+            # First call seeds prev state
+            watch.detect_class_b_stop(state, log_dir)
+            # Second poll: cursor frozen, still null-lux
+            detection = watch.detect_class_b_stop(state, log_dir)
+            self.assertIsNotNone(detection)
+            self.assertEqual(detection["trigger"], "cursor-freeze")
+            self.assertEqual(detection["null_lux_consecutive"], 2)
+            self.assertEqual(detection["cursor"], state["cursor"])
+
+    def test_class_b_detector_fires_on_session_change_with_null_lux(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            # Session s1 with null-lux
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000"],
+                      received=1000, log_dir=log_dir)
+            watch.detect_class_b_stop(state, log_dir)
+            # Session s2 with null-lux (session change)
+            # Session s2 with 2 null-lux reads (session change)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=3000"],
+                      received=1001, log_dir=log_dir)
+            detection = watch.detect_class_b_stop(state, log_dir)
+            self.assertIsNotNone(detection)
+            self.assertEqual(detection["trigger"], "session-change")
+            self.assertEqual(detection["null_lux_consecutive"], 2)
+
+    def test_class_b_detector_silent_without_null_lux(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            # Session s1: non-null-lux
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0 phone_elapsed_ms=1000"],
+                      received=1000, log_dir=log_dir)
+            watch.detect_class_b_stop(state, log_dir)
+            # Cursor frozen but no null-lux
+            detection = watch.detect_class_b_stop(state, log_dir)
+            self.assertIsNone(detection)
+
+    def test_class_b_detector_no_repeat_for_same_cursor_session(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                      received=1000, log_dir=log_dir)
+            watch.detect_class_b_stop(state, log_dir)
+            detection1 = watch.detect_class_b_stop(state, log_dir)
+            self.assertIsNotNone(detection1)
+            # Same cursor/session: no repeat
+            detection2 = watch.detect_class_b_stop(state, log_dir)
+            self.assertIsNone(detection2)
+
+    def test_class_b_detector_bounded_output(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            # Generate CLASS_B_DETECTOR_LINES + 5 detections
+            for i in range(watch.CLASS_B_DETECTOR_LINES + 5):
+                state["cursor"] = 100 + i
+                state["session"] = f"s{i}"
+                state["history"] = [{"kind": "light", "fields": {"lux": 0.0}},
+                                     {"kind": "light", "fields": {"lux": 0.0}}]
+                state.pop("_class_b_detected_cursor", None)
+                state.pop("_class_b_detected_session", None)
+                watch.detect_class_b_stop(state, log_dir)
+            path = log_dir / "class-b-detectors.jsonl"
+            lines = path.read_text(encoding="utf-8").strip().split("\n")
+            self.assertEqual(len(lines), watch.CLASS_B_DETECTOR_LINES)
+
 if __name__ == "__main__":
     unittest.main()

@@ -388,6 +388,78 @@ def emit_excursion(log_dir, state, now):
         previous = []
     atomic(path, "\n".join([*previous, line][-EXCURSION_LOG_LINES:]) + "\n")
 
+CLASS_B_MIN_NULL_LUX = 2
+CLASS_B_DETECTOR_LINES = 128
+
+
+def detect_class_b_stop(state, log_dir):
+    """Detect class-B stop: emission halt with null-lux reads across time.
+
+    Fires on (session change with null-lux) OR (cursor freeze with null-lux).
+    Null-lux = light=0.0 persists across >= CLASS_B_MIN_NULL_LUX consecutive
+    retention events. Emits bounded JSONL to log_dir/class-b-detectors.jsonl.
+    """
+    if log_dir is None:
+        return None
+
+    cursor = state["cursor"]
+    session = state["session"]
+    prev_cursor = state.get("_class_b_prev_cursor")
+    prev_session = state.get("_class_b_prev_session")
+
+    state["_class_b_prev_cursor"] = cursor
+    state["_class_b_prev_session"] = session
+
+    if prev_cursor is None or prev_session is None:
+        return None
+
+    if (cursor == state.get("_class_b_detected_cursor") and
+            session == state.get("_class_b_detected_session")):
+        return None
+
+    light_items = [item for item in state["history"] if item["kind"] == "light"]
+    max_consecutive = 0
+    current = 0
+    for item in light_items:
+        lux = number(item.get("fields", {}), "lux")
+        if lux == 0.0:
+            current += 1
+            max_consecutive = max(max_consecutive, current)
+        else:
+            current = 0
+
+    if max_consecutive < CLASS_B_MIN_NULL_LUX:
+        return None
+
+    session_changed = (session is not None and session != prev_session)
+    cursor_frozen = (cursor == prev_cursor)
+
+    if not (session_changed or cursor_frozen):
+        return None
+
+    state["_class_b_detected_cursor"] = cursor
+    state["_class_b_detected_session"] = session
+
+    detection = {
+        "kind": "class-b-stop",
+        "detected_at": stamp(time.time()),
+        "cursor": cursor,
+        "session": session,
+        "trigger": "session-change" if session_changed else "cursor-freeze",
+        "null_lux_consecutive": max_consecutive,
+    }
+
+    path = log_dir / "class-b-detectors.jsonl"
+    previous = []
+    if path.exists():
+        text = path.read_text(encoding="utf-8").strip()
+        if text:
+            previous = text.split("\n")
+    line = json.dumps(detection, ensure_ascii=False, allow_nan=False, sort_keys=True)
+    atomic(path, "\n".join([*previous, line][-CLASS_B_DETECTOR_LINES:]) + "\n")
+
+    return detection
+
 
 
 def freshness(item, now, stale):
@@ -1124,6 +1196,9 @@ def follow(args, directory):
                 changed = update_events(state, now, args.stale_seconds)
                 state["node_status"] = node_status(state, now, args.stale_seconds)
                 save(path, state)
+                detection = detect_class_b_stop(state, directory)
+                if detection:
+                    print(f"class-b-stop: {detection}", flush=True)
                 if changed:
                     print(state["events"][-1], flush=True)
                 # Publish each durable node result before polling the next node.
