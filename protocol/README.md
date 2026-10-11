@@ -85,6 +85,10 @@ The current-link Wi-Fi RSSI observation uses `wifi_link_rssi_dbm=<signed dBm> so
 Times are integer Unix seconds according to the phone's wall clock. They are not server receipt times, synchronized clocks or ordering authorities. `age_ms` uses Android's elapsed real-time clock; sensor sample timestamps are mapped to approximate wall time when collected. Queue IDs, not timestamps, order records within one queue. `session` changes each ON session and contains no hardware identifier.
 For light and acceleration sample records, `sensor_time_ns` preserves the raw decimal `SensorEvent.timestamp` in nanoseconds (a nonnegative signed 64-bit value). It is an Android monotonic event timestamp, not Unix time or a receipt time. Consumers may compare only records for the same sensor and the same hello `session`; missing/out-of-range timestamps or missing sessions are incomparable. A session partitions ON sessions but does not prove boot identity. This field does not change existing wall-time or `age_ms` freshness behavior.
 
+The read-only BLE capability snapshot uses `ble_status source=androidbody_bluetooth_api api=<SDK_INT> api_surface=platform_sdk feature_ble=<present|absent|query_error> adapter=<enabled|disabled|unavailable|error> scanner_api=<present|unavailable|error> advertiser_api=<present|unavailable|error> scanner_getter=<returned|null|error|unavailable> advertiser_getter=<returned|null|error|unavailable> advertiser_supported=<supported|unsupported|error|unavailable>`. It records `BluetoothAdapter` state and whether the API21 scanner/advertiser getters returned; it never scans, advertises, toggles Bluetooth or produces an RF result. API<21 and null-adapter outcomes report `unavailable`.
+
+The read-only process identity probe uses `probe identity uid=<uid> groups=<space-separated gid list|none>`, read from `/proc/self/status` (bounded to 4096 bytes) within the hello `session`. It attributes session-scoped probes to the app UID; it executes nothing.
+
 ## Delivery, collection and restart semantics
 
 The wire protocol remains version 1. App version 0.2 adds durable local collection and persistent ON without changing the HTTP endpoints.

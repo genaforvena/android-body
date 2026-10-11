@@ -56,6 +56,19 @@ The committed APK's download was exercised through GitHub and independently chec
 
 An independent comparison of the retained published APK and a retained APK member from run 37592181603 found different APK SHA-256 values and different public signer-certificate SHA-256 fingerprints: published APK `417719c5811ca0acf9546577b8ef54bd80e212d18a5acfa28fe139203d8a261b` / certificate `039da4473796b1851e2546219e1ab005387956ba85425cea30cad9558f00c071`; CI APK `e7c1f9f8df6d1896fd6045b2f1c14f2e60045ebad6c7509ea738669263913c72` / certificate `f4b34bd34b10374d7ea574048da8b00f7b316273e74ded581b65d9e57a19eb79`. Both certificates have an Android Debug subject, which does not establish signer equality. This comparison concerns that earlier CI artifact only; no update attempt, signature-validation result for that CI APK, or device acceptance is claimed.
 
+## Self-heal checkpoint and Note3 redeploy signing blocker — 2026-10-11
+
+Genome pushed two commits with exact-SHA CI this wake:
+
+- `6b4861974f7c` (node-liveness hysteresis; not genome-authored): [run 38105784078](https://github.com/genaforvena/android-body/actions/runs/38105784078) **PASSED**.
+- `460c8ecfd78d` (activity-side self-heal; genome): [run 38106141887](https://github.com/genaforvena/android-body/actions/runs/38106141887) **PASSED** — protocol 81 assertions, spool 2,788, rendezvous 18 tests, light/vibrate 8, perception 26, `:app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool` successful.
+
+The self-heal re-starts `BodyService` from `MainActivity.onResume` when the persisted desired-on preference and run-enabled marker are both present, covering fresh installs (where `MY_PACKAGE_REPLACED` never fires), force-stop and process kill. Explicit OFF still disarms all restoration; the service re-checks desired-on and is idempotent. No JVM unit test covers the activity hook; it reuses the same start path as `RestoreReceiver`.
+
+Host build evidence for `460c8ecfd78d`: the same Gradle tasks passed locally under JDK 21 (Temurin 21.0.12 at `/home/mesh-home/.local/jdk21`); built APK 57,099 bytes, SHA-256 `0a76234ec648a56fefe630791a3b8e4182221d8d3116b6b2391b6953ca97320f`. The system default `java` is JDK 8 without `javac`, and the site toolchain JDK 17 extraction has an empty `conf/security/policy/unlimited` directory, failing TLS initialization; neither can run Gradle 8.11.1. This repairs the 2026-10-08 attempt recorded below that could not build.
+
+**Signing blocker — Note3 redeploy.** The installed and published APK (`417719c5…`, 88,103 bytes) is signed by certificate `039da4473796b1851e2546219e1ab005387956ba85425cea30cad9558f00c071`; the only locally buildable debug keystore signs `d23dcc9d24fbdce556150931f54051b44fdf45c465694710d687c88464be028a` and no other keystore exists on this host. A fresh build therefore cannot install over the installed APK, and uninstalling to bypass the signature mismatch is prohibited. Activation of `460c8ecfd78d` on Note3 is **blocked** until the human owner provides the original debug keystore (certificate `039da447…`) or explicitly authorizes an alternative. Note3 remains on `417719c5…`; its deployed probes (Wi-Fi RSSI, BLE status, identity probe, `sensor_time_ns`) were live at cursor 106141 on 2026-10-11 02:46Z.
+
 ## Android runtime evidence for this version
 
 The full **API18 / Android 4.3.1 emulator** acceptance suite below ran on the preliminary version 0.2 APK `ff03c32eccb690fb330ec2b3c22167938c0e4f4ff2905c7bfe0dc1a260dd8ee7`. The final APK above changes only the queue's default retention constants to 2 MiB / 24,576 lines; queue format, algorithms, service and UI logic are unchanged. The final defaults passed both Java suites and a bounded-heap host stress test. The focused final-artifact smoke **PASSED** on API18: install, ON, observation/vibration roundtrip, live collect-only (nine saved records and zero HTTP after transition), live backlog drain and OFF. After OFF there was no queue growth, upload, running service or held CPU wake lock. The queue inspector used the final constants. The full complex suite below was not silently claimed as repeated against the final bytes.
@@ -96,6 +109,16 @@ Real Xiaomi/Redmi10 and contemporary physical Android validation are **NOT RUN**
 
 Neither `START_STICKY` nor the ON-only partial wake lock guarantees uptime or bypasses Doze, Force stop, notification controls or OEM restrictions. The saved ON bit is an intention, not proof of live collection. Android's vibration API return remains `verification=unverified` without independent physical evidence.
 
+## Deployed Note3 perception evidence, 2026-10-10 to 2026-10-11
+
+The frozen deployed consumer view (`body/runtime/watch.py`) observed the Note3 endpoint at:
+
+- 2026-10-10 23:21:44Z: cursor 101453, transport reachable, no pending backlog page; fresh-clock-conditional battery/light/acceleration samples (#101451–53) at 23:21:17Z; battery 1.0/charging, light 0.0 lux, acceleration magnitude 15.628 m/s². No Wi-Fi RSSI, BLE, or `sensor_time_ns` observations.
+- 2026-10-11 02:22:32Z: cursor 104721 after a 00:47:31Z–02:19:41Z silence (app disarmed in an owner reinstall cycle) ended by the owner's UI toggle; fresh-clock-conditional samples (#104717–21) at 02:22:07Z; first deployed view to report `wifi_link_rssi_dbm` (#104708, #104718), `ble_status` (#104719), `sensor_time_ns` and probe-identity observations. A 200 ms vibration request at 02:19:41Z returned requested/succeeded receipts (`evidence=api_return verification=unverified`).
+- 2026-10-11 02:36:04Z: cursor 105531, transport reachable, no pending backlog; fresh-clock-conditional samples (#105527–31) at 02:35:39–40Z; battery 1.0/charging, light 0.0 lux, acceleration magnitude 15.777 m/s²; `wifi_link_rssi_dbm` (#105493 −14 dBm, #105528 −13 dBm), `ble_status` (#105529: scanner_getter=returned, advertiser_getter=null, advertiser_supported=unsupported), `sensor_time_ns` and probe-identity observations continue. Redmi10 still cursor 0.
+
+This is consumer-view evidence of the installed APK's emissions, not server-side receipt, motor proof, calibration or clock synchronization. Redmi10 remained at cursor 0 with no observations.
+
 ## Host perception snapshot activation
 
 On 2026-10-07 at 10:35–10:36 UTC, Health exercised the independently reviewed production apply, revert and reapply procedure for the frozen perception consumer from source commit `fbb62ac8b24a6310c467c422a6b65116435e9921`. The final running `watch.py` SHA-256 was `e86032e8d3fc9335b388a0db83889422a9fc05590cd48d3153909986e8587598`; the exercised rollback was `1396d352d8868bc421937a538e4e073cdd8f2a5df8261cae637ebfe9c359cd3d`.
@@ -127,6 +150,9 @@ The production `BleStatus` source now calls the API21 scanner and advertiser get
 ## Reproduce the host checks
 
 ```sh
+# The system default java is JDK 8 without javac; export a JDK 17+ install first:
+#   export JAVA_HOME=/home/mesh-home/.local/jdk21
+#   export ANDROID_HOME=/home/mesh-home/.local/android-sdk
 tools/test-protocol.sh
 tools/test-spool.sh
 python3 -m unittest discover -s rendezvous/minimal-server
