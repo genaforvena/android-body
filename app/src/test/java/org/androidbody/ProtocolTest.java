@@ -30,20 +30,20 @@ public final class ProtocolTest {
     private static void badBody(final String body) { rejects(new Runnable() { public void run() { Protocol.actions(body, 0); } }); }
     private static void badEndpoint(final String endpoint) { rejects(new Runnable() { public void run() { Protocol.endpoint(endpoint, true); } }); }
     public static void main(String[] ignored) {
-        equal("wifi_link_rssi_dbm=-61 source=androidbody_wifi_api observed_at=123",
-                WifiRssi.event(true, -61, 123));
-        equal("wifi_link_rssi_dbm unavailable reason=disconnected source=androidbody_wifi_api observed_at=123",
-                WifiRssi.event(false, -61, 123));
-        equal("wifi_link_rssi_dbm unavailable reason=invalid_rssi source=androidbody_wifi_api observed_at=123",
-                WifiRssi.event(true, -127, 123));
-        equal("wifi_link_rssi_dbm unavailable reason=invalid_rssi source=androidbody_wifi_api observed_at=123",
-                WifiRssi.event(true, 0, 123));
-        equal("wifi_link_rssi_dbm unavailable reason=invalid_rssi source=androidbody_wifi_api observed_at=123",
-                WifiRssi.event(true, 1, 123));
-        equal("wifi_link_rssi_dbm unavailable reason=invalid_rssi source=androidbody_wifi_api observed_at=123",
-                WifiRssi.event(true, Integer.MAX_VALUE, 123));
-        equal("wifi_link_rssi_dbm unavailable reason=permission_denied source=androidbody_wifi_api observed_at=123",
-                WifiRssi.unavailable("permission_denied", 123));
+        equal("wifi_link_rssi_dbm=-61 source=androidbody_wifi_api observed_at=123 phone_elapsed_ms=456",
+                WifiRssi.event(true, -61, 123, 456L));
+        equal("wifi_link_rssi_dbm unavailable reason=disconnected source=androidbody_wifi_api observed_at=123 phone_elapsed_ms=456",
+                WifiRssi.event(false, -61, 123, 456L));
+        equal("wifi_link_rssi_dbm unavailable reason=invalid_rssi source=androidbody_wifi_api observed_at=123 phone_elapsed_ms=456",
+                WifiRssi.event(true, -127, 123, 456L));
+        equal("wifi_link_rssi_dbm unavailable reason=invalid_rssi source=androidbody_wifi_api observed_at=123 phone_elapsed_ms=456",
+                WifiRssi.event(true, 0, 123, 456L));
+        equal("wifi_link_rssi_dbm unavailable reason=invalid_rssi source=androidbody_wifi_api observed_at=123 phone_elapsed_ms=456",
+                WifiRssi.event(true, 1, 123, 456L));
+        equal("wifi_link_rssi_dbm unavailable reason=invalid_rssi source=androidbody_wifi_api observed_at=123 phone_elapsed_ms=456",
+                WifiRssi.event(true, Integer.MAX_VALUE, 123, 456L));
+        equal("wifi_link_rssi_dbm unavailable reason=permission_denied source=androidbody_wifi_api observed_at=123 phone_elapsed_ms=456",
+                WifiRssi.unavailable("permission_denied", 123, 456L));
         equal("https://example.org/node/note3", Protocol.endpoint(" https://example.org/node/note3/ ", false));
         equal("http://192.168.1.2:8080/node/xiaomi", Protocol.endpoint("http://192.168.1.2:8080/node/xiaomi", true));
         equal("https://[::1]/node/a", Protocol.endpoint("https://[::1]/node/a", false));

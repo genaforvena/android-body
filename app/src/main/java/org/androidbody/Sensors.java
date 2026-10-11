@@ -90,8 +90,7 @@ final class Sensors implements SensorEventListener {
     synchronized String snapshot() {
         long now = SystemClock.elapsedRealtime();
         StringBuilder body = new StringBuilder(Protocol.event(battery));
-        body.append(Protocol.event(wifiRssi()));
-        body.append(Protocol.event(BleStatus.snapshot(context)));
+        body.append(Protocol.event(wifiRssi(now)));
         if (light == null) body.append(Protocol.event("light unavailable reason=absent"));
         else if (lightError != null) body.append(Protocol.event("light unavailable reason=" + lightError));
         else if (now < lightTime || now - lightTime > 60000) body.append(Protocol.event("light unavailable reason=stale"));
@@ -102,23 +101,24 @@ final class Sensors implements SensorEventListener {
         else body.append(sample(accelerationTime, accelerationSensorTimeNs, now, "acceleration x=" + x + " y=" + y + " z=" + z + " accuracy=" + accelerationAccuracy));
         return body.toString();
     }
-    private String wifiRssi() {
+    private String wifiRssi(long now) {
         long observedAt = System.currentTimeMillis() / 1000L;
-        if (wifi == null) return WifiRssi.unavailable("service_absent", observedAt);
+        if (wifi == null) return WifiRssi.unavailable("service_absent", observedAt, now);
         try {
             WifiInfo info = wifi.getConnectionInfo();
             return WifiRssi.event(info != null && info.getNetworkId() >= 0,
-                    info == null ? -127 : info.getRssi(), observedAt);
+                    info == null ? -127 : info.getRssi(), observedAt, now);
         } catch (SecurityException e) {
-            return WifiRssi.unavailable("permission_denied", observedAt);
+            return WifiRssi.unavailable("permission_denied", observedAt, now);
         } catch (RuntimeException e) {
-            return WifiRssi.unavailable("read_failed", observedAt);
+            return WifiRssi.unavailable("read_failed", observedAt, now);
         }
     }
     private String sample(long time, long sensorTimeNs, long now, String value) {
         long age = now - time;
         long epoch = (System.currentTimeMillis() - age) / 1000L;
-        return epoch + " " + value + " age_ms=" + age + " sensor_time_ns=" + sensorTimeNs + "\n";
+        return epoch + " " + value + " age_ms=" + age + " sensor_time_ns=" + sensorTimeNs
+                + " phone_elapsed_ms=" + time + "\n";
     }
     private static boolean finite(float value) { return !Float.isNaN(value) && !Float.isInfinite(value); }
 }
