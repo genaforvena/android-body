@@ -165,6 +165,30 @@ class PerceptionTests(unittest.TestCase):
         self.page(state, ["1045 light lux=0 accuracy=3 age_ms=0"], received=1045)
         self.assertTrue(watch.update_events(state, 1045, 30))
         self.assertIn("session=s2 bucket=4->0", state["events"][-1])
+    def test_fresh_null_lux_stays_unknown_emits_no_transition_and_is_not_counted(self):
+        # Core light-channel measurement: null-lux blocks (published lux: null,
+        # transport reachable) recur on a minutes-scale cadence during live
+        # operation. They are not measurements and must never become one.
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=0 accuracy=3 age_ms=0",
+                          "1001 light lux=0 accuracy=3 age_ms=0"], received=1001)
+        watch.update_events(state, 1001, 30)
+        self.page(state, ["1002 light lux=null accuracy=3 age_ms=0"], received=1002)
+        watch.update_events(state, 1002, 30)
+        self.assertFalse(any("measured-light-bucket-transition" in event
+                             for event in state["events"]))
+        self.assertEqual(watch.sensor_status(state["latest"]["light"], 1002, 30),
+                         "unknown/fresh-clock-conditional")
+        self.assertEqual(watch.compact_key(state, 1002, 30)[4][1],
+                         ["light", "unknown/fresh-clock-conditional", None, None])
+        node = watch.space_snapshot([state], 1002, 30)["nodes"][0]
+        self.assertEqual(node["light"]["status"], "unknown/fresh-clock-conditional")
+        self.assertIsNone(node["light"]["lux"])
+        self.assertEqual(watch.stillness_snapshot(state, 1002, 30)["light"]["count"], 2)
+        view = watch.render(state, 1002, 30)
+        self.assertIn("light [unknown/fresh-clock-conditional]", view)
+        self.assertIn("lux=null", view)
 
     def test_space_snapshot_exposes_fresh_values_and_unknown_unavailable_timestamps(self):
         state = self.state()
