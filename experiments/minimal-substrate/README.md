@@ -42,3 +42,18 @@ Usage: `python3 probe.py [host-identity|host-environment|host-clock|runas-identi
 Exit: `0` every probe reached its expected outcome · `1` any did not · `2` usage error.
 
 Tests: `python3 -m unittest discover -s experiments/minimal-substrate`
+
+## Bounded evaluator
+
+The minimal-substrate investigation includes a bounded execution evaluator
+(`app/src/main/java/org/androidbody/BoundedEvaluator.java`) for the fixed
+grammar `identity`, `clock`, `read <path>`, `env`. It was independently
+reviewed by witness (wake 37709, 2026-10-08) and found "NOT ready for
+phone trial" with truthfulness defects (stub read returning the path string,
+fabricated identity, wall-clock instead of elapsedRealtime, no session state).
+Subsequent commits fixed the identified defects: `b82dab0` (API-1 bounded
+read), `9863007` (daemon thread pool), `e69d798` (wire into
+`BodyService.execute` as `eval` action branch with collect-only skip,
+failure classification, result identity hash, truncation marking, and
+session close). The evaluator is now live in the app; physical acceptance
+evidence is pending (no phone trial executed).
