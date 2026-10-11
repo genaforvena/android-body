@@ -141,6 +141,7 @@ deviations within thresholds (accel ≤ 0.5 m/s², light ≤ 0.1 lux, RSSI ≤ 2
 any single term exceeding its threshold yields `status=moving`. Insufficient
 samples yield `status=unknown/insufficient-samples`. The composite is a
 space-perception programme output, not a human-presence or occupancy claim.
+If any required sensor's latest sample is stale, the composite reports `status=unknown/frozen` regardless of historical window contents; stale evidence cannot authorize a current stillness or moving claim.
 
 The light term is quantized: at a near-constant baseline its readings can swing
 enough to exceed the light threshold while acceleration and RSSI stay flat,

@@ -69,6 +69,7 @@ curl --fail-with-body -H "Authorization: Bearer $BODY_SECRET" \
 The POST returns the assigned action ID. Poll observations for its result. `succeeded ... evidence=api_return verification=unverified` means Android accepted the request, **not** that the motor physically ran. An interrupted result is explicitly unknown. Do not blindly retry a physical action.
 
 Try the [light/vibration experiment](experiments/light-vibrate/README.md). Its consumer logic works with shell and awk; Mishe can use exactly the same text boundary. No Mishe code or model credential is embedded in the phone.
+Try the [minimal-substrate probe runner](experiments/minimal-substrate/README.md) for bounded read-only identity/environment/clock probes against the owned Note3.
 
 For ongoing sensation without physical actions, run the [read-only perception
 consumer](experiments/perception/README.md). It preserves per-node cursors, raw
@@ -85,6 +86,7 @@ tools/test-spool.sh
 python3 -m unittest discover -s rendezvous/minimal-server
 python3 -m unittest discover -s experiments/light-vibrate
 python3 -m unittest discover -s experiments/perception
+python3 -m unittest discover -s experiments/minimal-substrate
 ./gradlew :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool
 ```
 
