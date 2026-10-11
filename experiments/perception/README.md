@@ -142,6 +142,12 @@ any single term exceeding its threshold yields `status=moving`. Insufficient
 samples yield `status=unknown/insufficient-samples`. The composite is a
 space-perception programme output, not a human-presence or occupancy claim.
 
+The light term is quantized: at a near-constant baseline its readings can swing
+enough to exceed the light threshold while acceleration and RSSI stay flat,
+yielding `status=moving` on a stationary phone (observed repeatedly, e.g.
+light_std ≈ 0.6 lux with accel_std ≤ 0.13 m/s² and rssi_std = 0 dBm). Treat
+isolated light-term excursions as a known false-positive mode, not motion.
+
 ## Freshness and honest limits
 
 - `fresh-clock-conditional` means the phone timestamp is within the configured
