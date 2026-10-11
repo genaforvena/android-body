@@ -32,10 +32,11 @@
       "time": "2026-10-11T06:09:26Z",
       "light_std": 0.648,
       "mechanism": "freeze-associated (stale light values in n=7 window)",
+      "freeze_affected": true,
       "transient": true,
       "revert_evidence": "light_std=0.020 at 06:14:18Z (research-methods-wake34172)",
       "note": "06:09Z/06:10Z read-timing merge plausible (genome-wake34847); flip at 06:09:26Z per research-methods-wake34172",
-      "sources": ["discover-wake34909", "research-methods-wake34172", "genome-wake34847"]
+      "sources": ["discover-wake34909", "research-methods-wake34172", "genome-wake34847", "research-methods-wake35842"]
     },
     {
       "id": "fp-0627",
