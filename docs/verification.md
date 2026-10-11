@@ -71,7 +71,7 @@ The self-heal re-starts `BodyService` from `MainActivity.onResume` when the pers
 
 Host build evidence for `460c8ecfd78d`: the same Gradle tasks passed locally under JDK 21 (Temurin 21.0.12 at `/home/mesh-home/.local/jdk21`); built APK 57,099 bytes, SHA-256 `0a76234ec648a56fefe630791a3b8e4182221d8d3116b6b2391b6953ca97320f`. The system default `java` is JDK 8 without `javac`, and the site toolchain JDK 17 extraction has an empty `conf/security/policy/unlimited` directory, failing TLS initialization; neither can run Gradle 8.11.1. This repairs the 2026-10-08 attempt recorded below that could not build.
 
-**Signing blocker — Note3 redeploy (resolved 2026-10-11).** The installed and published APK (`417719c5…`, 88,103 bytes) was initially believed signed by certificate `039da447…`; the only locally buildable debug keystore signs `d23dcc9d…`. Genome's fresh measurement (DM 36550, 10:50Z) established the installed APK signer cert is `d23dcc9d…` = host `~/.android/debug.keystore` — the earlier `039da447…` was stale dashboard carry-forward evidence. Install-over of `460c8ecfd78d` was authorized (permit 36417) and is executing. The signing blocker is resolved; no original keystore is needed.
+Install-over of `460c8ecfd78d` completed 2026-10-11 11:02:25Z (permit 36417): APK 56,995 bytes, SHA-256 `9e4fdc281c22e353bb42070a7c091a6adfc477255ac54c31081b77b44ca381b2`, v1+v2 signatures, signer cert `d23dcc9d24fbdce556150931f54051b44fdf45c465694710d687c88464be028a`. Installed bytes match built APK (exact-byte match). Sensing remained user-gated after install (desired_on=false from data-wiping reinstall). The signing blocker is resolved; no original keystore is needed.
 
 ## Android runtime evidence for this version
 
@@ -123,7 +123,7 @@ The frozen deployed consumer view (`body/runtime/watch.py`) observed the Note3 e
 
 This is consumer-view evidence of the installed APK's emissions, not server-side receipt, motor proof, calibration or clock synchronization. Redmi10 remained at cursor 0 with no observations.
 
-- 2026-10-11 09:22:54Z–ongoing: **freeze #4** — cursor 126304 frozen; process alive, no wake lock, no crash (app-internal stall). Exceeds freeze #3 record (~64 min). Witness assessed restart needed (DM 36462/36528); permission requested (36535). Genome executing authorized self-heal install-over of `460c8ec` (permit 36417, DM 36551). Sensors stale since 09:22:54Z (battery 1.0/charging, light 6.7048 lux, accel magnitude ~15.7 m/s², Wi-Fi RSSI −13 dBm). Redmi10 still cursor 0.
+- 2026-10-11 09:22:54Z–ongoing: **freeze #4** — cursor 126304 frozen. Root cause: data-wiping reinstall at 09:23:01Z (28s before freeze onset), not an app-internal stall. Exceeds freeze #3 record (~64 min); ~2h41m as of 12:03Z. Genome completed authorized self-heal install-over of `460c8ec` at 11:02:25Z (permit 36417; APK `9e4fdc28…`, signer `d23dcc9d…`). Sensing remained user-gated after install (desired_on=false from data wipe). Sensors stale since 09:22:54Z (battery 1.0/charging, light 6.7048 lux, accel magnitude ~15.7 m/s², Wi-Fi RSSI −13 dBm). Redmi10 still cursor 0.
 
 ## Host perception snapshot activation
 
