@@ -243,7 +243,19 @@ finalizes the session; a silent or frozen phone produces no churn. Fields:
 (join keys; the consumer event_id is `node:session:sequence`),
 `retained_count`, `window_truncated`, `phone_elapsed_ms=[min,max]`,
 `phone_window_reason`, `acquisition_span_ms=[min,max]`, `freeze_overlap` with
-`freeze_class` and `freeze_sequence`.
+`freeze_class` and `freeze_sequence`, and the protocol v2.1 per-excursion
+retention set: `light_std`, `accel_std`, `rssi_std` (windowed standard
+deviations over the retained window, same population formula and minimum
+sample count as the live stillness composite; null with fewer than two
+samples), `light_oscillation` (adjacent 0↔1 lux flip path such as `0->1->0`,
+`quantized` for a constant stream confined to the two-level grid, `none`),
+`light_transient` (`revert` when the flip path returns to its starting level,
+`open` when it does not, `none` without a flip).
+
+The retention set is required by the space-trial protocol v2.1: an excursion
+missing any of these conditions scores `indeterminate`, never silently
+excluded. The fields describe the retained window only; `freeze_affected` is
+carried as `freeze_overlap`.
 
 The phone window is pure phone-clock: `phone_elapsed_ms` is phone-monotonic
 elapsedRealtime, not Unix, and phone/host clocks are unsynchronized, so no
