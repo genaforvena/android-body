@@ -81,12 +81,14 @@ public final class BoundedEvaluator {
         public final String error;
         public final String status;
         public final long timestamp;
-        private Result(boolean ok, String output, String error, String status, long timestamp) {
+        public final boolean truncated;
+        private Result(boolean ok, String output, String error, String status, long timestamp, boolean truncated) {
             this.ok = ok;
             this.output = output;
             this.error = error;
             this.status = status;
             this.timestamp = timestamp;
+            this.truncated = truncated;
         }
     }
 
@@ -97,17 +99,20 @@ public final class BoundedEvaluator {
 
         public Result execute(Command command, Clock clock) {
             if (commandCount >= MAX_COMMANDS_PER_SESSION) {
-                return new Result(false, null, "session command limit exceeded", "error", clock.elapsedRealtime());
+                return new Result(false, null, "session command limit exceeded", "error", clock.elapsedRealtime(), false);
             }
             commandCount++;
             Result result = BoundedEvaluator.execute(command, clock);
             if (result.ok && result.output != null) {
                 totalOutput += result.output.getBytes(ASCII).length;
                 if (totalOutput > MAX_TOTAL_OUTPUT) {
-                    return new Result(false, null, "session output limit exceeded", "error", clock.elapsedRealtime());
+                    return new Result(false, null, "session output limit exceeded", "error", clock.elapsedRealtime(), false);
                 }
             }
             return result;
+        }
+        public void close() {
+            // No resources to release; marks session as closed
         }
     }
 
@@ -158,18 +163,19 @@ public final class BoundedEvaluator {
         try {
             String output = future.get(timeoutMs, TimeUnit.MILLISECONDS);
             String bounded = bound(output);
-            return new Result(true, bounded, null, "ok", timestamp);
+            boolean truncated = output != null && bounded != null && output.length() > bounded.length();
+            return new Result(true, bounded, null, "ok", timestamp, truncated);
         } catch (TimeoutException e) {
             future.cancel(true);
-            return new Result(false, null, "command exceeded " + TIMEOUT_MS + "ms timeout", "timeout", timestamp);
+            return new Result(false, null, "command exceeded " + TIMEOUT_MS + "ms timeout", "timeout", timestamp, false);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return new Result(false, null, "interrupted: " + e.getClass().getSimpleName(), "error", timestamp);
+            return new Result(false, null, "interrupted: " + e.getClass().getSimpleName(), "error", timestamp, false);
         } catch (ExecutionException e) {
             String msg = e.getCause() != null ? e.getCause().getClass().getSimpleName() : e.getClass().getSimpleName();
-            return new Result(false, null, msg, "error", timestamp);
+            return new Result(false, null, msg, "error", timestamp, false);
         } catch (RuntimeException e) {
-            return new Result(false, null, e.getClass().getSimpleName(), "error", timestamp);
+            return new Result(false, null, e.getClass().getSimpleName(), "error", timestamp, false);
         }
     }
 

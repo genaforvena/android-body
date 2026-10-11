@@ -165,6 +165,24 @@ public final class BoundedEvaluatorTest {
         rejects(new Runnable() { public void run() { BoundedEvaluator.execute(null, clock); } });
         rejects(new Runnable() { public void run() { BoundedEvaluator.execute(parseOk("identity"), null); } });
 
+        // Truncation: output exceeding 1024 bytes is marked truncated
+        File longFile = File.createTempFile("test", ".long");
+        longFile.deleteOnExit();
+        StringBuilder longContent = new StringBuilder();
+        for (int i = 0; i < 2000; i++) longContent.append('x');
+        java.io.FileWriter fw = new java.io.FileWriter(longFile);
+        fw.write(longContent.toString());
+        fw.close();
+        BoundedEvaluator.addAllowedPath(longFile.getAbsolutePath());
+        BoundedEvaluator.Result longResult = execOk("read " + longFile.getAbsolutePath(), clock);
+        ok(longResult.truncated, "long output should be marked truncated");
+        ok(longResult.output.length() == BoundedEvaluator.MAX_OUTPUT_PER_COMMAND, "truncated output should be exactly 1024 bytes");
+        longFile.delete();
+
+        // Truncation: short output is not marked truncated
+        BoundedEvaluator.Result shortResult = execOk("clock", clock);
+        ok(!shortResult.truncated, "short output should not be marked truncated");
+
         // Summary
         System.out.println("BoundedEvaluatorTest: " + count + " tests passed");
         BoundedEvaluator.shutdown();

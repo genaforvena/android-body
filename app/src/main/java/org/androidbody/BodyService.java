@@ -55,6 +55,7 @@ public final class BodyService extends Service {
         volatile Thread worker, sampler;
         ObservationSpool spool;
         BleScan bleScan;
+        BoundedEvaluator.Session evalSession;
         PowerManager.WakeLock wakeLock;
         Session previous;
         long lastVibration = -3000;
@@ -69,6 +70,7 @@ public final class BodyService extends Service {
             sensors = new Sensors(owner);
             vibrator = (Vibrator) owner.getSystemService(VIBRATOR_SERVICE);
             transport = new Transport(endpoint, secret, allowHttp);
+            evalSession = new BoundedEvaluator.Session();
         }
     }
     static void awaitStoppedWork() throws IOException {
@@ -344,6 +346,10 @@ public final class BodyService extends Service {
             try {
                 if (current != session || !session.active || session.collectOnly) return;
                 if (!session.preferences.edit().putLong(session.cursorKey, action.id).putLong(session.cursorKey + "_pending", action.id).commit()) { error[0] = true; return; }
+                if (action.command.startsWith("eval ")) {
+                    result[0] = executeEval(session, action.command.substring(5), action.id);
+                    return;
+                }
                 int duration = Protocol.vibrationDuration(action.command);
                 String requested = Protocol.event("action " + action.id + " requested kind=" + (duration > 0 ? "vibrate duration=" + duration : "unknown"));
                 String failure = null;
@@ -364,6 +370,37 @@ public final class BodyService extends Service {
         while (session.active && !complete.await(500, TimeUnit.MILLISECONDS)) { }
         if (error[0]) throw new StorageFailure("Cannot persist action cursor");
         return result[0];
+    }
+    private String executeEval(final Session session, final String evalInput, final long actionId) {
+        String requested = Protocol.event("action " + actionId + " requested kind=eval");
+        BoundedEvaluator.Command command;
+        try {
+            command = BoundedEvaluator.parse(evalInput);
+        } catch (IllegalArgumentException e) {
+            String msg = e.getMessage();
+            if (msg != null && msg.contains("not in allowlist")) {
+                String path = msg.substring(msg.lastIndexOf(": ") + 2);
+                return requested + Protocol.event("action " + actionId + " failed reason=read_denied path=" + path);
+            }
+            return requested + Protocol.event("action " + actionId + " failed reason=invalid_arguments");
+        }
+        String identity = command.name + ":" + (command.argument != null ? command.argument : "");
+        String hash = Integer.toHexString(identity.hashCode());
+        BoundedEvaluator.Result evalResult = session.evalSession.execute(command, new BoundedEvaluator.Clock() {
+            @Override public long elapsedRealtime() { return SystemClock.elapsedRealtime(); }
+        });
+        String output = evalResult.output;
+        if (output != null) {
+            output = output.replaceAll("[\\r\\n]+", " ").replaceAll("\\p{Cntrl}", "");
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append(requested);
+        if (evalResult.ok) {
+            sb.append(Protocol.event("action " + actionId + " succeeded kind=eval identity=" + hash + " status=" + evalResult.status + " truncated=" + evalResult.truncated + " output=" + output));
+        } else {
+            sb.append(Protocol.event("action " + actionId + " failed kind=eval identity=" + hash + " status=" + evalResult.status + " error=" + evalResult.error));
+        }
+        return sb.toString();
     }
     private static final class StorageFailure extends IOException {
         StorageFailure(IOException cause) { super(cause); }
@@ -388,6 +425,7 @@ public final class BodyService extends Service {
             if (session.sampler != null) session.sampler.interrupt();
             try { session.sensors.stop(); } catch (RuntimeException ignored) { }
             if (session.vibrator != null) { try { session.vibrator.cancel(); } catch (RuntimeException ignored) { } }
+            if (session.evalSession != null) { session.evalSession.close(); session.evalSession = null; }
             synchronized (session.signal) { session.signal.notifyAll(); }
         }
         running = false; status = message;
