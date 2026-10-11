@@ -70,6 +70,13 @@ an over-air event, or RF reception. These are declarations/status, not proof of 
 operational scanner, advertiser, or over-air event. The Android source emits this
 candidate event, but the installed phone has not been shown to run it; deployed live
 BLE status therefore remains unknown.
+The `ble_sighting` and `ble_scan` projections render bounded BLE scan evidence:
+sighting name and RSSI (only when fresh-clock-conditional) and scan lifecycle
+subtype (`start`/`stop`/`error`/`unavailable`) with reason, beacon, window and gap.
+The sightings channel is explicitly not presence, occupancy or proximity proof;
+`sightings_in_history_window` is a bounded count, not a rate or duration. The
+installed phone has not been shown to emit these events; deployed live BLE
+sightings therefore remain unknown.
 The bounded state retains the latest 32 event kinds, last 32 observations and last
 16 action receipts. An unknown event is not treated as evidence of a known sensor.
 
@@ -85,7 +92,8 @@ fraction in 0.05 steps (with charging state), `floor(log2(1 + lux))`, and accele
 in 1 m/s² steps. They are **change filters**, not substitute measurements:
 read `view` for exact raw evidence. Capability/freshness/error/session transitions,
 connected-link RSSI status/value/reason changes, Bluetooth LE status/value/error/
-freshness changes, and action receipts also change this surface. RSSI dBm is included
+freshness and sighting/scan lifecycle changes, and action receipts also change
+this surface.
 only while fresh; stale and unavailable statuses remain visible without a value.
 Sequence and timestamp churn with unchanged RSSI or BLE evidence does not repeat an
 event. No occupancy claim is made.
@@ -109,7 +117,10 @@ with sequence/units/accuracy/age, and connected-link `wifi_link_rssi` status,
 sequence, dBm, source, protocol event time, API `observed_at`, and consumer receipt.
 RSSI acquisition age and its unavailable reason are explicit; no room-proximity
 claim is made. `last_light_transition` includes stable event ID and both endpoint
-readings as historical evidence. Missing protocol v1 phone monotonic time, host
+readings as historical evidence. Additive `ble_sighting` and `ble_scan` snapshots
+mirror the `ble_status` convention: measured values only when fresh-clock-conditional,
+honest unknown when absent, values dropped when stale. Missing protocol v1 phone
+monotonic time, host
 monotonic/boot receipt, server receipt, and acquisition span are explicit nulls;
 consumers must not infer them. Use the CLI for current freshness; the published file
 is a cache whose `generated_at_utc` can age if the follower stops.
