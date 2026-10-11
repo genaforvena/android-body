@@ -25,9 +25,15 @@ instances lacking the field. Classification:
   condition 1 passes            -> indeterminate (reported with missing
                                    conditions; NOT silently excluded)
 
+Freeze-affected windows (per-instance "freeze_affected": true, set by
+the excursion log when the light stream satisfied the discovery
+space-light-freeze naming cadence): frozen light evidence is
+untrustworthy — absence of evidence is not evidence of stillness — so
+an all-pass window scores indeterminate instead of artifact. A failing
+condition still reports non_artifact; the marker never hides a fail.
+
 Usage:
   python3 artifact_signature.py [evidence.json] [--json]
-Exit 0 on successful scoring regardless of classifications.
 """
 
 import json
@@ -96,6 +102,8 @@ def evaluate(instance, set_level):
 
     if "fail" in states:
         return "non_artifact", states
+    if instance.get("freeze_affected") is True:
+        return "indeterminate", states
     if "missing" in states:
         return "indeterminate", states
     return "artifact", states
@@ -116,6 +124,7 @@ def score_evidence(evidence):
                     "classification": classification,
                     "states": dict(zip(CONDITION_LABELS, states)),
                     "sources": instance.get("sources", []),
+                    "freeze_affected": instance.get("freeze_affected") is True,
                 }
             )
 
@@ -144,11 +153,12 @@ def render_text(report):
         marks = " ".join(
             "{}={}".format(label, state) for label, state in row["states"].items()
         )
-        lines.append(
-            "  {:10s} {:28s} -> {:13s} [{}]".format(
-                row["id"], row["time"], row["classification"], marks
-            )
+        line = "  {:10s} {:28s} -> {:13s} [{}]".format(
+            row["id"], row["time"], row["classification"], marks
         )
+        if row.get("freeze_affected"):
+            line += " freeze_affected=yes"
+        lines.append(line)
     lines += [
         "",
         "Summary:",
@@ -157,9 +167,8 @@ def render_text(report):
         "  non-artifact (reported, not excluded): {}".format(
             report["counts"]["non_artifact"]
         ),
-        "  indeterminate (missing conditions; not silently excluded): {}".format(
-            report["counts"]["indeterminate"]
-        ),
+        "  indeterminate (missing conditions or freeze-affected; not "
+        "silently excluded): {}".format(report["counts"]["indeterminate"]),
         "  artifact timestamps: {}".format(", ".join(report["artifact_timestamps"])),
     ]
     return "\n".join(lines)

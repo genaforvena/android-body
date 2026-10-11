@@ -6,8 +6,9 @@ Invariants covered:
   - Retained FP-census instances must have no failing condition (the rule
     must not contradict the independent senses/discover characterization).
   - Missing data yields indeterminate, never a silent artifact exclusion.
-  - Any single failing condition forces non_artifact even when others pass.
   - Report accounting is consistent and the scorer is deterministic.
+  - Freeze-affected windows score indeterminate even when all
+    conditions pass; the marker never hides a failing condition.
 """
 
 import json
@@ -69,6 +70,42 @@ class TestArtifactSignature(unittest.TestCase):
         instance = {"light_std": 0.5, "accel_std": 0.9}
         classification, _ = evaluate(instance, set_level)
         self.assertEqual(classification, "non_artifact")
+
+    def test_freeze_affected_vetoes_artifact(self):
+        instance = {
+            "id": "fp-freeze",
+            "light_std": 0.646,
+            "accel_std": 0.054,
+            "rssi_std": 0.373,
+            "oscillation": "0->1->0",
+            "transient": True,
+            "freeze_affected": True,
+        }
+        classification, _ = evaluate(instance, {})
+        self.assertEqual(classification, "indeterminate")
+
+    def test_freeze_affected_does_not_hide_fail(self):
+        instance = {
+            "id": "fp-freeze-fail",
+            "light_std": 0.646,
+            "accel_std": 0.9,
+            "freeze_affected": True,
+        }
+        classification, states = evaluate(instance, {})
+        self.assertEqual(classification, "non_artifact")
+        self.assertIn("fail", states)
+
+    def test_absent_freeze_marker_still_classifies(self):
+        instance = {
+            "id": "fp-nofreeze",
+            "light_std": 0.646,
+            "accel_std": 0.054,
+            "rssi_std": 0.373,
+            "oscillation": "0->1->0",
+            "transient": True,
+        }
+        classification, _ = evaluate(instance, {})
+        self.assertEqual(classification, "artifact")
 
     def test_report_accounting_is_consistent(self):
         report = score_evidence(load_evidence())

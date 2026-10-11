@@ -11,18 +11,33 @@ labeled sessions.
 
 This is scoring tooling only — not APK consumer logic (PRESERVE stance).
 
+## Freeze-affected windows
+
+An excursion log may mark a window `freeze_affected: true` when the
+light stream satisfied the discovery space-light-freeze naming cadence
+(same light identity unmoving for >=1 min). Frozen light evidence is
+untrustworthy — absence of evidence is not evidence of stillness — so an
+all-pass window scores `indeterminate` instead of `artifact`: reported,
+never silently excluded from classifier-error counts. A failing condition
+still reports `non_artifact`; the marker never hides a fail. The marker
+is per-instance and explicit-positive; absent means no marker, never an
+assumed-clean window.
+
 ## Files
 
 - `artifact_signature.py` — the rule; per-condition pass/fail/missing with
   per-instance fields overriding set-level characterization; missing data is
-  reported as `indeterminate`, never silently excluded.
+  reported as `indeterminate`, never silently excluded. Freeze-affected
+  windows (`freeze_affected: true`) score `indeterminate` even when all
+  conditions pass; a failing condition still reports `non_artifact`.
 - `retained-instances-20261011.json` — derived perception statistics for the 9
   retained 2026-10-11 FP instances (05:11Z–07:02Z, ~1 per 12 min) and 6
   quiet-path negatives, each field carrying its retention source. No raw
   samples, no secrets.
 - `test_artifact_signature.py` — invariants: quiet path never fires, census
   has no failing condition, missing data is indeterminate, any fail forces
-  non-artifact, accounting consistent, output deterministic.
+  non-artifact, freeze-affected windows veto artifact classification,
+  accounting consistent, output deterministic.
 
 ## Run
 
