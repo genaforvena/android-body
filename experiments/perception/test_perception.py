@@ -649,6 +649,67 @@ class PerceptionTests(unittest.TestCase):
         recovered = watch.stillness_snapshot(state, 1063, 30)
         self.assertNotEqual(recovered["status"], "unknown/frozen")
 
+    def test_ble_sighting_and_scan_lifecycle_are_readable_evidence_without_presence_claim(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_scan start beacon=MISHE-BEACON window_ms=60000 gap_ms=60000",
+                          "1000 ble_sighting name=MISHE-BEACON rssi=-62"], received=1000)
+        view = watch.render(state, 1000, 30)
+        self.assertIn("#2 1000 ble_scan start beacon=MISHE-BEACON window_ms=60000 gap_ms=60000", view)
+        self.assertIn("#3 1000 ble_sighting name=MISHE-BEACON rssi=-62", view)
+        self.assertIn("sightings_in_history_window=1", view)
+        self.assertIn("scan_lifecycle status=fresh-clock-conditional latest=start", view)
+        self.assertIn("NOT presence, occupancy or proximity proof", view)
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
+        self.assertEqual(node["ble_sighting"]["status"], "fresh-clock-conditional")
+        self.assertEqual(node["ble_sighting"]["rssi_dbm"], -62.0)
+        self.assertEqual(node["ble_sighting"]["name"], "MISHE-BEACON")
+        self.assertEqual(node["ble_scan"]["subtype"], "start")
+        self.assertEqual(node["ble_scan"]["beacon"], "MISHE-BEACON")
+        self.assertEqual(node["ble_scan"]["window_ms"], 60000.0)
+        self.assertEqual(node["ble_scan"]["gap_ms"], 60000.0)
+        self.assertTrue(watch.update_events(state, 1000, 30))
+        events = watch.render_events(state, 1000, 30)
+        self.assertIn("ble_sighting fresh-clock-conditional name=MISHE-BEACON rssi_dbm=-62.0 "
+                      "scan=fresh-clock-conditional/start reason=unspecified", events)
+
+    def test_ble_scan_unavailable_lifecycle_is_reported_as_latest_event(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_scan unavailable reason=adapter_off"], received=1000)
+        view = watch.render(state, 1000, 30)
+        self.assertIn("scan_lifecycle status=fresh-clock-conditional latest=unavailable "
+                      "reason=adapter_off", view)
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
+        self.assertEqual(node["ble_scan"]["subtype"], "unavailable")
+        self.assertEqual(node["ble_scan"]["reason"], "adapter_off")
+        self.assertIsNone(node["ble_scan"]["beacon"])
+
+    def test_ble_rf_channels_stay_honest_unknown_without_observations(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1"], received=1000)
+        view = watch.render(state, 1000, 30)
+        self.assertIn("status=unknown/no-observation", view)
+        self.assertIn("sightings_in_history_window=0", view)
+        self.assertIn("scan_lifecycle status=unknown/no-observation latest=unknown "
+                      "reason=unspecified", view)
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
+        self.assertEqual(node["ble_sighting"]["status"], "unknown/no-observation")
+        self.assertIsNone(node["ble_sighting"]["rssi_dbm"])
+        self.assertEqual(node["ble_scan"]["status"], "unknown/no-observation")
+        self.assertIsNone(node["ble_scan"]["subtype"])
+
+    def test_stale_ble_sighting_drops_measured_values_and_new_sighting_is_evidence_change(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_sighting name=MISHE-BEACON rssi=-62"], received=1000)
+        node = watch.space_snapshot([state], 1031, 30)["nodes"][0]
+        self.assertEqual(node["ble_sighting"]["status"], "stale")
+        self.assertIsNone(node["ble_sighting"]["rssi_dbm"])
+        self.page(state, ["1031 ble_sighting name=MISHE-BEACON rssi=-58"], received=1031)
+        self.assertTrue(watch.update_events(state, 1031, 30))
+        self.assertIn("rssi_dbm=-58.0", watch.render_events(state, 1031, 30))
+
 
 if __name__ == "__main__":
     unittest.main()

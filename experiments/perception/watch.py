@@ -354,6 +354,37 @@ def ble_status_snapshot(item, now, stale):
                     if key.endswith("_error")} if current else {}),
     }
 
+def ble_sighting_snapshot(item, now, stale):
+    fields = item["fields"] if item else {}
+    status = freshness(item, now, stale) if item else "unknown/no-observation"
+    current = status == "fresh-clock-conditional"
+    return {
+        "status": status,
+        "sequence": item["sequence"] if item else None,
+        "name": fields.get("name") if item else None,
+        "rssi_dbm": number(fields, "rssi") if current else None,
+    }
+
+
+BLE_SCAN_SUBTYPES = {"start", "stop", "error", "unavailable"}
+
+
+def ble_scan_snapshot(item, now, stale):
+    fields = item["fields"] if item else {}
+    status = freshness(item, now, stale) if item else "unknown/no-observation"
+    current = status == "fresh-clock-conditional"
+    words = item["raw"].split(" ") if item else []
+    subtype = words[2] if len(words) > 2 and words[2] in BLE_SCAN_SUBTYPES else None
+    return {
+        "status": status,
+        "sequence": item["sequence"] if item else None,
+        "subtype": subtype,
+        "reason": fields.get("reason") if item else None,
+        "beacon": fields.get("beacon") if current else None,
+        "window_ms": number(fields, "window_ms") if current else None,
+        "gap_ms": number(fields, "gap_ms") if current else None,
+    }
+
 
 
 
@@ -438,9 +469,13 @@ def compact_key(state, now, stale):
     ble_key = [ble["status"], ble["source"], ble["api"], ble["api_surface"],
                *(ble[field] for field in BLE_STATES),
                sorted(ble["errors"].items())]
+    sighting = ble_sighting_snapshot(state["latest"].get("ble_sighting"), now, stale)
+    scan = ble_scan_snapshot(state["latest"].get("ble_scan"), now, stale)
+    rf_key = [sighting["status"], sighting["name"], sighting["rssi_dbm"],
+              scan["status"], scan["subtype"], scan["reason"]]
     return [node_status(state, now, stale), transport(state, now, stale),
             state["session"], dict(state["capabilities"]), measured, actions,
-            rssi_key, ble_key]
+            rssi_key, ble_key, rf_key]
 
 
 def light_bucket_transition(state, previous, current, now, stale):
@@ -532,6 +567,7 @@ def update_events(state, now, stale):
         summary = (f"{stamp(now)} {state['node']} phone={key[0]} transport={key[1]} "
                    f"battery={key[4][0][1:]} light={key[4][1][1:]} "
                    f"acceleration={key[4][2][1:]} {rssi_text} {ble_text} "
+                   f"ble_sighting={key[8][0]}/{key[8][4] or 'unknown'} rssi_dbm={key[8][2] if key[8][2] is not None else 'unknown'} "
                    f"caps={state['capabilities']} action_receipts={len(state['actions'])}")
         state["events"].append(summary)
     transitions = new_light_transitions(state, now, stale)
@@ -587,6 +623,26 @@ def render(state, now, stale):
     lines.append("  " + " ".join(
         f"{key}={ble_view[key] if ble_view[key] is not None else 'unknown'}"
         for key in BLE_STATES))
+    sighting = state["latest"].get("ble_sighting")
+    scan = state["latest"].get("ble_scan")
+    sighting_view = ble_sighting_snapshot(sighting, now, stale)
+    scan_view = ble_scan_snapshot(scan, now, stale)
+    lines.append("Bluetooth LE sightings (allowlisted-beacon scanner-visible evidence; "
+                 "NOT presence, occupancy or proximity proof):")
+    if sighting:
+        lines.append(f"  status={sighting_view['status']} " +
+                     describe(sighting, now, stale))
+    else:
+        lines.append("  status=unknown/no-observation")
+    lines.append("  sightings_in_history_window=" +
+                 str(sum(1 for item in state["history"]
+                         if item["kind"] == "ble_sighting")) +
+                 " (bounded window; count is not a rate or duration)")
+    lines.append(f"  scan_lifecycle status={scan_view['status']} "
+                 f"latest={scan_view['subtype'] or 'unknown'} "
+                 f"reason={scan_view['reason'] or 'unspecified'}")
+    lines.append("  scans run in bounded windows with idle gaps; lifecycle age bounds "
+                 "interpretation of the latest event")
     stillness = stillness_snapshot(state, now, stale)
     lines.append("Composite stillness (joint variance of accel magnitude + light + wifi RSSI):")
     lines.append(f"  status={stillness['status']} basis={stillness['basis']}")
@@ -636,6 +692,12 @@ def render_events(state, now, stale):
         f"scanner_getter={scanner_getter or 'unknown'} "
         f"advertiser_getter={advertiser_getter or 'unknown'} "
         f"advertiser_supported={supported or 'unknown'} errors={dict(errors)}")
+    (sighting_status, sighting_name, sighting_rssi,
+     scan_status, scan_subtype, scan_reason) = key[8]
+    lines.append(f"  ble_sighting {sighting_status} name={sighting_name or 'unknown'} "
+                 f"rssi_dbm={sighting_rssi if sighting_rssi is not None else 'unknown'} "
+                 f"scan={scan_status}/{scan_subtype or 'unknown'} "
+                 f"reason={scan_reason or 'unspecified'}")
     lines.extend("  " + event for event in state["events"][-4:])
     if state["actions"]:
         lines.append("  receipt: " + state["actions"][-1]["raw"])
@@ -662,6 +724,10 @@ def space_snapshot(states, now, stale):
                 state["latest"].get("wifi_link_rssi_dbm"), now, stale),
             "bluetooth_le": ble_status_snapshot(
                 state["latest"].get("ble_status"), now, stale),
+            "ble_sighting": ble_sighting_snapshot(
+                state["latest"].get("ble_sighting"), now, stale),
+            "ble_scan": ble_scan_snapshot(
+                state["latest"].get("ble_scan"), now, stale),
             "stillness": stillness_snapshot(state, now, stale),
             "light": {
                 "status": status,
