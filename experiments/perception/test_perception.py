@@ -963,5 +963,92 @@ class PerceptionTests(unittest.TestCase):
 
 
 
+    def test_excursion_log_retains_windowed_std_oscillation_and_transient(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
+                              "1000 light lux=1 accuracy=3 age_ms=0 phone_elapsed_ms=2000",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=3000",
+                              "1000 acceleration x=0 y=0 z=9.8 age_ms=0 phone_elapsed_ms=3100",
+                              "1000 acceleration x=0 y=0 z=9.8 age_ms=0 phone_elapsed_ms=3200",
+                              "1000 wifi_link_rssi_dbm=-50 age_ms=0 phone_elapsed_ms=3300",
+                              "1000 wifi_link_rssi_dbm=-52 age_ms=0 phone_elapsed_ms=3400",
+                              "1000 wifi_link_rssi_dbm=-54 age_ms=0 phone_elapsed_ms=3500"],
+                      received=1000, log_dir=log_dir)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1001, log_dir=log_dir)
+            line = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[0]
+            # Population std of [0, 1, 0]; [9.8, 9.8]; [-50, -52, -54].
+            self.assertIn("light_std=0.471", line)
+            self.assertIn("light_oscillation=0->1->0", line)
+            self.assertIn("accel_std=0.0", line)
+            self.assertIn("rssi_std=1.633", line)
+            self.assertIn("light_transient=revert", line)
+
+    def test_excursion_log_retention_nulls_and_none_without_evidence(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0 phone_elapsed_ms=1000"],
+                      received=1000, log_dir=log_dir)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1001, log_dir=log_dir)
+            line = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[0]
+            self.assertIn("light_std=null", line)
+            self.assertIn("light_oscillation=none", line)
+            self.assertIn("accel_std=null", line)
+            self.assertIn("rssi_std=null", line)
+            self.assertIn("light_transient=none", line)
+
+    def test_excursion_log_marks_open_transient_and_quantized_signature(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
+                              "1000 light lux=1 accuracy=3 age_ms=0 phone_elapsed_ms=2000",
+                              "1000 light lux=2 accuracy=3 age_ms=0 phone_elapsed_ms=3000"],
+                      received=1000, log_dir=log_dir)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1001, log_dir=log_dir)
+            first = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[0]
+            self.assertIn("light_oscillation=0->1", first)
+            self.assertIn("light_transient=open", first)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s3",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=4000",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=5000",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=6000"],
+                      received=1002, log_dir=log_dir)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s4"],
+                      received=1003, log_dir=log_dir)
+            # lines[1] is s2's own hello-only line; s3's window is lines[2].
+            second = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[2]
+            self.assertIn("light_oscillation=quantized", second)
+            self.assertIn("light_transient=none", second)
+
+    def test_excursion_log_retention_survives_a_stale_window_verdict(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
+                              "1000 light lux=1 accuracy=3 age_ms=0 phone_elapsed_ms=2000",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=3000"],
+                      received=1000, log_dir=log_dir)
+            # Far past the stale horizon: the live composite refuses a verdict,
+            # but retention evidence is still emitted at the session boundary.
+            self.assertEqual(
+                watch.stillness_snapshot(state, 1000 + 60, 30)["status"],
+                "unknown/frozen")
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1061, log_dir=log_dir)
+            line = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[0]
+            self.assertIn("light_std=0.471", line)
+            self.assertIn("light_oscillation=0->1->0", line)
+            self.assertIn("light_transient=revert", line)
+
 if __name__ == "__main__":
     unittest.main()

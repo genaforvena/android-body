@@ -219,7 +219,9 @@ def excursion_window(state):
     retained records is well-defined; with window_truncated the bounds cover
     only the retained tail, not the whole session. The acquisition-span range
     is a separate cross-clock transport diagnostic, never folded into the
-    phone window.
+    phone window. The protocol v2.1 retention set (windowed standard
+    deviations, oscillation/quantization and transient-revert evidence) is
+    computed over the same retained window; see retention_set.
     """
     history = state.get("history", [])
     values = [value for value in
@@ -232,6 +234,7 @@ def excursion_window(state):
         window, reason = None, "no phone_elapsed_ms in retained window"
     else:
         window, reason = [min(values), max(values)], None
+    retention = retention_set(history)
     return {
         "sequence_start": history[0]["sequence"] if history else None,
         "sequence_end": history[-1]["sequence"] if history else None,
@@ -242,6 +245,73 @@ def excursion_window(state):
         "phone_window_reason": reason,
         "acquisition_span_ms_min": min(spans) if spans else None,
         "acquisition_span_ms_max": max(spans) if spans else None,
+        "light_std": retention["light_std"],
+        "light_oscillation": retention["light_oscillation"],
+        "accel_std": retention["accel_std"],
+        "rssi_std": retention["rssi_std"],
+        "light_transient": retention["light_transient"],
+    }
+
+
+def retention_set(history):
+    """Protocol v2.1 per-excursion retention evidence over the retained window.
+
+    The windowed standard deviations use the same population formula and
+    minimum sample count as stillness_snapshot, so retained evidence and the
+    live composite agree on the quantity. Oscillation evidence records an
+    adjacent 0<->1 lux flip pair as the observed transition path, or a
+    two-level quantization signature when no flip is present; transient
+    records whether post-flip values return within the window. Missing values
+    stay null/none: the scorer marks such excursions indeterminate, never
+    silently excluded.
+    """
+    light_values = []
+    accel_values = []
+    rssi_values = []
+    for item in history:
+        kind = item["kind"]
+        if kind == "acceleration":
+            value = magnitude(item)
+            if value is not None:
+                accel_values.append(value)
+        elif kind == "light":
+            value = number(item["fields"], "lux")
+            if value is not None:
+                light_values.append(value)
+        elif kind == "wifi_link_rssi_dbm":
+            value = number(item["fields"], "wifi_link_rssi_dbm")
+            if value is not None:
+                rssi_values.append(value)
+
+    def std(values):
+        if len(values) < STILLNESS_MIN_SAMPLES:
+            return None
+        mean = sum(values) / len(values)
+        variance = sum((value - mean) ** 2 for value in values) / len(values)
+        return round(math.sqrt(variance), 3)
+
+    oscillation = "none"
+    transient = "none"
+    flipped = any(
+        {light_values[index - 1], light_values[index]} == {0, 1}
+        for index in range(1, len(light_values)))
+    if flipped:
+        path = []
+        for value in light_values:
+            if value in (0, 1) and (not path or value != path[-1]):
+                path.append(value)
+        oscillation = "->".join(str(int(value)) for value in path)
+        transient = ("revert" if len(path) > 1 and path[0] == path[-1]
+                     else "open")
+    elif (len(light_values) >= STILLNESS_MIN_SAMPLES and
+          all(value in (0, 1) for value in light_values)):
+        oscillation = "quantized"
+    return {
+        "light_std": std(light_values),
+        "light_oscillation": oscillation,
+        "accel_std": std(accel_values),
+        "rssi_std": std(rssi_values),
+        "light_transient": transient,
     }
 
 
@@ -288,6 +358,9 @@ def emit_excursion(log_dir, state, now):
     def range_text(low, high):
         return "null" if low is None else f"{low},{high}"
 
+    def optional_text(value):
+        return "null" if value is None else str(value)
+
     freeze_class = (freeze.get("class") or "null") if freeze else "null"
     freeze_sequence = freeze.get("sequence") if freeze else "null"
     line = (f"excursion emitted={stamp(now)} node={state['node']} "
@@ -300,8 +373,14 @@ def emit_excursion(log_dir, state, now):
             f"{range_text(window['phone_elapsed_ms_min'], window['phone_elapsed_ms_max'])} "
             f"phone_window_reason={window['phone_window_reason'] or 'null'} "
             f"acquisition_span_ms={range_text(window['acquisition_span_ms_min'], window['acquisition_span_ms_max'])} "
+            f"light_std={optional_text(window['light_std'])} "
+            f"light_oscillation={window['light_oscillation']} "
+            f"accel_std={optional_text(window['accel_std'])} "
+            f"rssi_std={optional_text(window['rssi_std'])} "
+            f"light_transient={window['light_transient']} "
             f"freeze_overlap={str(freeze is not None).lower()} "
             f"freeze_class={freeze_class} freeze_sequence={freeze_sequence}")
+
     path = log_dir / f"excursion-log-{state['node']}.txt"
     try:
         previous = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
