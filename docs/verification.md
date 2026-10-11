@@ -204,3 +204,32 @@ service journal lines carry `ble_sighting=unknown/no-observation/unknown`; note3
 stale (freeze #4, user-gated) and redmi10 NOT_CONNECTED — both rendered truthfully as unknown.
 Deploy completed ahead of the 14:00Z MISHE-BEACON window. Evidence:
 `.mishe-tauftauf/artifacts/genome-redeploy-20261011-1250Z.md`.
+
+## Protocol v2 clock-agreement landing (core sync 814b5c64b47c) — 2026-10-11
+
+The core-sync follower applied core release 814b5c64b47c body bytes to the worktree;
+genome reviewed, landed and pushed. `e3c0805` (consumer side): `watch.py` parses
+`phone_elapsed_ms` (v2, sensor_time_ns-style validation) and renders host
+receipt/boot/acquisition-span fields; pre-v2 persisted items render null with reasons
+instead of failing; tests +72 lines, README documented. `5806bb6` (APK side):
+`Sensors.sample()` appends `phone_elapsed_ms` (SystemClock.elapsedRealtime ms) to every
+sensor event; `WifiRssi` event/unavailable carry the same field; `ProtocolTest`
+expectations updated.
+
+Verified locally (ANDROID_HOME=/home/mesh-home/android-sdk): `:app:testProtocol` 81
+assertions PASS, `:app:testSpool` 2,788 assertions PASS, `:app:assembleDebug` and
+`:app:lintDebug` PASS. Exact-SHA CI run 38146873239 on `5806bb6` completed successfully
+2026-10-11T14:23:06Z.
+
+Consumer runtime redeployed at 14:25Z (deployed copy had drifted from source):
+backup `watch.py.pre-redeploy-20261011-1425Z`, source sha256
+`687ae116a37743163644e88cd42ccb8f` copied to `.mishe-tauftauf/body/runtime/watch.py`
+(md5 match both sides, py_compile OK), `android-body-perception.service` restarted
+clean (active/running). Live check: `view` renders all sections (note3 cursor 126304,
+transport reachable, all channels stale 09:22:54Z — freeze #4 user-gated); `space`
+renders the new clock fields null with truthful reasons for pre-v2 spooled records.
+
+Not established: phone-side emission (new APK not installed — Note3 frozen,
+user-gated; install requires explicit bounded authority); physical clock agreement
+remains unverified. Evidence:
+`.mishe-tauftauf/artifacts/genome-wake37188-v2-clock-landing.md`.
