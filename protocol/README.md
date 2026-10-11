@@ -1,4 +1,4 @@
-# Android Body text protocol, version 1
+# Android Body text protocol, version 2
 
 A phone observes and requests effects through Android APIs. An arbitrary program reasons outside it. HTTP is the replaceable rendezvous boundary. There is no agent, remote shell, model, plugin loader, account or Mishe-specific field here.
 
@@ -92,7 +92,7 @@ The read-only process identity probe uses `probe identity uid=<uid> groups=<spac
 
 ## Delivery, collection and restart semantics
 
-The wire protocol remains version 1. App version 0.2 adds durable local collection and persistent ON without changing the HTTP endpoints.
+The wire protocol is version 2: since app 0.2.0, light, acceleration and Wi-Fi link RSSI records carry `phone_elapsed_ms` (described above). The hello handshake still emits `protocol=1`; consumers detect version 2 by that field's presence, not by the hello number. App version 0.2 adds durable local collection and persistent ON without changing the HTTP endpoints.
 
 - A dedicated sampler saves battery/light/acceleration snapshots roughly every five seconds while Android schedules the app. Network timeouts and retry sleeps do not pause that sampler. Raw sensor events are still coalesced into snapshots; this is not a high-rate recorder and OS/process gaps are not backfilled with invented data.
 - Each normalized endpoint owns a private durable observation queue and its own action cursor. Changing endpoints never sends the previous node's backlog to the new destination. Secret rotation at the same endpoint retains that node's queue/cursor. Return to the old endpoint to drain its backlog, or explicitly delete that node's saved observations while OFF.
@@ -113,4 +113,4 @@ The example rendezvous never prunes silently. Queue-full 507, non-retryable clie
 
 ## Boundaries
 
-No request can evaluate code, open arbitrary URLs, start an intent, access files or issue shell commands. Version 1 implements only `vibrate duration=N`, where `1 <= N <= 2000` milliseconds and accepted vibrations are at least three seconds apart. The endpoint is authoritative, not safe: keep its secret private and turn OFF before moving a phone into a sensitive environment.
+No request can evaluate code, open arbitrary URLs, start an intent, access files or issue shell commands. The protocol implements only `vibrate duration=N`, where `1 <= N <= 2000` milliseconds and accepted vibrations are at least three seconds apart. The endpoint is authoritative, not safe: keep its secret private and turn OFF before moving a phone into a sensitive environment.

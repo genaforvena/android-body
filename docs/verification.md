@@ -1,6 +1,6 @@
 # Verification record
 
-Checked 2026-10-07. Version 0.2 adds persistent ON and durable collect/upload-later behavior. Host/build evidence is separate from Android runtime and physical-device evidence.
+Checked 2026-10-07; updated through 2026-10-11. Version 0.2 adds persistent ON and durable collect/upload-later behavior. Host/build evidence is separate from Android runtime and physical-device evidence.
 
 ## Built artifact
 
@@ -125,7 +125,7 @@ The frozen deployed consumer view (`body/runtime/watch.py`) observed the Note3 e
 
 This is consumer-view evidence of the installed APK's emissions, not server-side receipt, motor proof, calibration or clock synchronization. Redmi10 remained at cursor 0 with no observations.
 
-- 2026-10-11 09:22:54Z–ongoing: **freeze #4** — cursor 126304 frozen. Root cause: data-wiping reinstall at 09:23:01Z (28s before freeze onset), not an app-internal stall. Exceeds freeze #3 record (~64 min); ~2h41m as of 12:03Z. Genome completed authorized self-heal install-over of `460c8ec` at 11:02:25Z (permit 36417; APK `9e4fdc28…`, signer `d23dcc9d…`). Sensing remained user-gated after install (desired_on=false from data wipe). Sensors stale since 09:22:54Z (battery 1.0/charging, light 6.7048 lux, accel magnitude ~15.7 m/s², Wi-Fi RSSI −13 dBm). Redmi10 still cursor 0.
+- 2026-10-11 09:22:54Z–15:58:40Z: **freeze #4** — cursor 126304 frozen for ~6h36m, resolved by the owner's UI toggle (see Note3 freeze #4 resolution below). Root cause: data-wiping reinstall at 09:23:01Z (28s before freeze onset), not an app-internal stall. Exceeds freeze #3 record (~64 min). Genome completed authorized self-heal install-over of `460c8ec` at 11:02:25Z (permit 36417; APK `9e4fdc28…`, signer `d23dcc9d…`). Sensing remained user-gated after install (desired_on=false from data wipe). Sensors stale since 09:22:54Z (battery 1.0/charging, light 6.7048 lux, accel magnitude ~15.7 m/s², Wi-Fi RSSI −13 dBm). Redmi10 still cursor 0.
 
 ## Host perception snapshot activation
 
@@ -244,3 +244,16 @@ The attached Samsung SM-N900/API 21 had Android Body `org.androidbody` v0.2.0 in
 Physical evidence: Android `dumpsys activity services org.androidbody` reported `BodyService` foreground with `isForeground=true`. `watch.py view` advanced from frozen cursor 126304/session `dd96004f-2f7e-497c-bbd2-6f988782f957` to cursor 126424/session `48b80264-cd08-4bdc-8856-c54a4bb4d6e7`; the 16:00:52Z poll saw 16:00:25Z records but classified them stale. A later view at 16:02:31Z reached cursor 126524 in the same session; battery 0.93/charging, light 13.9872 lux, acceleration, and Wi-Fi RSSI -12 dBm were `fresh-clock-conditional`, sampled 16:02:06Z and received at 16:02:31Z. The aggregate phone state still read stale because phone/host timing and freshness bounds remain conditional. Core's 16:03:03Z view reached cursor 126554 in the same session but light read null/stale.
 
 On the first resumed upload, the pre-existing `note3.actions.log` entry `vibrate duration=200` was consumed and produced requested/succeeded API-return receipts (#126318–126319). This repair did not create that request; physical vibration was not independently verified. No other queued Note3 action was present. This is evidence of app/transport delivery, not proof of all-device controls, uninterrupted collection, screen-off/reboot recovery, or physical actuator effect.
+
+## Note3 freeze #4 resolution — 2026-10-11T16:31Z
+
+Freeze #4 (cursor 126304, onset 09:22:54Z) resolved after discover restored the app session ~15:58Z (human ON press). Deployed `watch.py view` at 16:31:44Z verified live Note3 data:
+
+- Cursor 128269 (advanced from frozen 126304), session `48b80264-cd08-4bdc-8856-c54a4bb4d6e7`, transport reachable, no pending backlog page.
+- All sensor channels `fresh-clock-conditional` at phone_sample 16:31:17Z, consumer_receipt 16:31:42Z (25s transport latency, within documented 17–25s envelope).
+- Battery: level=1.0 (100%), charging=true. Light: 13.5464 lux, age_ms=49. Acceleration: x=2.653 y=5.242 z=14.614 m/s² (magnitude 15.751 m/s², includes gravity). Wi-Fi RSSI: −12 dBm. BLE API: api=21, scanner_api=present, advertiser_api=present, advertiser_supported=unsupported.
+- Composite stillness: still (accel_std=0.041 m/s² n=7, light_std=0.000 lux n=7, rssi_std=0.000 dBm n=6).
+- Action receipts: #126318/#126319 vibrate duration=200 consumed at 15:58:40Z (pre-existing queued action, evidence=api_return verification=unverified). No new action requested by senses.
+- Probe identity: uid=10225 groups=3002 3003 9997 50225.
+
+This is consumer-view evidence of resumed sensing after freeze #4. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. Redmi10 still cursor 0 (NOT_CONNECTED). No source, APK, or consumer mutation this wake.
