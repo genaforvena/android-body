@@ -244,6 +244,64 @@ BLE_STATES = {
     "advertiser_supported": {"supported", "unsupported", "unavailable", "error"},
 }
 
+STILLNESS_ACCEL_STD = 0.5
+STILLNESS_LIGHT_STD = 0.1
+STILLNESS_RSSI_STD = 2.0
+STILLNESS_MIN_SAMPLES = 2
+
+
+def stillness_snapshot(state, now, stale):
+    """Composite stillness from joint variance of accel magnitude, light, wifi RSSI."""
+    history = state.get("history", [])
+    accel_values = []
+    light_values = []
+    rssi_values = []
+    for item in history:
+        kind = item["kind"]
+        if kind == "acceleration":
+            value = magnitude(item)
+            if value is not None:
+                accel_values.append(value)
+        elif kind == "light":
+            value = number(item["fields"], "lux")
+            if value is not None:
+                light_values.append(value)
+        elif kind == "wifi_link_rssi_dbm":
+            value = number(item["fields"], "wifi_link_rssi_dbm")
+            if value is not None:
+                rssi_values.append(value)
+
+    def stats(vals):
+        if len(vals) < STILLNESS_MIN_SAMPLES:
+            return None
+        mean = sum(vals) / len(vals)
+        variance = sum((v - mean) ** 2 for v in vals) / len(vals)
+        return {"count": len(vals), "mean": round(mean, 3),
+                "std": round(math.sqrt(variance), 3)}
+
+    accel_stats = stats(accel_values)
+    light_stats = stats(light_values)
+    rssi_stats = stats(rssi_values)
+    if accel_stats is None or light_stats is None or rssi_stats is None:
+        status = "unknown/insufficient-samples"
+    elif (accel_stats["std"] <= STILLNESS_ACCEL_STD and
+          light_stats["std"] <= STILLNESS_LIGHT_STD and
+          rssi_stats["std"] <= STILLNESS_RSSI_STD):
+        status = "still"
+    else:
+        status = "moving"
+    return {
+        "status": status,
+        "basis": "joint std of accel magnitude + light + wifi RSSI over history window",
+        "thresholds": {"accel_std_m_s2": STILLNESS_ACCEL_STD,
+                       "light_std_lux": STILLNESS_LIGHT_STD,
+                       "rssi_std_dbm": STILLNESS_RSSI_STD},
+        "accel": accel_stats,
+        "light": light_stats,
+        "wifi_rssi": rssi_stats,
+        "consumer": "space-perception programme (not human presence)",
+    }
+
 def ble_status_snapshot(item, now, stale):
     fields = item["fields"] if item else {}
     recognized = item is not None and fields.get("source") == "androidbody_bluetooth_api"
@@ -498,6 +556,16 @@ def render(state, now, stale):
     lines.append("  " + " ".join(
         f"{key}={ble_view[key] if ble_view[key] is not None else 'unknown'}"
         for key in BLE_STATES))
+    stillness = stillness_snapshot(state, now, stale)
+    lines.append("Composite stillness (joint variance of accel magnitude + light + wifi RSSI):")
+    lines.append(f"  status={stillness['status']} basis={stillness['basis']}")
+    if stillness.get("accel"):
+        lines.append(f"  accel_std={stillness['accel']['std']:.3f} m/s² (n={stillness['accel']['count']})")
+    if stillness.get("light"):
+        lines.append(f"  light_std={stillness['light']['std']:.3f} lux (n={stillness['light']['count']})")
+    if stillness.get("wifi_rssi"):
+        lines.append(f"  rssi_std={stillness['wifi_rssi']['std']:.3f} dBm (n={stillness['wifi_rssi']['count']})")
+    lines.append(f"  consumer={stillness['consumer']}")
     acceleration = state["latest"].get("acceleration")
     norm = magnitude(acceleration)
     if norm is not None and sensor_status(acceleration, now, stale) == "fresh-clock-conditional":
@@ -560,6 +628,7 @@ def space_snapshot(states, now, stale):
                 state["latest"].get("wifi_link_rssi_dbm"), now, stale),
             "bluetooth_le": ble_status_snapshot(
                 state["latest"].get("ble_status"), now, stale),
+            "stillness": stillness_snapshot(state, now, stale),
             "light": {
                 "status": status,
                 "status_reason": (fields.get("reason") or
