@@ -602,6 +602,53 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(key[0], "fresh-clock-conditional")
         self.assertEqual(key[4][0][1], "stale")
 
+    def test_stillness_reports_frozen_when_sensors_stale(self):
+        """During a freeze, pre-frozen samples roll through the history window.
+        Computing std over them would report a misleading still/moving verdict.
+        Instead, return unknown/frozen when the most recent sample for any
+        required sensor type is stale."""
+        state = self.state()
+        # Fresh samples at t=1000: light varies, accel varies, wifi varies.
+        self.page(state, [
+            "1000 light lux=1.0 accuracy=3 age_ms=10",
+            "1000 acceleration x=0 y=0 z=9.8 age_ms=10",
+            "1000 wifi_link_rssi_dbm=-10 source=androidbody_wifi_api observed_at=1000",
+            "1001 light lux=2.0 accuracy=3 age_ms=10",
+            "1001 acceleration x=0 y=0 z=9.9 age_ms=10",
+            "1001 wifi_link_rssi_dbm=-20 source=androidbody_wifi_api observed_at=1001",
+            "1002 light lux=3.0 accuracy=3 age_ms=10",
+            "1002 acceleration x=0 y=0 z=10.0 age_ms=10",
+            "1002 wifi_link_rssi_dbm=-30 source=androidbody_wifi_api observed_at=1002",
+        ], received=1002)
+        # Fresh: should compute normally (moving, since light_std > 0.1).
+        result = watch.stillness_snapshot(state, 1002, 30)
+        self.assertEqual(result["status"], "moving")
+        self.assertIsNotNone(result["accel"])
+        self.assertIsNotNone(result["light"])
+        self.assertIsNotNone(result["wifi_rssi"])
+
+        # Simulate freeze: same samples, but now is 1002+60 (well past stale=30).
+        frozen = watch.stillness_snapshot(state, 1062, 30)
+        self.assertEqual(frozen["status"], "unknown/frozen")
+        self.assertIsNone(frozen["accel"])
+        self.assertIsNone(frozen["light"])
+        self.assertIsNone(frozen["wifi_rssi"])
+        self.assertIn("acceleration", frozen["stale_sensors"])
+        self.assertIn("light", frozen["stale_sensors"])
+        self.assertIn("wifi_link_rssi_dbm", frozen["stale_sensors"])
+
+        # After freeze clears (new fresh samples), stillness computes again.
+        self.page(state, [
+            "1062 light lux=1.0 accuracy=3 age_ms=10",
+            "1062 acceleration x=0 y=0 z=9.8 age_ms=10",
+            "1062 wifi_link_rssi_dbm=-10 source=androidbody_wifi_api observed_at=1062",
+            "1063 light lux=1.1 accuracy=3 age_ms=10",
+            "1063 acceleration x=0 y=0 z=9.8 age_ms=10",
+            "1063 wifi_link_rssi_dbm=-11 source=androidbody_wifi_api observed_at=1063",
+        ], received=1063)
+        recovered = watch.stillness_snapshot(state, 1063, 30)
+        self.assertNotEqual(recovered["status"], "unknown/frozen")
+
 
 if __name__ == "__main__":
     unittest.main()

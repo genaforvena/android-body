@@ -251,25 +251,56 @@ STILLNESS_MIN_SAMPLES = 2
 
 
 def stillness_snapshot(state, now, stale):
-    """Composite stillness from joint variance of accel magnitude, light, wifi RSSI."""
+    """Composite stillness from joint variance of accel magnitude, light, wifi RSSI.
+
+    When the most recent sample for any required sensor type is stale, the
+    history window contains only pre-frozen samples.  Computing std over
+    them would report a misleading still/moving verdict, so return
+    unknown/frozen instead.
+    """
     history = state.get("history", [])
     accel_values = []
     light_values = []
     rssi_values = []
+    latest = {}
     for item in history:
         kind = item["kind"]
         if kind == "acceleration":
             value = magnitude(item)
             if value is not None:
                 accel_values.append(value)
+            latest["acceleration"] = item
         elif kind == "light":
             value = number(item["fields"], "lux")
             if value is not None:
                 light_values.append(value)
+            latest["light"] = item
         elif kind == "wifi_link_rssi_dbm":
             value = number(item["fields"], "wifi_link_rssi_dbm")
             if value is not None:
                 rssi_values.append(value)
+            latest["wifi_link_rssi_dbm"] = item
+
+    stale_sensors = []
+    for kind in ("acceleration", "light", "wifi_link_rssi_dbm"):
+        item = latest.get(kind)
+        if item is None:
+            continue
+        if freshness(item, now, stale) == "stale":
+            stale_sensors.append(kind)
+    if stale_sensors:
+        return {
+            "status": "unknown/frozen",
+            "basis": "joint std of accel magnitude + light + wifi RSSI over history window",
+            "thresholds": {"accel_std_m_s2": STILLNESS_ACCEL_STD,
+                           "light_std_lux": STILLNESS_LIGHT_STD,
+                           "rssi_std_dbm": STILLNESS_RSSI_STD},
+            "accel": None,
+            "light": None,
+            "wifi_rssi": None,
+            "stale_sensors": stale_sensors,
+            "consumer": "space-perception programme (not human presence)",
+        }
 
     def stats(vals):
         if len(vals) < STILLNESS_MIN_SAMPLES:
@@ -565,6 +596,9 @@ def render(state, now, stale):
         lines.append(f"  light_std={stillness['light']['std']:.3f} lux (n={stillness['light']['count']})")
     if stillness.get("wifi_rssi"):
         lines.append(f"  rssi_std={stillness['wifi_rssi']['std']:.3f} dBm (n={stillness['wifi_rssi']['count']})")
+    if stillness.get("stale_sensors"):
+        lines.append(f"  stale_sensors={','.join(stillness['stale_sensors'])} "
+                     "(history window contains pre-frozen samples; std not computed)")
     lines.append(f"  consumer={stillness['consumer']}")
     acceleration = state["latest"].get("acceleration")
     norm = magnitude(acceleration)
