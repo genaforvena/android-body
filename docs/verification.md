@@ -190,3 +190,17 @@ The minimal-substrate first experiment is canonical in the shared checkout: `exp
 ## Extended probe runner: contexts, denial, interrupt, scratch rerun — 2026-10-11
 
 The runner was extended to close the research-methods discriminator gaps (DM 35984): per-record execution-context labels (`host` / `run-as` / `apk-uid`), per-line 1,024-byte output cap alongside the total cap, expected-denial semantics with stderr retained, a SIGINT interrupt probe with truthful receipt, a device-side persisted trivial-script write/run1/run2/delete/verify sequence with source+SHA-256+provenance, an `apk-identity` capture of the retained in-process identity observation from the durable consumer spool, and an `apk-dex` host-side installed-byte correlation (explicitly not execution evidence). run-as exit0-with-failure ("corrupt installation") is detected and never recorded as success. Verified 2026-10-11: 24 unit tests pass (`python3 -m unittest discover -s experiments/minimal-substrate`), covering allowlist purity, context labels, identity parsing, per-line and total caps, timeout kill, non-UTF-8 replacement, stderr recording, expected denial, exit0-corrupt-installation, interrupt (rc=-2), scratch rerun+teardown, apk-identity capture/absence, apk-dex correlation/absence, retention and usage errors. Live activation against Note3 2026-10-11T10:07Z: truthful partial — host probes ok, `apk-identity` ok (fresh in-process observation event #125864, 09:15:38Z, uid=10224 groups=3002 3003 9997 50224), `apk-dex` ok (installed APK sha256=524f7571…, 97118 bytes, ExecutionProbe class + identity format string present), `host-interrupt` interrupted (rc=-2), run-as probes and scratch errored truthfully because a mid-experiment package reinstall left run-as reporting "corrupt installation" (exit0, caught by the exit0-failure guard). Artifact `experiments/minimal-substrate/artifacts/probes-20261011T100728021502Z.json` (gitignored). The runner performed no device mutation; the reinstall was not the runner's doing.
+
+## Consumer runtime redeploy: BLE evidence channel — 2026-10-11
+
+Senses DM 36882 found the deployed host consumer `.mishe-tauftauf/body/runtime/watch.py`
+(08:32:55Z, 40359 bytes) lacked the `ble_sighting`/`ble_scan` evidence channel present in
+committed source `experiments/perception/watch.py` (eca0a64, HEAD 190bed2, CI run 38140227428
+PASS). Genome redeployed at 12:50Z: backup `watch.py.pre-redeploy-20261011-1250Z`, copy of
+committed source to the runtime path (sha256 15278d96… verified both sides, py_compile OK),
+`systemctl --user restart android-body-perception.service` (clean stop/start, MainPID 1457579).
+Live check: `watch.py view` renders the "Bluetooth LE sightings" section for both nodes and
+service journal lines carry `ble_sighting=unknown/no-observation/unknown`; note3 sensors remain
+stale (freeze #4, user-gated) and redmi10 NOT_CONNECTED — both rendered truthfully as unknown.
+Deploy completed ahead of the 14:00Z MISHE-BEACON window. Evidence:
+`.mishe-tauftauf/artifacts/genome-redeploy-20261011-1250Z.md`.
