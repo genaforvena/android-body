@@ -168,6 +168,7 @@ tools/test-protocol.sh
 tools/test-spool.sh
 python3 -m unittest discover -s rendezvous/minimal-server
 python3 -m unittest discover -s experiments/light-vibrate
+python3 -m unittest discover -s experiments/minimal-substrate
 python3 -m unittest discover -s experiments/perception
 ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool
 "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose \
@@ -179,3 +180,7 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 ## Executed identity probe — 2026-10-11
 
 On 2026-10-11 at ~07:45Z, senses executed the bounded identity probe proposed by discover (DM 34840): one read-only command, `timeout 10 rtk adb -s 4d00553d61ab90b7 shell "dumpsys package org.androidbody | grep -E 'userId=|versionCode|versionName|Package \[org.androidbody\]|Signature|cert|firstInstallTime|lastInstallTime|apkSigningVersion'"`, no camera/mic/location/radio/actuator. Output: `userId=10224 gids=[3002, 3003]`, `versionCode=2 targetSdk=36`, `versionName=0.2.0`, `firstInstallTime=2026-10-11 03:57:46` (device-local, Europe/Moscow), `signatures=PackageSignatures{54bb898 [310c18f1]}`. The uid independently confirms the APK's in-band session-start emission (#104569, 02:19:41Z), which predates the probe proposal by 4h41m and is not an executed probe (witness DM 34974). versionCode/versionName match `app/build.gradle` and the published APK 417719c5. The dumpsys signature form cannot be compared to certificate SHA-256 `039da447…`, so signing continuity is not established by this probe. Full evidence: `artifacts/senses-wake34985-identity-probe.md` (ignored site).
+
+## Retained bounded probe runner — 2026-10-11
+
+The minimal-substrate first experiment is canonical in the shared checkout: `experiments/minimal-substrate/probe.py` (retained trivial text script), `test_probe.py`, `README.md`. The script runs a fixed allowlist of read-only `adb shell` probes (`dumpsys package org.androidbody`, `dumpsys sensorservice`, `date -u`) — no arbitrary command execution, no device mutation, no radio/camera/mic/location, no persistent state. Bounds: per-command timeout with child kill (default 10s), per-probe byte cap (default 64 KiB), artifact retention (newest 20; N<=0 keeps none). Interrupted outcomes (timeout, non-zero exit, missing adb, undecodable output) are recorded truthfully in a dated artifact; nothing is retried or hidden. Verified 2026-10-11: 13 unit tests pass (`python3 -m unittest discover -s experiments/minimal-substrate`), covering timeout kill, byte-cap with multibyte characters, non-UTF-8 replacement, stderr recording, empty output, retention and usage errors; independent review found no safety blockers (fixed allowlist, list-argument subprocess, no injection path) and two correctness defects (character-vs-byte cap, uncaught decode/OSError) which were fixed before this entry. Live activation against Note3 2026-10-11T08:39Z: 3/3 probes ok, artifact `experiments/minimal-substrate/artifacts/probes-20261011T083932529383Z.json` (gitignored). The fixed allowlist structurally bounds captured output; the byte cap bounds retained output.
