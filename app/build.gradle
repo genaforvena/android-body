@@ -37,3 +37,10 @@ tasks.register('testSpool', JavaExec) {
                       "$buildDir/intermediates/javac/debug/compileDebugJavaWithJavac/classes")
     mainClass = 'org.androidbody.ObservationSpoolTest'
 }
+
+tasks.register('testRestore', JavaExec) {
+    dependsOn 'compileDebugUnitTestJavaWithJavac'
+    classpath = files("$buildDir/intermediates/javac/debugUnitTest/compileDebugUnitTestJavaWithJavac/classes",
+                      "$buildDir/intermediates/javac/debug/compileDebugJavaWithJavac/classes")
+    mainClass = 'org.androidbody.RestoreLogicTest'
+}

@@ -201,7 +201,7 @@ public final class MainActivity extends Activity {
 
     /** Restore a durably enabled session after a fresh install, update or process kill. */
     private void restoreIfEnabled() {
-        if (clearing || !Settings.desiredOn(this) || BodyService.running) return;
+        if (!RestoreLogic.shouldRestore(clearing, Settings.desiredOn(this), BodyService.running)) return;
         try {
             BodyService.createChannel(this);
             Intent intent = new Intent(this, BodyService.class).setAction(BodyService.RESTORE);
