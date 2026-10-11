@@ -750,7 +750,7 @@ def space_snapshot(states, now, stale):
         phone_elapsed = phone_elapsed_realtime(item)
         phone_elapsed_reason = (
             "no-light-observation" if item is None else
-            "not provided by protocol v1" if "phone_elapsed_ms" not in fields else
+            "not provided by protocol v2" if "phone_elapsed_ms" not in fields else
             None if phone_elapsed is not None else
             "invalid phone_elapsed_ms value")
         acquisition_span = (round((item["received"] - item["collected"]) * 1000, 1)
@@ -805,7 +805,10 @@ def space_snapshot(states, now, stale):
                                         if "host_boot_id" not in item else
                                         None if item["host_boot_id"] else
                                         "host boot id unreadable"),
-                "server_receipt_utc": stamp(item["received"]) if item else None,
+                "server_receipt_utc": None,
+                "server_receipt_utc_reason": (
+                    "no-light-observation" if item is None else
+                    "not provided by protocol v1"),
                 "acquisition_span_ms": acquisition_span
             },
             "last_light_transition": state.get("last_light_transition")

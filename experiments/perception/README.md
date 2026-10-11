@@ -197,15 +197,20 @@ isolated light-term excursions as a known false-positive mode, not motion.
 
 ## Protocol v2 clock-agreement fields
 
-The space snapshot carries four clock-agreement fields for trial scoring
-(transport jitter, clock offset, host-restart detection). Two are computed by this
-consumer at receipt; two are emitted by the phone under protocol v2.
+The space snapshot carries five clock-agreement fields for trial scoring
+(transport jitter, clock offset, host-restart detection). Four are computed by
+this consumer (three per receipt, one cached per process); one is emitted by
+the phone under protocol v2.
 
 - `host_receipt_monotonic_ns` — `time.monotonic_ns()` captured per record at
   receipt. Always present on items written by this consumer; null only for items
   persisted by a pre-v2 consumer (`receipt metadata not recorded` is not a reason
   field for it; null means not recorded).
-- `server_receipt_utc` — UTC stamp of the host wall-clock at receipt.
+- `server_receipt_utc` — always null today: the rendezvous server emits no
+  receipt timestamp in protocol v1, so `server_receipt_utc_reason` reads
+  `not provided by protocol v1` (or `no-light-observation`). The consumer's own
+  receipt time stays available under `consumer_receipt_epoch_s` /
+  `consumer_receipt_utc`; it is never aliased as a server time.
 - `host_boot_id` — `/proc/sys/kernel/random/boot_id`, read once per process and
   cached. Null with `host_boot_id_reason=host boot id unreadable` when the file
   is missing/unreadable; never fabricated. Deltas of `host_receipt_monotonic_ns`
@@ -214,8 +219,7 @@ consumer at receipt; two are emitted by the phone under protocol v2.
   in milliseconds, parsed from the record field `phone_elapsed_ms` when the phone
   emits it (protocol v2). Validation mirrors `sensor_time_ns`: unsigned decimal,
   at most 2^63−1; anything else is null with
-  `phone_elapsed_realtime_reason=invalid phone_elapsed_ms value`. Protocol v1
-  records leave it null with reason `not provided by protocol v1`. Deltas are
+  records leave it null with reason `not provided by protocol v2`. Deltas are
   comparable only within one hello `session` (same phone boot); the value is not
   Unix time and not a host-clock quantity.
 - `acquisition_span_ms` — `(host receipt − phone collection epoch) × 1000`,
