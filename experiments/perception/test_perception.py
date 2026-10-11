@@ -210,7 +210,7 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(node["light"]["consumer_receipt_utc"], "1970-01-01T00:16:40+00:00")
         self.assertIsNone(node["light"]["phone_elapsed_realtime_ms"])
         self.assertEqual(node["light"]["phone_elapsed_realtime_reason"],
-                         "not provided by protocol v2")
+                         "not provided by protocol v1")
         self.assertIsInstance(node["light"]["host_receipt_monotonic_ns"], int)
         self.assertGreaterEqual(node["light"]["host_receipt_monotonic_ns"], 0)
         boot_id = node["light"]["host_boot_id"]
@@ -292,7 +292,7 @@ class PerceptionTests(unittest.TestCase):
         self.assertIsNone(node["host_boot_id"])
         self.assertEqual(node["host_boot_id_reason"], "receipt metadata not recorded")
         self.assertEqual(node["phone_elapsed_realtime_reason"],
-                         "not provided by protocol v2")
+                         "not provided by protocol v1")
         self.assertEqual(node["acquisition_span_ms"], 0.0)
 
     def test_old_state_seeds_transition_marker_without_replaying_history(self):

@@ -220,7 +220,7 @@ the phone under protocol v2.
   emits it (protocol v2). Validation mirrors `sensor_time_ns`: unsigned decimal,
   at most 2^63−1; anything else is null with
   `phone_elapsed_realtime_reason=invalid phone_elapsed_ms value`. Protocol v1
-  records leave it null with reason `not provided by protocol v2`. Deltas are
+  records leave it null with reason `not provided by protocol v1`. Deltas are
   comparable only within one hello `session` (same phone boot); the value is not
   Unix time and not a host-clock quantity.
 - `acquisition_span_ms` — `(host receipt − phone collection epoch) × 1000`,
