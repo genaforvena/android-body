@@ -21,8 +21,9 @@ import java.util.concurrent.TimeoutException;
  * Closed, bounded evaluator for the minimal-substrate investigation.
  * Fixed grammar, bounded output, timeout, and durable terminal state.
  * <p>
- * NOT wired into the live session -- candidate for Witness/Research-methods
- * review before any phone trial. Pure Java (no Android dependencies) for
+ * Wired into BodyService.execute as the eval branch (commit e69d798);
+ * Witness review completed -- defects fixed, caveats recorded in the
+ * minimal-substrate README. Pure Java (no Android dependencies) for
  * zero-dependency JVM tests.
  * <p>
  * Grammar (fixed allowlist -- no arbitrary code):
