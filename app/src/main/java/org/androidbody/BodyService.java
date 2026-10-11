@@ -54,6 +54,7 @@ public final class BodyService extends Service {
         volatile Transport transport;
         volatile Thread worker, sampler;
         ObservationSpool spool;
+        BleScan bleScan;
         PowerManager.WakeLock wakeLock;
         Session previous;
         long lastVibration = -3000;
@@ -226,6 +227,14 @@ public final class BodyService extends Service {
             session.spool.enqueue(hello);
             if (pending > 0 && !session.preferences.edit().remove(session.cursorKey + "_pending").commit()) throw new IOException("Cannot persist interrupted result");
             session.queued = session.spool.lineCount();
+            try {
+                session.bleScan = new BleScan();
+                session.bleScan.start(session.spool::enqueue);
+            } catch (RuntimeException e) {
+                try { session.spool.enqueue(Protocol.event(BleScanEvents.errorEvent(e))); }
+                catch (IOException ignored) { }
+                session.bleScan = null;
+            }
             session.sampler = new Thread(new Runnable() { @Override public void run() { sample(session); } }, "body-sampler");
             session.sampler.start();
             network(session);
@@ -241,6 +250,10 @@ public final class BodyService extends Service {
                     try { session.sampler.join(100); } catch (InterruptedException e) { interrupted = true; }
                 }
                 if (interrupted) Thread.currentThread().interrupt();
+            }
+            if (session.bleScan != null) {
+                session.bleScan.stop();
+                session.bleScan = null;
             }
             if (session.spool != null) { try { session.spool.close(); } catch (IOException ignored) { } }
             session.previous = null;
