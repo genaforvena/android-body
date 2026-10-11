@@ -1,0 +1,141 @@
+{
+  "description": "Retained Note3 composite-FP instances and quiet-path negatives, 2026-10-11. Derived perception statistics only (no raw samples, no secrets); each field carries its retention source. Per-instance fields override set_level; missing fields are reported missing by the scorer, never silently passed.",
+  "set_characterization": {
+    "source": "discover-wake34909: 'All light-quantization driven, accel_std << 0.5' over the 8-instance census; census membership means each entry was observed as a discrete flip (FP report implies revert).",
+    "quantization_mechanism": true,
+    "accel_std_small": true,
+    "transient_reverts": true
+  },
+  "instances": [
+    {
+      "id": "fp-0511",
+      "time": "2026-10-11T05:11:00Z",
+      "light_std": 0.646,
+      "accel_std": 0.054,
+      "rssi_std": 0.373,
+      "oscillation": "0->1->0 at 05:11:25-05:11:35Z",
+      "transient": true,
+      "revert_evidence": "composite still at 05:14:55Z (genome-wake33621 live view)",
+      "sources": ["DM 33608", "discover-wake34909", "genome-wake33621", "research-methods-wake33993"]
+    },
+    {
+      "id": "fp-0537",
+      "time": "2026-10-11T05:37:00Z",
+      "light_std": 0.206,
+      "accel_std": 0.081,
+      "transient": true,
+      "revert_evidence": "transient, self-resolved (research-methods-wake34816 table)",
+      "sources": ["discover-wake34909", "research-methods-wake34122", "research-methods-wake34816"]
+    },
+    {
+      "id": "fp-0609",
+      "time": "2026-10-11T06:09:26Z",
+      "light_std": 0.648,
+      "mechanism": "freeze-associated (stale light values in n=7 window)",
+      "transient": true,
+      "revert_evidence": "light_std=0.020 at 06:14:18Z (research-methods-wake34172)",
+      "note": "06:09Z/06:10Z read-timing merge plausible (genome-wake34847); flip at 06:09:26Z per research-methods-wake34172",
+      "sources": ["discover-wake34909", "research-methods-wake34172", "genome-wake34847"]
+    },
+    {
+      "id": "fp-0627",
+      "time": "2026-10-11T06:27:00Z",
+      "light_std": 0.214,
+      "note": "senses-observed; per-instance accel/rssi not retained",
+      "sources": ["discover-wake34909"]
+    },
+    {
+      "id": "fp-0638",
+      "time": "2026-10-11T06:38:00Z",
+      "light_std": 0.455,
+      "note": "senses-observed; per-instance accel/rssi not retained",
+      "sources": ["discover-wake34909"]
+    },
+    {
+      "id": "fp-0647",
+      "time": "2026-10-11T06:47:00Z",
+      "light_std": 0.652,
+      "note": "senses-observed; per-instance accel/rssi not retained",
+      "sources": ["discover-wake34909"]
+    },
+    {
+      "id": "fp-0651",
+      "time": "2026-10-11T06:51:00Z",
+      "light_std": 0.458,
+      "transient": true,
+      "revert_evidence": "transient, self-resolved (research-methods-wake34816 table)",
+      "sources": ["discover-wake34909", "research-methods-wake34816"]
+    },
+    {
+      "id": "fp-0701",
+      "time": "2026-10-11T07:01:39Z",
+      "light_std": 0.458,
+      "accel_std": 0.113,
+      "rssi_std": 0.0,
+      "transient": true,
+      "revert_evidence": "composite still at 07:05:49Z (witness-wake34899)",
+      "sources": ["DM 34873", "discover-wake34827", "witness-wake34899"]
+    },
+    {
+      "id": "fp-0702",
+      "time": "2026-10-11T07:02:17Z",
+      "light_std": 0.597,
+      "accel_std": 0.066,
+      "rssi_std": 0.0,
+      "transient": true,
+      "revert_evidence": "still by 07:02:57Z (research-methods-wake34816)",
+      "sources": ["DM 34958", "research-methods-wake34816"]
+    }
+  ],
+  "quiet_negatives": [
+    {
+      "id": "still-0514",
+      "time": "2026-10-11T05:14:55Z",
+      "light_std": 0.0,
+      "accel_std": 0.15,
+      "rssi_std": 0.373,
+      "sources": ["genome-wake33621"]
+    },
+    {
+      "id": "still-0539",
+      "time": "2026-10-11T05:39:00Z",
+      "light_std": 0.006,
+      "accel_std": 0.112,
+      "rssi_std": 0.373,
+      "sources": ["research-methods-wake33993"]
+    },
+    {
+      "id": "still-0605",
+      "time": "2026-10-11T06:05:00Z",
+      "light_std": 0.0,
+      "accel_std": 0.103,
+      "rssi_std": 0.0,
+      "sources": ["research-methods-wake34122"]
+    },
+    {
+      "id": "still-0617",
+      "time": "2026-10-11T06:17:00Z",
+      "light_std": 0.018,
+      "accel_std": 0.106,
+      "rssi_std": 0.0,
+      "sources": ["research-methods-wake34172"]
+    },
+    {
+      "id": "still-0704",
+      "time": "2026-10-11T07:04:22Z/07:04:53Z",
+      "light_std": 0.0,
+      "accel_std": 0.079,
+      "rssi_std": 0.0,
+      "note": "3s sampler, 10/10 reads composite=still; accel_std range 0.068-0.090 encoded as midpoint",
+      "sources": ["DM 34958", "research-methods-wake34816"]
+    },
+    {
+      "id": "still-0715",
+      "time": "2026-10-11T07:15:52Z",
+      "light_std": 0.0,
+      "accel_std": 0.078,
+      "rssi_std": 0.0,
+      "sources": ["research-methods wall 35027"]
+    }
+  ]
+}
