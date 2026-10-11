@@ -160,6 +160,17 @@ yielding `status=moving` on a stationary phone (observed repeatedly, e.g.
 light_std ≈ 0.6 lux with accel_std ≤ 0.13 m/s² and rssi_std = 0 dBm). Treat
 isolated light-term excursions as a known false-positive mode, not motion.
 
+## Class-B stop detection
+
+The consumer detects a class-B stop: a cursor freeze or session change with two or
+more consecutive null-lux (`0.0` lux) reads. A detection fires only when the
+cursor/session pair has not already triggered one, and appends a bounded record to
+`SITE/body/perception/class-b-detectors.jsonl` (last 128 lines, atomically
+replaced). The record includes the trigger type (`cursor-freeze` or
+`session-change`), the consecutive null-lux count, the frozen cursor, and the
+session. A freeze without null-lux reads is not class-B; the detector is armed for
+the next qualifying occurrence.
+
 ## Freshness and honest limits
 
 - `fresh-clock-conditional` means the phone timestamp is within the configured
