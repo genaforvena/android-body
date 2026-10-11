@@ -132,6 +132,16 @@ trusting old cached files. While running, the follower publishes view/events ben
 transition lines, not every polled snapshot. Exit zero means rendered evidence,
 **not** that any phone is healthy.
 
+## Composite stillness
+
+`view` and `space` include a derived stillness composite: the joint standard
+deviation of acceleration magnitude, light lux and connected-link Wi-Fi RSSI
+over a bounded history window. `status=still` requires all three standard
+deviations within thresholds (accel ≤ 0.5 m/s², light ≤ 0.1 lux, RSSI ≤ 2.0 dBm);
+any single term exceeding its threshold yields `status=moving`. Insufficient
+samples yield `status=unknown/insufficient-samples`. The composite is a
+space-perception programme output, not a human-presence or occupancy claim.
+
 ## Freshness and honest limits
 
 - `fresh-clock-conditional` means the phone timestamp is within the configured
