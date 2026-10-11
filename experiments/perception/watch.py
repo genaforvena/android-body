@@ -103,7 +103,9 @@ def record(sequence, raw, received, backlog_pending):
     fields = dict(word.split("=", 1) for word in words[1:] if "=" in word)
     return {"sequence": sequence, "raw": raw, "collected": collected,
             "received": received, "kind": kind, "fields": fields,
-            "backlog_page_pending_at_receipt": backlog_pending}
+            "backlog_page_pending_at_receipt": backlog_pending,
+            "host_receipt_monotonic_ns": time.monotonic_ns(),
+            "host_boot_id": host_boot_id()}
 
 
 def apply_page(state, records, received, has_more):
@@ -147,6 +149,39 @@ def number(fields, key):
         return value if math.isfinite(value) else None
     except (KeyError, ValueError):
         return None
+
+_BOOT_ID_ATTEMPTED = False
+_BOOT_ID = None
+
+
+def host_boot_id():
+    """Read the host boot identifier once per process; None when unreadable."""
+    global _BOOT_ID_ATTEMPTED, _BOOT_ID
+    if not _BOOT_ID_ATTEMPTED:
+        _BOOT_ID_ATTEMPTED = True
+        try:
+            value = Path("/proc/sys/kernel/random/boot_id").read_text(
+                encoding="utf-8").strip()
+            if re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value):
+                _BOOT_ID = value
+        except OSError:
+            _BOOT_ID = None
+    return _BOOT_ID
+
+
+def phone_elapsed_realtime(item):
+    """Phone monotonic elapsedRealtime ms from a protocol v2 record, else None.
+
+    Deltas are comparable only within one hello session (same phone boot); the
+    value is not Unix time and not a host-clock quantity.
+    """
+    value = item["fields"].get("phone_elapsed_ms") if item else None
+    if value is None or not re.fullmatch(r"(?:0|[1-9][0-9]*)", value):
+        return None
+    timestamp = int(value)
+    if timestamp > 9223372036854775807:
+        return None
+    return timestamp
 
 
 def sensor_time_scope(item, session):
@@ -712,6 +747,14 @@ def space_snapshot(states, now, stale):
         status = ("backlog/draining" if state["has_more"]
                   else sensor_status(item, now, stale))
         fields = item["fields"] if item else {}
+        phone_elapsed = phone_elapsed_realtime(item)
+        phone_elapsed_reason = (
+            "no-light-observation" if item is None else
+            "not provided by protocol v1" if "phone_elapsed_ms" not in fields else
+            None if phone_elapsed is not None else
+            "invalid phone_elapsed_ms value")
+        acquisition_span = (round((item["received"] - item["collected"]) * 1000, 1)
+                            if item and item["collected"] is not None else None)
         nodes.append({
             "node": state["node"], "source": state["source"], "session": state["session"],
             "cursor": state["cursor"], "phone_status": node_status(state, now, stale),
@@ -752,12 +795,18 @@ def space_snapshot(states, now, stale):
                 "consumer_receipt_utc": stamp(item["received"]) if item else None,
                 "delayed_at_receipt": (item["received"] - item["collected"] > stale)
                                       if item and item["collected"] is not None else None,
-                "phone_elapsed_realtime_ms": None,
-                "phone_elapsed_realtime_reason": "not provided by protocol v1",
-                "host_receipt_monotonic_ns": None,
-                "host_boot_id": None,
-                "server_receipt_utc": None,
-                "acquisition_span_ms": None
+                "phone_elapsed_realtime_ms": phone_elapsed,
+                "phone_elapsed_realtime_reason": phone_elapsed_reason,
+                "host_receipt_monotonic_ns": item.get("host_receipt_monotonic_ns")
+                                           if item else None,
+                "host_boot_id": item.get("host_boot_id") if item else None,
+                "host_boot_id_reason": ("no-light-observation" if item is None else
+                                        "receipt metadata not recorded"
+                                        if "host_boot_id" not in item else
+                                        None if item["host_boot_id"] else
+                                        "host boot id unreadable"),
+                "server_receipt_utc": stamp(item["received"]) if item else None,
+                "acquisition_span_ms": acquisition_span
             },
             "last_light_transition": state.get("last_light_transition")
         })

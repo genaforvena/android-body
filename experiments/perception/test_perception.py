@@ -209,8 +209,17 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(node["light"]["phone_sample_utc"], "1970-01-01T00:16:40+00:00")
         self.assertEqual(node["light"]["consumer_receipt_utc"], "1970-01-01T00:16:40+00:00")
         self.assertIsNone(node["light"]["phone_elapsed_realtime_ms"])
-        self.assertIsNone(node["light"]["host_receipt_monotonic_ns"])
-        self.assertIsNone(node["light"]["server_receipt_utc"])
+        self.assertEqual(node["light"]["phone_elapsed_realtime_reason"],
+                         "not provided by protocol v1")
+        self.assertIsInstance(node["light"]["host_receipt_monotonic_ns"], int)
+        self.assertGreaterEqual(node["light"]["host_receipt_monotonic_ns"], 0)
+        boot_id = node["light"]["host_boot_id"]
+        self.assertTrue(boot_id is None or
+                        watch.re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}",
+                                           boot_id))
+        self.assertEqual(node["light"]["server_receipt_utc"],
+                         "1970-01-01T00:16:40+00:00")
+        self.assertEqual(node["light"]["acquisition_span_ms"], 0.0)
         with tempfile.TemporaryDirectory() as folder:
             empty = watch.read_space(Path(folder), 1000, 30)
         self.assertEqual(empty["status"], "unknown/no-perception-state")
@@ -225,6 +234,65 @@ class PerceptionTests(unittest.TestCase):
         stale = watch.space_snapshot([state], 1031, 30)["nodes"][0]
         self.assertEqual(stale["light"]["status"], "stale")
         self.assertIsNone(stale["light"]["lux"])
+
+    def test_space_snapshot_parses_phone_elapsed_realtime_when_present(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=2 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21 "
+                          "phone_elapsed_ms=9223372036854775807"], received=1000)
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]["light"]
+        self.assertEqual(node["phone_elapsed_realtime_ms"], 9223372036854775807)
+        self.assertIsNone(node["phone_elapsed_realtime_reason"])
+        self.assertEqual(node["acquisition_span_ms"], 0.0)
+        for raw, reason in (
+                ("1000 light lux=12.5 accuracy=3 age_ms=21 phone_elapsed_ms=abc",
+                 "invalid phone_elapsed_ms value"),
+                ("1000 light lux=12.5 accuracy=3 age_ms=21 phone_elapsed_ms=-1",
+                 "invalid phone_elapsed_ms value"),
+                ("1000 light lux=12.5 accuracy=3 age_ms=21 phone_elapsed_ms=01",
+                 "invalid phone_elapsed_ms value"),
+                ("1000 light lux=12.5 accuracy=3 age_ms=21 "
+                 "phone_elapsed_ms=9223372036854775808",
+                 "invalid phone_elapsed_ms value"),
+                ("1000 light lux=12.5 accuracy=3 age_ms=21 phone_elapsed_ms=",
+                 "invalid phone_elapsed_ms value")):
+            item = watch.record(5, raw, 1002.5, False)
+            self.assertIsNone(watch.phone_elapsed_realtime(item))
+            node = watch.space_snapshot(
+                [{"latest": {"light": item}, "has_more": False, "node": "note3",
+                  "source": state["source"], "session": "s1", "cursor": 5,
+                  "capabilities": {}, "poll_at": None, "error": None,
+                  "history": [], "actions": [], "event_key": None,
+                  "last_light_sequence": None, "last_light_transition": None,
+                  "last_light_event_cursor": None, "poll_start_cursor": 0,
+                  "ok_at": None}],
+                1002.5, 30)["nodes"][0]["light"]
+            self.assertIsNone(node["phone_elapsed_realtime_ms"])
+            self.assertEqual(node["phone_elapsed_realtime_reason"], reason)
+            self.assertEqual(node["acquisition_span_ms"], 2500.0)
+
+    def test_space_snapshot_tolerates_pre_v2_items_without_receipt_metadata(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1000)
+        legacy = watch.record(5, "1000 light lux=12.5 accuracy=3 age_ms=21", 1000, False)
+        legacy.pop("host_receipt_monotonic_ns")
+        legacy.pop("host_boot_id")
+        node = watch.space_snapshot(
+            [{"latest": {"light": legacy}, "has_more": False, "node": "note3",
+              "source": state["source"], "session": "s1", "cursor": 5,
+              "capabilities": {}, "poll_at": None, "error": None,
+              "history": [], "actions": [], "event_key": None,
+              "last_light_sequence": None, "last_light_transition": None,
+              "last_light_event_cursor": None, "poll_start_cursor": 0,
+              "ok_at": None}],
+            1000, 30)["nodes"][0]["light"]
+        self.assertIsNone(node["host_receipt_monotonic_ns"])
+        self.assertIsNone(node["host_boot_id"])
+        self.assertEqual(node["host_boot_id_reason"], "receipt metadata not recorded")
+        self.assertEqual(node["phone_elapsed_realtime_reason"],
+                         "not provided by protocol v1")
+        self.assertEqual(node["acquisition_span_ms"], 0.0)
 
     def test_old_state_seeds_transition_marker_without_replaying_history(self):
         state = self.state()
