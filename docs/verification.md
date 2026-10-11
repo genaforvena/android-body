@@ -7,9 +7,8 @@ Checked 2026-10-07. Version 0.2 adds persistent ON and durable collect/upload-la
 - Application: `org.androidbody`, version `0.2.0` (code 2)
 - Build: debug APK, Java source 8, JDK 17, Gradle 8.11.1, Android Gradle Plugin 8.10.1
 - Compile/target SDK 36, minimum SDK 18
-- APK: `app/build/outputs/apk/debug/app-debug.apk`
-- Size: 88,103 bytes
-- SHA-256: `417719c5811ca0acf9546577b8ef54bd80e212d18a5acfa28fe139203d8a261b`
+- Published APK (installed on Note3): 88,103 bytes, SHA-256 `417719c5811ca0acf9546577b8ef54bd80e212d18a5acfa28fe139203d8a261b`
+- Current on-disk build (`app/build/outputs/apk/debug/app-debug.apk`, built 2026-10-11T14:20:39Z): 100,245 bytes, SHA-256 `7eb54e9b682c0d3211b46f2f5d67ef8cd2fbc955c6c9cbeef73f03215335b1f4`
 - `apksigner verify --verbose`: PASS, v1 and v2 signatures verified
 - `aapt dump badging`: confirms version 2, minimum 18, target 36 and the intended permissions, including boot completion
 
