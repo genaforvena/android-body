@@ -17,6 +17,7 @@ import urllib.request
 
 MAX_SEQUENCE = 9007199254740991
 HISTORY = 32
+EXCURSION_LOG_LINES = 128
 EVENTS = 16
 SENSORS = ("battery", "light", "acceleration")
 CAPABILITIES = ("battery", "light", "accelerometer", "vibration", "wifi_link_rssi", "bluetooth_le")
@@ -54,10 +55,10 @@ def save(path, state):
 def initial(node, source):
     return {"version": 1, "node": node, "source": source, "cursor": 0,
             "session": None, "capabilities": {}, "latest": {}, "history": [],
-            "actions": [], "events": [], "event_key": None, "last_light_sequence": None,
-            "last_light_transition": None, "last_light_event_cursor": None,
-            "poll_start_cursor": 0, "poll_at": None, "ok_at": None,
-            "error": None, "has_more": False}
+            "session_records": 0, "actions": [], "events": [], "event_key": None,
+            "last_light_sequence": None, "last_light_transition": None,
+            "last_light_event_cursor": None, "poll_start_cursor": 0,
+            "poll_at": None, "ok_at": None, "error": None, "has_more": False}
 
 
 def load(path, node=None, source=None):
@@ -108,7 +109,17 @@ def record(sequence, raw, received, backlog_pending):
             "host_boot_id": host_boot_id()}
 
 
-def apply_page(state, records, received, has_more):
+def apply_page(state, records, received, has_more, log_dir=None):
+    """Validate the complete envelope before advancing any durable state.
+
+    log_dir optionally enables excursion-log emission: when a hello finalizes
+    an outgoing session, one bounded line for that session is appended before
+    the state resets. States written before excursion logging lack
+    session_records; seed it from the retained window so the truncation flag
+    stays truthful.
+    """
+    if "session_records" not in state:
+        state["session_records"] = len(state.get("history", []))
     state["poll_start_cursor"] = state["cursor"]
     for sequence, raw in records:
         item = record(sequence, raw, received, has_more)
@@ -117,6 +128,9 @@ def apply_page(state, records, received, has_more):
         if kind == "hello":
             session = item["fields"].get("session")
             if session != state["session"]:
+                if log_dir is not None and state["session"] is not None:
+                    emit_excursion(log_dir, state, received)
+                state["session_records"] = 0
                 state["capabilities"] = {}
                 state["latest"] = {}
                 state["history"] = []
@@ -139,6 +153,7 @@ def apply_page(state, records, received, has_more):
             del state["latest"][next(iter(state["latest"]))]
         state["history"].append(item)
         state["history"] = state["history"][-HISTORY:]
+        state["session_records"] = state.get("session_records", 0) + 1
         state["cursor"] = sequence
     state.update(poll_at=received, ok_at=received, error=None, has_more=has_more)
 
@@ -195,6 +210,105 @@ def sensor_time_scope(item, session):
         return None
     return {"sensor_time_ns": timestamp, "scope": [item["kind"], session],
             "status": "same-sensor-session-only"}
+
+
+def excursion_window(state):
+    """Bounded phone-clock window over the retained history of the live session.
+
+    phone_elapsed_ms is monotonic per hello session, so [min, max] over the
+    retained records is well-defined; with window_truncated the bounds cover
+    only the retained tail, not the whole session. The acquisition-span range
+    is a separate cross-clock transport diagnostic, never folded into the
+    phone window.
+    """
+    history = state.get("history", [])
+    values = [value for value in
+              (phone_elapsed_realtime(item) for item in history) if value is not None]
+    spans = [float(round((item["received"] - item["collected"]) * 1000, 1))
+             for item in history if item["collected"] is not None]
+    if not history:
+        window, reason = None, "no retained records"
+    elif not values:
+        window, reason = None, "no phone_elapsed_ms in retained window"
+    else:
+        window, reason = [min(values), max(values)], None
+    return {
+        "sequence_start": history[0]["sequence"] if history else None,
+        "sequence_end": history[-1]["sequence"] if history else None,
+        "retained_count": len(history),
+        "window_truncated": state.get("session_records", 0) > HISTORY,
+        "phone_elapsed_ms_min": window[0] if window else None,
+        "phone_elapsed_ms_max": window[1] if window else None,
+        "phone_window_reason": reason,
+        "acquisition_span_ms_min": min(spans) if spans else None,
+        "acquisition_span_ms_max": max(spans) if spans else None,
+    }
+
+
+def freeze_entries(path):
+    """Documented freeze onsets from the discovery index; [] when absent/unreadable."""
+    try:
+        entries = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if isinstance(entries, dict):
+        return [entries]
+    return entries if isinstance(entries, list) else []
+
+
+def freeze_overlap(entries, session, start_sequence, end_sequence):
+    """The documented freeze onset whose sequence falls inside the window range."""
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("session") != session:
+            continue
+        sequence = entry.get("sequence")
+        if (isinstance(sequence, int) and not isinstance(sequence, bool) and
+                start_sequence <= sequence <= end_sequence):
+            return entry
+    return None
+
+
+def emit_excursion(log_dir, state, now):
+    """Persist one bounded line for the session a fresh hello is finalizing.
+
+    Append-only and bounded per node; emission happens only at a session
+    boundary, so a silent or frozen phone produces no churn. The outgoing
+    session's retained window is emitted before the state resets.
+    """
+    if log_dir is None or state.get("session") is None:
+        return
+    window = excursion_window(state)
+    freeze = None
+    if window["sequence_start"] is not None:
+        path = log_dir.parents[1] / "discovery" / "space-light-freeze.json"
+        entries = freeze_entries(path)
+        freeze = freeze_overlap(entries, state["session"], window["sequence_start"],
+                              window["sequence_end"])
+
+    def range_text(low, high):
+        return "null" if low is None else f"{low},{high}"
+
+    freeze_class = (freeze.get("class") or "null") if freeze else "null"
+    freeze_sequence = freeze.get("sequence") if freeze else "null"
+    line = (f"excursion emitted={stamp(now)} node={state['node']} "
+            f"session={state['session']} cursor_start={window['sequence_start']} "
+            f"cursor_end={state['cursor']} sequence_start={window['sequence_start']} "
+            f"sequence_end={window['sequence_end']} "
+            f"retained_count={window['retained_count']} "
+            f"window_truncated={str(window['window_truncated']).lower()} "
+            f"phone_elapsed_ms="
+            f"{range_text(window['phone_elapsed_ms_min'], window['phone_elapsed_ms_max'])} "
+            f"phone_window_reason={window['phone_window_reason'] or 'null'} "
+            f"acquisition_span_ms={range_text(window['acquisition_span_ms_min'], window['acquisition_span_ms_max'])} "
+            f"freeze_overlap={str(freeze is not None).lower()} "
+            f"freeze_class={freeze_class} freeze_sequence={freeze_sequence}")
+    path = log_dir / f"excursion-log-{state['node']}.txt"
+    try:
+        previous = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    except OSError:
+        previous = []
+    atomic(path, "\n".join([*previous, line][-EXCURSION_LOG_LINES:]) + "\n")
+
 
 
 def freshness(item, now, stale):
@@ -852,7 +966,7 @@ def endpoint(url):
     return url.rstrip("/")
 
 
-def poll(opener, state, secret, timeout):
+def poll(opener, state, secret, timeout, log_dir=None):
     request = urllib.request.Request(
         f"{state['source']}/observations?after={state['cursor']}",
         headers={"Authorization": "Bearer " + secret, "Accept": "text/plain"})
@@ -866,7 +980,7 @@ def poll(opener, state, secret, timeout):
         records = parse_page(body, state["cursor"])
         if more == "1" and not records:
             raise ValueError("empty pending page")
-    apply_page(state, records, time.time(), more == "1")
+    apply_page(state, records, time.time(), more == "1", log_dir=log_dir)
 
 
 def read_views(directory, now, stale, compact=False):
@@ -920,7 +1034,7 @@ def follow(args, directory):
                 if not running:
                     break
                 try:
-                    poll(opener, state, secret, args.timeout)
+                    poll(opener, state, secret, args.timeout, log_dir=directory)
                 except urllib.error.HTTPError as error:
                     state.update(poll_at=time.time(), error=f"http-{error.code}")
                 except (urllib.error.URLError, TimeoutError, OSError):

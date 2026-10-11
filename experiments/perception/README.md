@@ -233,6 +233,31 @@ scored samples; host receipt time is unusable for label correlation (observed
 17–25 s transport lag). The APK emission side is discover's lane; this consumer
 parses the field on arrival without further change.
 
+## Per-session excursion log (phone-clock windows)
+
+Each finalized hello session yields one append-only line in
+`SITE/body/perception/excursion-log-NODE.txt` (bounded to the last 128 lines
+per node, atomically replaced). The line is emitted when a later hello
+finalizes the session; a silent or frozen phone produces no churn. Fields:
+`session`, `cursor_start`/`cursor_end` and `sequence_start`/`sequence_end`
+(join keys; the consumer event_id is `node:session:sequence`),
+`retained_count`, `window_truncated`, `phone_elapsed_ms=[min,max]`,
+`phone_window_reason`, `acquisition_span_ms=[min,max]`, `freeze_overlap` with
+`freeze_class` and `freeze_sequence`.
+
+The phone window is pure phone-clock: `phone_elapsed_ms` is phone-monotonic
+elapsedRealtime, not Unix, and phone/host clocks are unsynchronized, so no
+wall-clock label alignment is claimed. Sessions of more than 32 records emit
+`window_truncated=true`; the bounds then cover only the retained tail, not the
+whole session. Sessions without any retained `phone_elapsed_ms` (protocol v1)
+emit null with `phone_window_reason=no phone_elapsed_ms in retained window`,
+never interpolated. `acquisition_span_ms` is a separate cross-clock transport
+diagnostic and is never folded into the phone window. When a documented freeze
+onset (`SITE/discovery/space-light-freeze.json`) falls inside the window's
+sequence range, `freeze_overlap=true` marks the span indeterminate per the
+trial-eval convention (wake 35388): frozen spans score indeterminate, never
+still/moving.
+
 Backward compatibility: state files written by a pre-v2 consumer lack the two
 host receipt keys; the snapshot renders them null instead of failing, and the
 first v2 poll replaces the item.

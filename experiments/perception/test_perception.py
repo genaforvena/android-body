@@ -1,4 +1,5 @@
 """Deterministic consumer-visible boundaries; no phone or physical requests."""
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,10 +11,11 @@ class PerceptionTests(unittest.TestCase):
     def state(self):
         return watch.initial("note3", "http://127.0.0.1:8765/node/note3")
 
-    def page(self, state, lines, received=1000, more=False):
+    def page(self, state, lines, received=1000, more=False, log_dir=None):
         body = "".join(f"{state['cursor'] + offset} {line}\n"
                        for offset, line in enumerate(lines, 1)).encode()
-        watch.apply_page(state, watch.parse_page(body, state["cursor"]), received, more)
+        watch.apply_page(state, watch.parse_page(body, state["cursor"]), received,
+                         more, log_dir=log_dir)
 
     def test_sensor_monotonic_time_is_scoped_and_invalid_inputs_are_incomparable(self):
         state = self.state()
@@ -802,6 +804,163 @@ class PerceptionTests(unittest.TestCase):
         self.page(state, ["1031 ble_sighting name=MISHE-BEACON rssi=-58"], received=1031)
         self.assertTrue(watch.update_events(state, 1031, 30))
         self.assertIn("rssi_dbm=-58.0", watch.render_events(state, 1031, 30))
+    def excursion_log(self, folder):
+        log_dir = Path(folder) / "body" / "perception"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        return log_dir
+
+    def test_excursion_log_emits_bounded_window_when_next_session_finalizes(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=21 phone_elapsed_ms=5000",
+                              "1000 light lux=40 accuracy=3 age_ms=21 phone_elapsed_ms=8000",
+                              "1000 light lux=20 accuracy=3 age_ms=21 phone_elapsed_ms=6000"],
+                      received=1000, log_dir=log_dir)
+            self.assertFalse((log_dir / "excursion-log-note3.txt").exists())
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1001, log_dir=log_dir)
+            lines = (log_dir / "excursion-log-note3.txt").read_text().splitlines()
+            self.assertEqual(len(lines), 1)
+            self.assertIn("session=s1", lines[0])
+            self.assertIn("cursor_start=1 cursor_end=4", lines[0])
+            self.assertIn("sequence_start=1 sequence_end=4", lines[0])
+            self.assertIn("retained_count=4", lines[0])
+            self.assertIn("window_truncated=false", lines[0])
+            self.assertIn("phone_elapsed_ms=5000,8000", lines[0])
+            self.assertIn("phone_window_reason=null", lines[0])
+            self.assertIn("acquisition_span_ms=0.0,0.0", lines[0])
+            self.assertIn("freeze_overlap=false", lines[0])
+            self.assertIn("freeze_class=null freeze_sequence=null", lines[0])
+            # The live session has no line until a later hello finalizes it.
+            self.page(state, ["1000 light lux=30 accuracy=3 age_ms=21 phone_elapsed_ms=9000"],
+                      received=1002, log_dir=log_dir)
+            self.assertEqual(
+                len((log_dir / "excursion-log-note3.txt").read_text().splitlines()), 1)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s3"],
+                      received=1003, log_dir=log_dir)
+            lines = (log_dir / "excursion-log-note3.txt").read_text().splitlines()
+            self.assertEqual(len(lines), 2)
+            self.assertIn("session=s2", lines[1])
+            self.assertIn("phone_elapsed_ms=9000,9000", lines[1])
+            self.assertIn("acquisition_span_ms=1000.0,2000.0", lines[1])
+
+    def test_excursion_log_marks_truncation_and_window_covers_retained_tail(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            lines = ["1000 hello node=note3 protocol=1 session=s1"]
+            lines += [f"1000 light lux=10 accuracy=3 age_ms=0 phone_elapsed_ms={1000 + i * 100}"
+                      for i in range(35)]
+            self.page(state, lines, received=1000, log_dir=log_dir)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1001, log_dir=log_dir)
+            line = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[0]
+            self.assertIn("retained_count=32", line)
+            self.assertIn("window_truncated=true", line)
+            self.assertIn("sequence_start=5 sequence_end=36", line)
+            self.assertIn("phone_elapsed_ms=1300,4400", line)
+
+    def test_excursion_log_v1_session_emits_null_window_with_reason(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=21"],
+                      received=1000, log_dir=log_dir)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1001, log_dir=log_dir)
+            line = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[0]
+            self.assertIn("phone_elapsed_ms=null", line)
+            self.assertIn("phone_window_reason=no phone_elapsed_ms in retained window", line)
+            self.assertIn("window_truncated=false", line)
+
+    def test_excursion_log_empty_session_emits_null_reason(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1"],
+                      received=1000, log_dir=log_dir)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1001, log_dir=log_dir)
+            line = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[0]
+            self.assertIn("retained_count=1", line)
+            self.assertIn("cursor_start=1 cursor_end=1", line)
+            self.assertIn("phone_elapsed_ms=null", line)
+            self.assertIn("phone_window_reason=no phone_elapsed_ms in retained window", line)
+
+    def test_excursion_log_flags_documented_freeze_onset_inside_window(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            freeze_dir = Path(folder) / "discovery"
+            freeze_dir.mkdir(parents=True, exist_ok=True)
+            (freeze_dir / "space-light-freeze.json").write_text(json.dumps(
+                {"class": "light-stream-freeze", "cursor": 3, "sequence": 3,
+                 "session": "s1", "onset_epoch_s": 1000.5}), encoding="utf-8")
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0 phone_elapsed_ms=5000",
+                              "1000 light lux=40 accuracy=3 age_ms=0 phone_elapsed_ms=8000"],
+                      received=1000, log_dir=log_dir)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1001, log_dir=log_dir)
+            line = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[0]
+            self.assertIn("freeze_overlap=true", line)
+            self.assertIn("freeze_class=light-stream-freeze", line)
+            self.assertIn("freeze_sequence=3", line)
+
+    def test_excursion_log_ignores_freeze_onset_outside_window(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            freeze_dir = Path(folder) / "discovery"
+            freeze_dir.mkdir(parents=True, exist_ok=True)
+            (freeze_dir / "space-light-freeze.json").write_text(json.dumps([
+                {"class": "light-stream-frozen", "sequence": 999, "session": "s1"},
+                {"class": "light-stream-frozen", "sequence": 2, "session": "other"},
+            ]), encoding="utf-8")
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0 phone_elapsed_ms=5000",
+                              "1000 light lux=40 accuracy=3 age_ms=0 phone_elapsed_ms=8000"],
+                      received=1000, log_dir=log_dir)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1001, log_dir=log_dir)
+            line = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[0]
+            self.assertIn("freeze_overlap=false", line)
+            self.assertIn("freeze_class=null freeze_sequence=null", line)
+
+    def test_excursion_log_seeds_counter_for_states_without_session_records(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1"],
+                      received=1000, log_dir=log_dir)
+            del state["session_records"]  # simulate a pre-excursion persisted state
+            lines = [f"1000 light lux=10 accuracy=3 age_ms=0 phone_elapsed_ms={2000 + i * 100}"
+                     for i in range(33)]
+            self.page(state, lines, received=1001, log_dir=log_dir)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1002, log_dir=log_dir)
+            line = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[0]
+            # 1 hello + 33 lights = 34 records; the seeded counter (1) plus the
+            # 33 new records exceeds HISTORY, so bounds cover the retained tail.
+            self.assertIn("retained_count=32", line)
+            self.assertIn("window_truncated=true", line)
+            self.assertIn("phone_elapsed_ms=2100,5200", line)
+
+    def test_excursion_log_is_bounded_to_the_last_lines(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            for index in range(1, 131):
+                self.page(state, [f"1000 hello node=note3 protocol=1 session=s{index}"],
+                          received=1000 + index, log_dir=log_dir)
+            lines = (log_dir / "excursion-log-note3.txt").read_text().splitlines()
+            self.assertEqual(len(lines), 128)
+            self.assertTrue(any(" session=s2 " in line for line in lines))
+            self.assertFalse(any(" session=s1 " in line for line in lines))
+
 
 
 if __name__ == "__main__":
