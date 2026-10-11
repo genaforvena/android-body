@@ -20,6 +20,7 @@ All sensor values are device-dependent. Mounting, gravity, calibration, occlusio
 - `ble_status source=androidbody_bluetooth_api api=21 api_surface=platform_sdk feature_ble=present adapter=enabled scanner_api=present advertiser_api=present scanner_getter=returned advertiser_getter=null advertiser_supported=unsupported`: read-only `BluetoothAdapter` capability snapshot at startup. `scanner_getter`/`advertiser_getter` record whether the API21 scanner/advertiser getters returned; they are not radio, scan or advertisement results and never toggle Bluetooth. API<21 and null-adapter outcomes report `unavailable`.
 - `probe identity uid=10224 groups=3002 3003 9997 50224`: read-only identity of the APK process (uid plus Linux supplementary groups from `/proc/self/status`, bounded to 4096 bytes), emitted within the hello `session`. It attributes session-scoped probes to the app UID; it executes nothing.
 - `sensor_time_ns=23707107773680`: raw monotonic `SensorEvent.timestamp` on light/acceleration samples, preserved alongside the phone wall-clock time. Compare only within the same sensor and hello `session`; not Unix time or a receipt time.
+- `phone_elapsed_ms=123456789`: monotonic `SystemClock.elapsedRealtime()` in milliseconds at observation time, on light, acceleration and Wi-Fi link RSSI records (protocol v2). Not Unix time, not a host-clock quantity; deltas are meaningful only within one hello `session`. Protocol v1 records omit it; consumers must tolerate its absence.
 
 ## Not implemented
 
