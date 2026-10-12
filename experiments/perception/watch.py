@@ -56,7 +56,8 @@ def save(path, state):
 def initial(node, source):
     return {"version": 1, "node": node, "source": source, "cursor": 0,
             "session": None, "capabilities": {}, "latest": {}, "history": [],
-            "session_records": 0, "actions": [], "events": [], "event_key": None,
+            "session_records": 0, "ble_scan_error_streak": 0,
+            "actions": [], "events": [], "event_key": None,
             "last_light_sequence": None, "last_light_transition": None,
             "last_light_event_cursor": None, "poll_start_cursor": 0,
             "poll_at": None, "ok_at": None, "error": None, "has_more": False}
@@ -138,6 +139,7 @@ def apply_page(state, records, received, has_more, log_dir=None):
                 state["session"] = session
                 state["last_light_sequence"] = None
                 state["last_light_transition"] = None
+                state["ble_scan_error_streak"] = 0
         if kind == "cap" and len(words) >= 3:
             if words[2] in CAPABILITIES:
                 state["capabilities"][words[2]] = "present"
@@ -147,6 +149,12 @@ def apply_page(state, records, received, has_more, log_dir=None):
         if kind == "action":
             state["actions"].append(item)
             state["actions"] = state["actions"][-EVENTS:]
+        if kind == "ble_scan":
+            subtype = words[2] if len(words) > 2 and words[2] in BLE_SCAN_SUBTYPES else None
+            if subtype == "error":
+                state["ble_scan_error_streak"] = state.get("ble_scan_error_streak", 0) + 1
+            else:
+                state["ble_scan_error_streak"] = 0
         # Retain raw unknown names/fields, with a bounded latest-kind map and history.
         state["latest"].pop(kind, None)
         state["latest"][kind] = item
@@ -898,22 +906,15 @@ BLE_SCAN_SUBTYPES = {"start", "stop", "error", "unavailable"}
 
 
 def _ble_scan_consecutive_error_count(state):
-    """Count consecutive ble_scan error items from the end of history.
+    """Durable session count of back-to-back ble_scan error events.
 
-    Resets on any non-error ble_scan event or session change. Bounded by
-    history window. Surfaces the error count that compact_key dedup hides.
+    Maintained by apply_page, not derived from history: the sensor-dominated
+    32-item window evicts sparse ble_scan events (~120s cycle) long before
+    the next error arrives, so a history scan reads 0 between cycles and
+    the count vanishes from the view. Resets on any non-error ble_scan
+    event or session change. Surfaces what compact_key dedup hides.
     """
-    count = 0
-    for item in reversed(state["history"]):
-        if item["kind"] != "ble_scan":
-            continue
-        words = item["raw"].split(" ")
-        subtype = words[2] if len(words) > 2 and words[2] in BLE_SCAN_SUBTYPES else None
-        if subtype == "error":
-            count += 1
-        else:
-            break
-    return count
+    return state.get("ble_scan_error_streak", 0)
 
 
 def ble_scan_snapshot(item, now, stale, consecutive_errors=None):

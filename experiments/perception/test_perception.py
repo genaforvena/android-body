@@ -897,6 +897,41 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(key1, key2)
         self.assertFalse(watch.update_events(state, 1001, 30))
 
+    def test_ble_scan_consecutive_error_count_survives_history_eviction(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_scan error reason=scan_failed code=2"], received=1000)
+        # Sensor-dominated traffic evicts the sparse ble_scan item from the
+        # 32-item history long before the next scan-cycle error arrives.
+        epoch = 1000
+        for _ in range(40):
+            self.page(state, [f"{epoch} light lux=1.0 accuracy=3",
+                              f"{epoch + 1} battery level=1.0 charging=true"],
+                      received=4000)
+            epoch += 2
+        self.assertFalse(any(item["kind"] == "ble_scan" for item in state["history"]))
+        node = watch.space_snapshot([state], 4100, 30)["nodes"][0]
+        self.assertEqual(node["ble_scan"]["consecutive_errors"], 1)
+        self.page(state, ["5000 ble_scan error reason=scan_failed code=2"], received=5000)
+        node = watch.space_snapshot([state], 5000, 30)["nodes"][0]
+        self.assertEqual(node["ble_scan"]["consecutive_errors"], 2)
+        view = watch.render(state, 5000, 30)
+        self.assertIn("consecutive_errors=2", view)
+
+    def test_ble_scan_consecutive_error_count_resets_on_session_change(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_scan error reason=scan_failed code=2",
+                          "1001 ble_scan error reason=scan_failed code=2"], received=1001)
+        node = watch.space_snapshot([state], 1001, 30)["nodes"][0]
+        self.assertEqual(node["ble_scan"]["consecutive_errors"], 2)
+        self.page(state, ["1002 hello node=note3 protocol=1 session=s2",
+                          "1003 ble_scan error reason=scan_failed code=2"], received=1003)
+        node = watch.space_snapshot([state], 1003, 30)["nodes"][0]
+        self.assertEqual(node["ble_scan"]["consecutive_errors"], 1)
+        view = watch.render(state, 1003, 30)
+        self.assertIn("consecutive_errors=1", view)
+
     def test_ble_rf_channels_stay_honest_unknown_without_observations(self):
         state = self.state()
         self.page(state, ["1000 hello node=note3 protocol=1 session=s1"], received=1000)
