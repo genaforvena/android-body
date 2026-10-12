@@ -573,6 +573,95 @@ def detect_class_a_freeze(state, log_dir):
     return None
 
 
+CLASS_C_WINDOW_SECONDS = 120.0
+CLASS_C_DETECTOR_LINES = 128
+
+
+def _emit_class_c(log_dir, detection):
+    path = log_dir / "class-c-detectors.jsonl"
+    previous = []
+    if path.exists():
+        text = path.read_text(encoding="utf-8").strip()
+        if text:
+            previous = text.split("\n")
+    line = json.dumps(detection, ensure_ascii=False, allow_nan=False, sort_keys=True)
+    atomic(path, "\n".join([*previous, line][-CLASS_C_DETECTOR_LINES:]) + "\n")
+
+
+def _max_consecutive_null_lux(state):
+    """Max consecutive null-lux reads across the retained light history."""
+    light_items = [item for item in state["history"] if item["kind"] == "light"]
+    max_consecutive = 0
+    current = 0
+    for item in light_items:
+        lux = number(item.get("fields", {}), "lux")
+        if lux == 0.0:
+            current += 1
+            max_consecutive = max(max_consecutive, current)
+        else:
+            current = 0
+    return max_consecutive
+
+
+def detect_class_c_stop(state, log_dir):
+    """Detect class-C stop: delivery halt with no known cause.
+
+    Fires when no new record has been received for CLASS_C_WINDOW_SECONDS
+    while polls keep succeeding, AND the latest ble_scan is not a code=2
+    error (class-A not armed), AND the class-B null-lux condition is not
+    met (no null-lux freeze). Non-deterministic: phone asleep, force-stopped
+    app, or other causes. The deterministic complement is the host-side adb
+    check (dumpsys package stopped), owned by health/genome. Emits bounded
+    JSONL to log_dir/class-c-detectors.jsonl.
+    """
+    if log_dir is None:
+        return None
+
+    now = time.time()
+    history = state["history"]
+    if not history:
+        return None
+
+    last_received = max(item["received"] for item in history)
+    if now - last_received < CLASS_C_WINDOW_SECONDS:
+        return None
+
+    ok_at = state.get("ok_at")
+    if ok_at is None or now - ok_at >= CLASS_C_WINDOW_SECONDS:
+        return None
+
+    if _latest_code2(state) is not None:
+        return None
+
+    if _max_consecutive_null_lux(state) >= CLASS_B_MIN_NULL_LUX:
+        return None
+
+    cursor = state["cursor"]
+    session = state["session"]
+    if (cursor == state.get("_class_b_detected_cursor") and
+            session == state.get("_class_b_detected_session")):
+        return None
+    if (cursor == state.get("_class_c_detected_cursor") and
+            session == state.get("_class_c_detected_session")):
+        return None
+
+    state["_class_c_detected_cursor"] = cursor
+    state["_class_c_detected_session"] = session
+
+    detection = {
+        "kind": "class-c-stop",
+        "detected_at": stamp(now),
+        "cursor": cursor,
+        "session": session,
+        "last_received_epoch_s": last_received,
+        "window_seconds": CLASS_C_WINDOW_SECONDS,
+        "reason": "delivery halted with polls succeeding; no code=2, no null-lux freeze",
+    }
+
+    _emit_class_c(log_dir, detection)
+    return detection
+
+
 
 def freshness(item, now, stale):
     if item is None or item["collected"] is None:
@@ -1314,6 +1403,9 @@ def follow(args, directory):
                 detection_a = detect_class_a_freeze(state, directory)
                 if detection_a:
                     print(f"class-a-freeze: {detection_a}", flush=True)
+                detection_c = detect_class_c_stop(state, directory)
+                if detection_c:
+                    print(f"class-c-stop: {detection_c}", flush=True)
                 if changed:
                     print(state["events"][-1], flush=True)
                 # Publish each durable node result before polling the next node.

@@ -1274,6 +1274,105 @@ class PerceptionTests(unittest.TestCase):
             path = log_dir / "class-a-detectors.jsonl"
             lines = path.read_text(encoding="utf-8").strip().split("\n")
             self.assertEqual(len(lines), watch.CLASS_A_DETECTOR_LINES)
+    def test_class_c_detector_fires_on_delivery_halt_without_known_cause(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
+                      received=start - 200, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            detection = watch.detect_class_c_stop(state, log_dir)
+            self.assertIsNotNone(detection)
+            self.assertEqual(detection["kind"], "class-c-stop")
+            self.assertEqual(detection["reason"],
+                             "delivery halted with polls succeeding; no code=2, no null-lux freeze")
+
+    def test_class_c_detector_silent_before_window(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
+                      received=start - 50, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            detection = watch.detect_class_c_stop(state, log_dir)
+            self.assertIsNone(detection)
+
+    def test_class_c_detector_silent_when_class_a_armed(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0",
+                              "1000 ble_scan error code=2 node=note3"],
+                      received=start - 200, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            detection = watch.detect_class_c_stop(state, log_dir)
+            self.assertIsNone(detection)
+
+    def test_class_c_detector_silent_when_null_lux_condition_met(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=0 accuracy=3 age_ms=0",
+                              "1000 light lux=0 accuracy=3 age_ms=0"],
+                      received=start - 200, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            detection = watch.detect_class_c_stop(state, log_dir)
+            self.assertIsNone(detection)
+
+    def test_class_c_detector_silent_when_polls_not_succeeding(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
+                      received=start - 200, log_dir=log_dir)
+            detection = watch.detect_class_c_stop(state, log_dir)
+            self.assertIsNone(detection)
+
+    def test_class_c_detector_no_repeat_for_same_cursor_session(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
+                      received=start - 200, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            detection1 = watch.detect_class_c_stop(state, log_dir)
+            self.assertIsNotNone(detection1)
+            detection2 = watch.detect_class_c_stop(state, log_dir)
+            self.assertIsNone(detection2)
+
+    def test_class_c_detector_bounded_output(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
+                      received=start - 200, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            for i in range(watch.CLASS_C_DETECTOR_LINES + 5):
+                state["cursor"] = 100 + i
+                state["session"] = f"s{i}"
+                state["history"] = [{"kind": "light",
+                                     "raw": "1001 light lux=12.5 accuracy=3 age_ms=0",
+                                     "received": start - 200}]
+                state.pop("_class_c_detected_cursor", None)
+                state.pop("_class_c_detected_session", None)
+                watch.detect_class_c_stop(state, log_dir)
+            path = log_dir / "class-c-detectors.jsonl"
+            lines = path.read_text(encoding="utf-8").strip().split("\n")
+            self.assertEqual(len(lines), watch.CLASS_C_DETECTOR_LINES)
 
 if __name__ == "__main__":
     unittest.main()
