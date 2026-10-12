@@ -22,9 +22,13 @@ All sensor values are device-dependent. Mounting, gravity, calibration, occlusio
 - `sensor_time_ns=23707107773680`: raw monotonic `SensorEvent.timestamp` on light/acceleration samples, preserved alongside the phone wall-clock time. Compare only within the same sensor and hello `session`; not Unix time or a receipt time.
 - `phone_elapsed_ms=123456789`: monotonic `SystemClock.elapsedRealtime()` in milliseconds at observation time, on light, acceleration and Wi-Fi link RSSI records (protocol v2). Not Unix time, not a host-clock quantity; deltas are meaningful only within one hello `session`. Protocol v1 records omit it; consumers must tolerate its absence.
 
+## Note3 hardware inventory (witnessed 2026-10-12)
+
+A read-only `dumpsys sensorservice` survey of the installed Note3 lists physical sensors: acceleration and gyroscope (MPU6500), magnetic field (AK09911C), barometer (LPS25H), proximity and RGB light (MAX88922), humidity and temperature (SHTC1), step detector, step counter and significant motion (Samsung), and rotation vector (MPL), plus derived gravity, linear-acceleration and orientation sensors. The proximity channel is on-change and wake-up capable and was reading 0.0 (near) at survey time. This is witnessed hardware evidence about this one unit, not a protocol guarantee; other devices differ. See [compatibility](compatibility.md) for validation scope.
+
 ## Not implemented
 
-Location, proximity, gyroscope, microphone amplitude, camera capture, orientation inference and raw audio/images remain future work. No permissions for those sources are requested. Add a new boundary only with real-device tests, privacy review and explicit unavailable/error semantics.
+Proximity and gyroscope hardware is present on the Note3 (inventory above); emitting them remains a proposed, human-gated change. Location, microphone amplitude, camera capture, orientation inference and raw audio/images remain future work. No permissions for those sources are requested. Add a new boundary only with real-device tests, privacy review and explicit unavailable/error semantics.
 
 ## Saved observations and later upload
 
