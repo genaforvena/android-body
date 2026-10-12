@@ -264,6 +264,33 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(node["status_reason"],
                          "phone/host clock agreement is unverified")
 
+    def test_space_snapshot_real_age_upper_bound_corrects_clock_skew(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1024)
+        self.page(state, ["1001 light lux=12.5 accuracy=3 age_ms=21"], received=1026)
+        node = watch.space_snapshot([state], 1026, 30)["nodes"][0]["light"]
+        self.assertEqual(node["real_age_upper_bound_ms"], 1000.0)
+        self.assertTrue(node["is_fresh_at_host"])
+
+    def test_space_snapshot_real_age_upper_bound_false_when_exceeds_validity(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1024)
+        self.page(state, ["1001 light lux=12.5 accuracy=3 age_ms=21"], received=1055)
+        node = watch.space_snapshot([state], 1055, 30)["nodes"][0]["light"]
+        self.assertEqual(node["real_age_upper_bound_ms"], 30000.0)
+        self.assertFalse(node["is_fresh_at_host"])
+
+    def test_space_snapshot_real_age_upper_bound_none_without_history(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1000)
+        state["history"] = []
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]["light"]
+        self.assertIsNone(node["real_age_upper_bound_ms"])
+        self.assertIsNone(node["is_fresh_at_host"])
+
 
     def test_space_snapshot_parses_phone_elapsed_realtime_when_present(self):
         state = self.state()

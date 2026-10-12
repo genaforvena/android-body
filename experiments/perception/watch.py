@@ -1315,6 +1315,10 @@ def space_snapshot(states, now, stale):
         acquisition_span = (round((item["received"] - item["collected"]) * 1000, 1)
                             if item and item["collected"] is not None else None)
         span_stats = acquisition_span_stats(state)
+        real_age_upper_bound_ms = (round(acquisition_span - span_stats["min_ms"], 1)
+                                   if acquisition_span is not None and span_stats else None)
+        is_fresh_at_host = (real_age_upper_bound_ms / 1000 < stale
+                            if real_age_upper_bound_ms is not None else None)
         nodes.append({
             "node": state["node"], "source": state["source"], "session": state["session"],
             "cursor": state["cursor"], "phone_status": state.get("node_status") or node_status(state, now, stale),
@@ -1345,6 +1349,8 @@ def space_snapshot(states, now, stale):
                 "lux": number(fields, "lux") if status == "fresh-clock-conditional" else None,
                 "units": "lux", "accuracy": fields.get("accuracy") if item else None,
                 "age_ms_at_phone_collection": number(fields, "age_ms") if item else None,
+                "real_age_upper_bound_ms": real_age_upper_bound_ms,
+                "is_fresh_at_host": is_fresh_at_host,
                 "phone_sample_epoch_s": item["collected"] if item else None,
                 "phone_sample_utc": stamp(item["collected"]) if item else None,
                 "consumer_receipt_epoch_s": item["received"] if item else None,
