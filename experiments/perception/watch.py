@@ -460,7 +460,7 @@ def detect_class_b_stop(state, log_dir):
 
     return detection
 
-CLASS_A_WINDOW_SECONDS = 120
+CLASS_A_WINDOW_SECONDS = 300
 CLASS_A_DETECTOR_LINES = 128
 
 
@@ -475,29 +475,40 @@ def _emit_class_a(log_dir, detection):
     atomic(path, "\n".join([*previous, line][-CLASS_A_DETECTOR_LINES:]) + "\n")
 
 
-def detect_class_a_freeze(state, log_dir):
-    """Detect class-A freeze: BLE scan code=2 followed by sensor delivery halt.
+def _latest_code2(state):
+    """The latest ble_scan item when it is a code=2 error, else None.
 
-    When a ble_scan error code=2 event is seen in history, arms a bounded
-    window (CLASS_A_WINDOW_SECONDS). If cursor does not advance past the
-    code=2 event's sequence within the window, emits 'class-a-freeze'
-    (causal link confirmed). If cursor advances before the window expires,
-    emits 'class-a-rejected' (hypothesis rejected for this instance).
-    Emits bounded JSONL to log_dir/class-a-detectors.jsonl.
+    latest is keyed by kind and survives the bounded history window, so a
+    code=2 observed earlier in the session stays armable until a newer
+    ble_scan event or a session change replaces it.
+    """
+    item = state["latest"].get("ble_scan")
+    if item is None:
+        return None
+    words = item["raw"].split(" ")
+    subtype = words[2] if len(words) > 2 and words[2] in BLE_SCAN_SUBTYPES else None
+    if subtype == "error" and item.get("fields", {}).get("code") == "2":
+        return item
+    return None
+
+
+def detect_class_a_freeze(state, log_dir):
+    """Detect class-A freeze: BLE scan code=2 followed by sensor silence.
+
+    Arms when the latest ble_scan event is a code=2 error; the arm persists
+    while no newer ble_scan event or session change replaces it, even after
+    the code=2 record ages out of the bounded history. The freeze is
+    confirmed when delivery stops for CLASS_A_WINDOW_SECONDS and the
+    silence began within CLASS_A_WINDOW_SECONDS of the code=2 receipt
+    (5min window agreed with discover; freeze #5 observed gap ~1.3min).
+    Delivery continuing past the window rejects the instance. Emits bounded
+    JSONL to log_dir/class-a-detectors.jsonl.
     """
     if log_dir is None:
         return None
 
     now = time.time()
-    cursor = state["cursor"]
-
-    code2_item = None
-    for item in state["history"]:
-        if item["kind"] == "ble_scan":
-            words = item["raw"].split(" ")
-            subtype = words[2] if len(words) > 2 and words[2] in BLE_SCAN_SUBTYPES else None
-            if subtype == "error" and item.get("fields", {}).get("code") == "2":
-                code2_item = item
+    code2_item = _latest_code2(state)
 
     if code2_item is None:
         state["_class_a_code2_cursor"] = None
@@ -517,28 +528,38 @@ def detect_class_a_freeze(state, log_dir):
     if state.get("_class_a_detection_emitted"):
         return None
 
-    if cursor > code2_cursor:
-        state["_class_a_detection_emitted"] = True
-        detection = {
-            "kind": "class-a-rejected",
-            "detected_at": stamp(now),
-            "cursor": cursor,
-            "code2_cursor": code2_cursor,
-            "window_seconds": CLASS_A_WINDOW_SECONDS,
-            "reason": "cursor advanced past code=2 within window",
-        }
-        _emit_class_a(log_dir, detection)
-        return detection
+    after = [item["received"] for item in state["history"]
+             if item["sequence"] > code2_cursor]
+    last_after = max(after) if after else None
+    silence_onset = code2_received if last_after is None else last_after
 
-    if now - code2_received >= CLASS_A_WINDOW_SECONDS:
+    if (now - silence_onset >= CLASS_A_WINDOW_SECONDS and
+            silence_onset - code2_received <= CLASS_A_WINDOW_SECONDS):
         state["_class_a_detection_emitted"] = True
         detection = {
             "kind": "class-a-freeze",
             "detected_at": stamp(now),
-            "cursor": cursor,
+            "cursor": state["cursor"],
             "code2_cursor": code2_cursor,
+            "silence_onset_epoch_s": silence_onset,
+            "code2_received_epoch_s": code2_received,
             "window_seconds": CLASS_A_WINDOW_SECONDS,
-            "reason": "cursor frozen at code=2 cursor for window",
+            "reason": "delivery halted for window with silence onset within window of code=2",
+        }
+        _emit_class_a(log_dir, detection)
+        return detection
+
+    if last_after is not None and last_after > code2_received + CLASS_A_WINDOW_SECONDS:
+        state["_class_a_detection_emitted"] = True
+        detection = {
+            "kind": "class-a-rejected",
+            "detected_at": stamp(now),
+            "cursor": state["cursor"],
+            "code2_cursor": code2_cursor,
+            "last_delivery_after_code2_epoch_s": last_after,
+            "code2_received_epoch_s": code2_received,
+            "window_seconds": CLASS_A_WINDOW_SECONDS,
+            "reason": "delivery continued past window after code=2",
         }
         _emit_class_a(log_dir, detection)
         return detection
