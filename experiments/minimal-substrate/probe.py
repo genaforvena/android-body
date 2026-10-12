@@ -282,6 +282,10 @@ def _scratch_write_arg():
     # Wrap in single quotes so the device shell passes the whole command
     # (including redirects) as one argument to sh -c
     return "'" + cmd.replace("'", "'\\''") + "'"
+def _wrap_inner_rc(cmd):
+    """Wrap a command to capture its exit code as RC=N (for unreliable adb rc)."""
+    return "'" + (cmd + "; echo RC=$?").replace("'", "'\\''") + "'"
+
 
 
 def _run_scratch(name):
@@ -306,8 +310,25 @@ def _run_scratch(name):
     write_ok = (write_rc == 0 and not (write["note"] and "exit0-failure" in write["note"]))
     run1 = _adbrun(["shell", "run-as", "org.androidbody", "sh", SCRATCH_PATH])
     run2 = _adbrun(["shell", "run-as", "org.androidbody", "sh", SCRATCH_PATH])
-    delete = _adbrun(["shell", "run-as", "org.androidbody", "rm", SCRATCH_PATH])
-    verify = _adbrun(["shell", "run-as", "org.androidbody", "ls", SCRATCH_PATH])
+    delete = _adbrun(["shell", "run-as", "org.androidbody", "sh", "-c", _wrap_inner_rc("rm " + SCRATCH_PATH)])
+    verify = _adbrun(["shell", "run-as", "org.androidbody", "sh", "-c", _wrap_inner_rc("ls " + SCRATCH_PATH + " 2>&1")])
+    # Parse inner rc from stdout for delete and verify (adb rc unreliable)
+    delete_rc = None
+    for line in delete["stdout"].splitlines():
+        if line.startswith("RC="):
+            try:
+                delete_rc = int(line[3:])
+            except ValueError:
+                pass
+    if delete_rc is None:
+        delete_rc = delete["rc"]  # fallback to adb rc if inner rc not found
+    verify_rc = None
+    for line in verify["stdout"].splitlines():
+        if line.startswith("RC="):
+            try:
+                verify_rc = int(line[3:])
+            except ValueError:
+                pass
     record["duration_s"] = round(time.monotonic() - started, 3)
     record["script"] = SCRATCH_SCRIPT
     record["script_sha256"] = hashlib.sha256(SCRATCH_SCRIPT.encode("utf-8")).hexdigest()
@@ -316,24 +337,35 @@ def _run_scratch(name):
     record["run1_output"] = _cap(_compose_output(run1))
     record["run2_output"] = _cap(_compose_output(run2))
     record["rerun_matches"] = (_step_ok(run1) and _step_ok(run2)
-                               and run1["stdout"] == run2["stdout"])
-    record["delete_returncode"] = delete["rc"]
+                               and run1["stdout"] == run2["stdout"]
+                               and "probe script" in run1["stdout"])
+    record["delete_returncode"] = delete_rc
     if verify["rc"] is None:
         record["verify_outcome"] = "timeout"
     elif verify["note"] and "exit0-failure" in verify["note"]:
         record["verify_outcome"] = "error"
+    elif verify_rc is not None:
+        record["verify_outcome"] = "ok" if verify_rc == 0 else "denied"
     elif verify["rc"] == 0:
         record["verify_outcome"] = "ok"
     else:
         record["verify_outcome"] = "denied"
+    if delete["rc"] is None:
+        delete_ok = False
+    elif delete["note"] and "exit0-failure" in delete["note"]:
+        delete_ok = False
+    elif delete_rc is not None:
+        delete_ok = (delete_rc == 0)
+    else:
+        delete_ok = (delete["rc"] == 0)
     ok = (write_ok and _step_ok(run1) and _step_ok(run2)
-          and record["rerun_matches"] and _step_ok(delete)
+          and record["rerun_matches"] and delete_ok
           and record["verify_outcome"] == "denied")
     record["outcome"] = "ok" if ok else "error"
     record["output"] = ("write rc={0}; run1 rc={1}; run2 rc={2}; rerun matches={3}; "
                         "delete rc={4}; verify={5}").format(
         write_rc, run1["rc"], run2["rc"], record["rerun_matches"],
-        delete["rc"], record["verify_outcome"])
+        delete_rc, record["verify_outcome"])
     record["note"] = ("device-side persisted trivial script rerun; run-as context, "
                       "NOT apk-uid evidence; script deleted after experiment "
                       "(bounded storage teardown)")

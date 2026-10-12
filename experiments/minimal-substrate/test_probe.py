@@ -74,6 +74,10 @@ if "run-as" in joined:
         print("Permission denied", file=sys.stderr)
         sys.exit(1)
     if rest[:2] == ["sh", "-c"] and "echo RC=$?" in rest[2]:
+        if "ls " in rest[2]:
+            print("No such file or directory", file=sys.stderr)
+            print("RC=1")
+            sys.exit(0)
         print("RC=0")
         sys.exit(0)
     if rest[:1] == ["sh"]:
