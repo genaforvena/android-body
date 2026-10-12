@@ -1171,6 +1171,11 @@ def render(state, now, stale):
              "capabilities: " + " ".join(f"{key}={state['capabilities'].get(key, 'unknown')}" for key in CAPABILITIES)]
     lines.append("owner checkboxes: " + " ".join(
         f"{key}={state['owner_checkboxes'].get(key, 'unknown')}" for key in OWNER_CHECKBOXES))
+    lines.append("compact: caps=" +
+                 ",".join(f"{cap}:{state['capabilities'].get(cap, 'unknown')}" for cap in CAPABILITIES) +
+                 " owner=" +
+                 ",".join(f"{name}:{state['owner_checkboxes'].get(name, 'unknown')}"
+                          for name in OWNER_CHECKBOXES))
     lines.append("raw units: battery level=fraction, light lux=lux, acceleration x/y/z=m/s²; "
                  "phone clocks are not synchronized; receipt is consumer fetch, not server receipt")
     for kind in SENSORS:

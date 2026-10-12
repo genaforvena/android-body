@@ -123,7 +123,7 @@ class PerceptionTests(unittest.TestCase):
         self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
                           "1000 owner_checkboxes battery=on light=off acceleration=on vibration=on"])
         view = watch.render(state, 1000, 30)
-        self.assertIn("owner=battery:on,light:off,acceleration:on,vibration=on", view)
+        self.assertIn("owner=battery:on,light:off,acceleration:on,vibration:on", view)
         self.assertIn("owner checkboxes: battery=on light=off acceleration=on vibration=on", view)
         node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
         self.assertEqual(node["owner_checkboxes"],
@@ -133,7 +133,7 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(state["owner_checkboxes"],
                          {"battery": "on", "light": "on", "acceleration": "on", "vibration": "on"})
         view = watch.render(state, 1001, 30)
-        self.assertIn("owner=battery:on,light:on,acceleration:on,vibration=on", view)
+        self.assertIn("owner=battery:on,light:on,acceleration:on,vibration:on", view)
 
     def test_owner_checkboxes_change_surfaces_as_event(self):
         state = self.state()
@@ -152,7 +152,7 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(state["owner_checkboxes"],
                          {"battery": "on", "acceleration": "off", "vibration": "on"})
         view = watch.render(state, 1000, 30)
-        self.assertIn("owner=battery:on,light:unknown,acceleration:off,vibration=on", view)
+        self.assertIn("owner=battery:on,light:unknown,acceleration:off,vibration:on", view)
 
 
     def test_light_bucket_transition_keeps_both_fresh_raw_endpoints(self):
