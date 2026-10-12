@@ -113,7 +113,9 @@ receipt, or server-receipt time; the consumer does not synthesize them.
 It prints a recomputed snapshot; the follower also atomically publishes the latest
 snapshot at `SITE/body/space.json`, outside the node-state directory. Schema v1
 last poll, capabilities, current light status/reason and validity window, usable lux
-with sequence/units/accuracy/age, and connected-link `wifi_link_rssi` status,
+with sequence/units/accuracy/age plus `real_age_upper_bound_ms` and
+`is_fresh_at_host` (skew-corrected freshness; see Freshness and honest limits),
+and connected-link `wifi_link_rssi` status,
 sequence, dBm, source, protocol event time, API `observed_at`, and consumer receipt.
 RSSI acquisition age and its unavailable reason are explicit; no room-proximity
 claim is made. `last_light_transition` includes stable event ID and both endpoint
@@ -185,6 +187,15 @@ the next qualifying occurrence.
   window and no known sample-age constraint disqualifies it. Phone/host clocks are
   not synchronized by this consumer. More than five seconds future-dated is unknown,
   not fresh. Ordinary clock skew can make good samples unusable.
+- `real_age_upper_bound_ms` — conservative upper bound on the sample's real age
+  at the host: current `acquisition_span_ms` minus the minimum span in the
+  retained window (the minimum approximates fixed transport lag). Null without
+  span history.
+- `is_fresh_at_host` — `real_age_upper_bound_ms / 1000 < validity_seconds`. The
+  Note3 clock has been observed roughly 25 s behind the host, so raw
+  `now − phone_time` spans approach or exceed the validity window under jitter
+  and yield false stale verdicts; this verdict uses the skew-corrected age
+  instead. Null when the bound is unknown.
 - The light/acceleration wire timestamp is the approximate **sensor sample time**,
   not necessarily the five-second snapshot collection time. `age_ms` is sample age
   at collection; it excludes queue residence. Do not add it to `now - phone_time`
