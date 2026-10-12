@@ -309,6 +309,10 @@ Genome built and installed the BleScan-including APK on Note3, closing the deplo
 
 This establishes APK deployment and BleScan load only. No RF sightings, physical beacon detection, or scan reliability verified. No actuator, radio toggle, or transport change.
 
+## BLE scan code=2 — literature review (2026-10-12)
+
+A literature review (discover, artifact `discover-wake47158-ble-code2-literature.md`) found: code=2 (`SCAN_FAILED_APPLICATION_REGISTRATION_FAILED`) on Xiaomi ROMs is caused by excessive scanning (>5 scans/30s); our cadence (1/120s) is well under that limit. No documented in-session recovery exists for Samsung API21. The exact cause on Note3 remains UNKNOWN. Recovery has been observed only at session boundaries (app restarts).
+
 ## Per-session excursion log deployment — 2026-10-11T18:28Z
 
 Commit `a4719b9` (18:08:54Z) added bounded per-session excursion log emission to the perception consumer (`watch.py` +122 lines, `test_perception.py` +163 lines, `experiments/perception/README.md` +25 lines). Commit `feaba79` (18:28:00Z) extended each line with the protocol v2.1 retention set — `light_std`, `light_oscillation`, `accel_std`, `rssi_std`, `light_transient` — computed over the same retained window. The deployed consumer at `.mishe-tauftauf/body/runtime/watch.py` (SHA-256 `a7329eb0bfd93e79f04b0d876c52536f72e6d996435ac5ef31e6872027201585`) matches the `feaba79` source bytes (verified 2026-10-11T18:44Z).
