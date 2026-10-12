@@ -3,6 +3,7 @@ import json
 import tempfile
 import time
 import unittest
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 
 import watch
@@ -1373,6 +1374,90 @@ class PerceptionTests(unittest.TestCase):
             path = log_dir / "class-c-detectors.jsonl"
             lines = path.read_text(encoding="utf-8").strip().split("\n")
             self.assertEqual(len(lines), watch.CLASS_C_DETECTOR_LINES)
+
+    def test_host_stopped_state_true(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "    User 0:  installed=true hidden=false stopped=true notLaunched=false enabled=0\n"
+        with patch("subprocess.run", return_value=mock_result):
+            self.assertTrue(watch._host_stopped_state())
+
+    def test_host_stopped_state_false(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "    User 0:  installed=true hidden=false stopped=false notLaunched=false enabled=0\n"
+        with patch("subprocess.run", return_value=mock_result):
+            self.assertFalse(watch._host_stopped_state())
+
+    def test_host_stopped_state_unknown_on_error(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        with patch("subprocess.run", return_value=mock_result):
+            self.assertIsNone(watch._host_stopped_state())
+
+    def test_host_stopped_state_unknown_on_timeout(self):
+        import subprocess
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("adb", 5)):
+            self.assertIsNone(watch._host_stopped_state())
+
+    def test_host_stopped_state_unknown_on_no_adb(self):
+        with patch("subprocess.run", side_effect=FileNotFoundError()):
+            self.assertIsNone(watch._host_stopped_state())
+
+    def test_class_c_detection_includes_host_stopped(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
+                      received=start - 200, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            with patch("subprocess.run") as mock_run:
+                mock_result = MagicMock()
+                mock_result.returncode = 0
+                mock_result.stdout = "    User 0:  installed=true hidden=false stopped=true notLaunched=false enabled=0\n"
+                mock_run.return_value = mock_result
+                detection = watch.detect_class_c_stop(state, log_dir)
+            self.assertIsNotNone(detection)
+            self.assertTrue(detection["host_stopped"])
+
+    def test_class_c_detection_host_stopped_false(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
+                      received=start - 200, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            with patch("subprocess.run") as mock_run:
+                mock_result = MagicMock()
+                mock_result.returncode = 0
+                mock_result.stdout = "    User 0:  installed=true hidden=false stopped=false notLaunched=false enabled=0\n"
+                mock_run.return_value = mock_result
+                detection = watch.detect_class_c_stop(state, log_dir)
+            self.assertIsNotNone(detection)
+            self.assertFalse(detection["host_stopped"])
+
+    def test_class_c_detection_host_stopped_unknown(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
+                      received=start - 200, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            with patch("subprocess.run") as mock_run:
+                mock_result = MagicMock()
+                mock_result.returncode = 1
+                mock_result.stdout = ""
+                mock_run.return_value = mock_result
+                detection = watch.detect_class_c_stop(state, log_dir)
+            self.assertIsNotNone(detection)
+            self.assertIsNone(detection["host_stopped"])
 
 if __name__ == "__main__":
     unittest.main()

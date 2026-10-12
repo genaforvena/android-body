@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import subprocess
 
 MAX_SEQUENCE = 9007199254740991
 HISTORY = 32
@@ -603,6 +604,29 @@ def _max_consecutive_null_lux(state):
     return max_consecutive
 
 
+def _host_stopped_state():
+    """Check if org.androidbody is force-stopped via host-side adb.
+
+    Returns True if stopped=true, False if stopped=false, None if unknown.
+    Bounded: 5-second timeout on adb command. Never raises.
+    """
+    try:
+        result = subprocess.run(
+            ["adb", "shell", "dumpsys", "package", "org.androidbody"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.splitlines():
+            if "stopped=" in line:
+                if "stopped=true" in line:
+                    return True
+                if "stopped=false" in line:
+                    return False
+        return None
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
 def detect_class_c_stop(state, log_dir):
     """Detect class-C stop: delivery halt with no known cause.
 
@@ -648,6 +672,8 @@ def detect_class_c_stop(state, log_dir):
     state["_class_c_detected_cursor"] = cursor
     state["_class_c_detected_session"] = session
 
+    host_stopped = _host_stopped_state()
+
     detection = {
         "kind": "class-c-stop",
         "detected_at": stamp(now),
@@ -656,6 +682,7 @@ def detect_class_c_stop(state, log_dir):
         "last_received_epoch_s": last_received,
         "window_seconds": CLASS_C_WINDOW_SECONDS,
         "reason": "delivery halted with polls succeeding; no code=2, no null-lux freeze",
+        "host_stopped": host_stopped,
     }
 
     _emit_class_c(log_dir, detection)
