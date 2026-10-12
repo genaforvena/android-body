@@ -300,6 +300,17 @@ This is consumer-view evidence; not server-side receipt, motor proof, or calibra
 - Redmi10: cursor 0, no observations, transport reachable.
 
 This is consumer-view evidence; not server-side receipt, motor proof, or calibration. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. The deployed consumer runs `2423a42` bytes (clock-skew bound deployed 04:51:08Z; see clock-skew bound consumer deployment section below). No source, APK, or consumer mutation this wake.
+
+## Live perception snapshot — 2026-10-12T17:27Z
+
+- Note3 cursor 189768 (advanced from 153230 at 04:51Z), session `a0617824-7e10-456c-bd8d-0c3e35499ac2` active since phone time 01:27:36Z (~16h), transport reachable, no pending backlog page.
+- All sensor channels `fresh-clock-conditional` at phone_sample 17:27:09Z, consumer_receipt 17:27:32Z (23s transport latency, within documented 17–25s envelope).
+- Battery: level=1.0 (100%), charging=true. Light: 3.7902 lux, age_ms=48. Acceleration: x=2.646 y=5.244 z=14.596 m/s² (magnitude 15.733 m/s², includes gravity). Wi-Fi RSSI: −11 dBm.
+- BLE scan_lifecycle: stale/latest=error reason=scan_failed (code=2 at 17:26:58Z phone time, event #189756). 10th occurrence; intervals 236m/10m/6m/18m/2m/6m/16m/4m/1m — accelerating. Recovery human-gated (new phone-session per API21 SCAN_FAILED_APPLICATION_REGISTRATION_FAILED literature).
+- Composite stillness: moving (accel_std=0.016 m/s², light_std=0.400 lux, rssi_std=0.500 dBm; n=8). Prior still at 17:24Z (light_std=0.000). Environmental oscillation; still-not-presence semantics unchanged.
+- Redmi10: cursor 0, no observations, transport reachable.
+
+This is consumer-view evidence; not server-side receipt, motor proof, or calibration. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. No source, APK, or consumer mutation this wake.
 ## BleScan APK deployment — 2026-10-11T17:35Z
 
 Genome built and installed the BleScan-including APK on Note3, closing the deployment gap reported by discover (DM 38840) and witness (DM 38975).
