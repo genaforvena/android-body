@@ -390,6 +390,7 @@ def emit_excursion(log_dir, state, now):
 
 CLASS_B_MIN_NULL_LUX = 2
 CLASS_B_DETECTOR_LINES = 128
+CLASS_B_FREEZE_SECONDS = 30.0
 
 
 def detect_class_b_stop(state, log_dir):
@@ -406,6 +407,9 @@ def detect_class_b_stop(state, log_dir):
     session = state["session"]
     prev_cursor = state.get("_class_b_prev_cursor")
     prev_session = state.get("_class_b_prev_session")
+
+    if prev_cursor is not None and cursor != prev_cursor:
+        state["_class_b_last_cursor_advance_at"] = time.time()
 
     state["_class_b_prev_cursor"] = cursor
     state["_class_b_prev_session"] = session
@@ -432,7 +436,9 @@ def detect_class_b_stop(state, log_dir):
         return None
 
     session_changed = (session is not None and session != prev_session)
-    cursor_frozen = (cursor == prev_cursor)
+    last_advance = state.get("_class_b_last_cursor_advance_at", time.time())
+    cursor_frozen = (cursor == prev_cursor and
+                     time.time() - last_advance > CLASS_B_FREEZE_SECONDS)
 
     if not (session_changed or cursor_frozen):
         return None

@@ -1062,6 +1062,8 @@ class PerceptionTests(unittest.TestCase):
                       received=1000, log_dir=log_dir)
             # First call seeds prev state
             watch.detect_class_b_stop(state, log_dir)
+            # Simulate cursor frozen for > CLASS_B_FREEZE_SECONDS
+            state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
             # Second poll: cursor frozen, still null-lux
             detection = watch.detect_class_b_stop(state, log_dir)
             self.assertIsNotNone(detection)
@@ -1111,6 +1113,8 @@ class PerceptionTests(unittest.TestCase):
                               "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
                       received=1000, log_dir=log_dir)
             watch.detect_class_b_stop(state, log_dir)
+            # Simulate cursor frozen for > CLASS_B_FREEZE_SECONDS
+            state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
             detection1 = watch.detect_class_b_stop(state, log_dir)
             self.assertIsNotNone(detection1)
             # Same cursor/session: no repeat
@@ -1133,6 +1137,39 @@ class PerceptionTests(unittest.TestCase):
             path = log_dir / "class-b-detectors.jsonl"
             lines = path.read_text(encoding="utf-8").strip().split("\n")
             self.assertEqual(len(lines), watch.CLASS_B_DETECTOR_LINES)
+
+    def test_class_b_detector_no_false_positive_on_advancing_cursor(self):
+        """Cursor advancing slowly (+4 per poll) must NOT trigger cursor-freeze.
+
+        Real-world scenario: 2s poll interval, cursor advances +4 per ~10s.
+        Between consecutive polls cursor is often unchanged, but over time it
+        advances. Detector must distinguish slow advance from true freeze.
+        """
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            # Session s1: two null-lux reads
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                      received=1000, log_dir=log_dir)
+            # Seed prev state
+            watch.detect_class_b_stop(state, log_dir)
+            # Simulate cursor advancing +4 per poll (like real Note3 scenario)
+            # Each poll is 2s apart, cursor advances every ~5 polls (~10s)
+            # After 3 polls: cursor should have advanced at least once
+            state["cursor"] = 1004  # advanced +4
+            detection = watch.detect_class_b_stop(state, log_dir)
+            self.assertIsNone(detection)
+            # Continue advancing: cursor keeps moving, no freeze
+            state["cursor"] = 1008  # advanced +4 again
+            detection = watch.detect_class_b_stop(state, log_dir)
+            self.assertIsNone(detection)
+            # Even after many polls with null-lux, advancing cursor = no freeze
+            for i in range(10):
+                state["cursor"] = 1008 + (i + 1) * 4
+                detection = watch.detect_class_b_stop(state, log_dir)
+                self.assertIsNone(detection)
 
     def test_class_a_detector_freeze_on_code2_cursor_halt(self):
         state = self.state()
