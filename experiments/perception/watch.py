@@ -72,6 +72,8 @@ def load(path, node=None, source=None):
         raise ValueError("unsupported or corrupt perception state")
     if node is not None and (state["node"] != node or state["source"] != source):
         raise ValueError("state belongs to a different endpoint; reconcile explicitly")
+    if "owner_checkboxes" not in state:
+        state["owner_checkboxes"] = {}
     return state
 
 

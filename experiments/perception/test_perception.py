@@ -154,6 +154,29 @@ class PerceptionTests(unittest.TestCase):
         view = watch.render(state, 1000, 30)
         self.assertIn("owner=battery:on,light:unknown,acceleration:off,vibration:on", view)
 
+    def test_load_migrates_legacy_state_without_owner_checkboxes(self):
+        """Legacy persisted state lacks owner_checkboxes; load() must seed it.
+
+        Regression: compact_key/render hard-access state["owner_checkboxes"],
+        so a legacy state crashed the follower at startup (KeyError).
+        """
+        import json
+        import tempfile
+        from pathlib import Path
+        legacy = watch.initial("note3", "http://127.0.0.1:8765/node/note3")
+        del legacy["owner_checkboxes"]
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "note3.json"
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+            state = watch.load(path, node="note3",
+                              source="http://127.0.0.1:8765/node/note3")
+        self.assertEqual(state["owner_checkboxes"], {})
+        key = watch.compact_key(state, 1000, 30)
+        self.assertEqual(len(key), 10)
+        view = watch.render(state, 1000, 30)
+        self.assertIn("owner=battery:unknown,light:unknown,"
+                      "acceleration:unknown,vibration:unknown", view)
+
 
     def test_light_bucket_transition_keeps_both_fresh_raw_endpoints(self):
         state = self.state()
