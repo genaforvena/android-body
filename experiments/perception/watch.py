@@ -897,7 +897,26 @@ def ble_sighting_snapshot(item, now, stale):
 BLE_SCAN_SUBTYPES = {"start", "stop", "error", "unavailable"}
 
 
-def ble_scan_snapshot(item, now, stale):
+def _ble_scan_consecutive_error_count(state):
+    """Count consecutive ble_scan error items from the end of history.
+
+    Resets on any non-error ble_scan event or session change. Bounded by
+    history window. Surfaces the error count that compact_key dedup hides.
+    """
+    count = 0
+    for item in reversed(state["history"]):
+        if item["kind"] != "ble_scan":
+            continue
+        words = item["raw"].split(" ")
+        subtype = words[2] if len(words) > 2 and words[2] in BLE_SCAN_SUBTYPES else None
+        if subtype == "error":
+            count += 1
+        else:
+            break
+    return count
+
+
+def ble_scan_snapshot(item, now, stale, consecutive_errors=None):
     fields = item["fields"] if item else {}
     status = freshness(item, now, stale) if item else "unknown/no-observation"
     current = status == "fresh-clock-conditional"
@@ -911,6 +930,7 @@ def ble_scan_snapshot(item, now, stale):
         "beacon": fields.get("beacon") if current else None,
         "window_ms": number(fields, "window_ms") if current else None,
         "gap_ms": number(fields, "gap_ms") if current else None,
+        "consecutive_errors": consecutive_errors,
     }
 
 
@@ -1004,7 +1024,8 @@ def compact_key(state, now, stale):
                *(ble[field] for field in BLE_STATES),
                sorted(ble["errors"].items())]
     sighting = ble_sighting_snapshot(state["latest"].get("ble_sighting"), now, stale)
-    scan = ble_scan_snapshot(state["latest"].get("ble_scan"), now, stale)
+    scan = ble_scan_snapshot(state["latest"].get("ble_scan"), now, stale,
+                              _ble_scan_consecutive_error_count(state))
     rf_key = [sighting["status"], sighting["name"], sighting["rssi_dbm"],
               scan["status"], scan["subtype"], scan["reason"]]
     return [node_status(state, now, stale), transport(state, now, stale),
@@ -1160,7 +1181,7 @@ def render(state, now, stale):
     sighting = state["latest"].get("ble_sighting")
     scan = state["latest"].get("ble_scan")
     sighting_view = ble_sighting_snapshot(sighting, now, stale)
-    scan_view = ble_scan_snapshot(scan, now, stale)
+    scan_view = ble_scan_snapshot(scan, now, stale, _ble_scan_consecutive_error_count(state))
     lines.append("Bluetooth LE sightings (allowlisted-beacon scanner-visible evidence; "
                  "NOT presence, occupancy or proximity proof):")
     if sighting:
@@ -1177,6 +1198,9 @@ def render(state, now, stale):
                  f"reason={scan_view['reason'] or 'unspecified'}")
     lines.append("  scans run in bounded windows with idle gaps; lifecycle age bounds "
                  "interpretation of the latest event")
+    if scan_view.get("consecutive_errors"):
+        lines.append(f"  consecutive_errors={scan_view['consecutive_errors']} "
+                     "(session count of back-to-back scan error events)")
     stillness = stillness_snapshot(state, now, stale)
     lines.append("Composite stillness (joint variance of accel magnitude + light + wifi RSSI):")
     lines.append(f"  status={stillness['status']} basis={stillness['basis']}")
@@ -1299,7 +1323,8 @@ def space_snapshot(states, now, stale):
             "ble_sighting": ble_sighting_snapshot(
                 state["latest"].get("ble_sighting"), now, stale),
             "ble_scan": ble_scan_snapshot(
-                state["latest"].get("ble_scan"), now, stale),
+                state["latest"].get("ble_scan"), now, stale,
+                _ble_scan_consecutive_error_count(state)),
             "stillness": stillness_snapshot(state, now, stale),
             "light": {
                 "status": status,

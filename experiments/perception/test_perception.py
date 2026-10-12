@@ -863,6 +863,40 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(node["ble_scan"]["reason"], "adapter_off")
         self.assertIsNone(node["ble_scan"]["beacon"])
 
+    def test_ble_scan_consecutive_error_count_surfaces_in_snapshot(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_scan error reason=scan_failed code=2",
+                          "1001 ble_scan error reason=scan_failed code=2",
+                          "1002 ble_scan error reason=scan_failed code=2"], received=1002)
+        node = watch.space_snapshot([state], 1002, 30)["nodes"][0]
+        self.assertEqual(node["ble_scan"]["consecutive_errors"], 3)
+        view = watch.render(state, 1002, 30)
+        self.assertIn("consecutive_errors=3", view)
+
+    def test_ble_scan_consecutive_error_count_resets_on_non_error(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_scan error reason=scan_failed code=2",
+                          "1001 ble_scan error reason=scan_failed code=2",
+                          "1002 ble_scan start beacon=MISHE-BEACON window_ms=60000 gap_ms=60000"],
+             received=1002)
+        node = watch.space_snapshot([state], 1002, 30)["nodes"][0]
+        self.assertEqual(node["ble_scan"]["consecutive_errors"], 0)
+        view = watch.render(state, 1002, 30)
+        self.assertNotIn("consecutive_errors=", view)
+
+    def test_ble_scan_consecutive_error_count_not_in_compact_key(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_scan error reason=scan_failed code=2"], received=1000)
+        watch.update_events(state, 1000, 30)
+        key1 = watch.compact_key(state, 1000, 30)
+        self.page(state, ["1001 ble_scan error reason=scan_failed code=2"], received=1001)
+        key2 = watch.compact_key(state, 1001, 30)
+        self.assertEqual(key1, key2)
+        self.assertFalse(watch.update_events(state, 1001, 30))
+
     def test_ble_rf_channels_stay_honest_unknown_without_observations(self):
         state = self.state()
         self.page(state, ["1000 hello node=note3 protocol=1 session=s1"], received=1000)
