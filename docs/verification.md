@@ -130,7 +130,7 @@ The frozen deployed consumer view (`body/runtime/watch.py`) observed the Note3 e
 This is consumer-view evidence of the installed APK's emissions, not server-side receipt, motor proof, calibration or clock synchronization. Redmi10 remained at cursor 0 with no observations.
 
 - 2026-10-11 09:22:54Z–15:58:40Z: **freeze #4** — cursor 126304 frozen for ~6h36m, resolved by the owner's UI toggle (see Note3 freeze #4 resolution below). Root cause: data-wiping reinstall at 09:23:01Z (28s before freeze onset), not an app-internal stall. Exceeds freeze #3 record (~64 min). Genome completed authorized self-heal install-over of `460c8ec` at 11:02:25Z (permit 36417; APK `9e4fdc28…`, signer `d23dcc9d…`). Sensing remained user-gated after install (desired_on=false from data wipe). Sensors stale since 09:22:54Z (battery 1.0/charging, light 6.7048 lux, accel magnitude ~15.7 m/s², Wi-Fi RSSI −13 dBm). Redmi10 still cursor 0.
-- 2026-10-11 21:26:38Z–ongoing (~3h55m as of 01:22Z): **freeze #5** — cursor 143382 frozen since phone time 21:26:38Z. All channels stale (battery 1.0/charging, light 0.0 lux, accel magnitude ~15.8 m/s², Wi-Fi RSSI −12 dBm). BLE scan code=2 at #143314 (21:25:19Z phone time) still latest ble_scan event. Session b60c6c18 active since 20:14:23Z phone time. Transport reachable. Redmi10 still cursor 0. Freeze #5 duration now exceeds freeze #3 (~64 min) and approaches freeze #4 (~6h36m). Class-A detector refactor committed 364326b (source only; deployed bytes remain c4704a2d — redeployment blocked by freeze #5).
+- 2026-10-11 21:26:38Z–2026-10-12 ~01:27:36Z phone time (~4h01m): **freeze #5** — cursor 143382 frozen since phone time 21:26:38Z. All channels stale (battery 1.0/charging, light 0.0 lux, accel magnitude ~15.8 m/s², Wi-Fi RSSI −12 dBm). BLE scan code=2 at #143314 (21:25:19Z phone time) still latest ble_scan event. Session b60c6c18 active since 20:14:23Z phone time. Transport reachable. Redmi10 still cursor 0. Freeze #5 duration exceeded freeze #3 (~64 min) and freeze #4 (~6h36m). Class-A detector refactor committed 364326b (source only; deployed bytes remain c4704a2d — redeployment blocked by freeze #5). **RESOLVED** by phone restart: new session `a0617824-7e10-456c-bd8d-0c3e35499ac2` at phone time 01:27:36Z; observations resumed at cursor 144457+ around phone time 01:49:44Z. See freeze #5 resolution section below.
 ## Host perception snapshot activation
 
 On 2026-10-07 at 10:35–10:36 UTC, Health exercised the independently reviewed production apply, revert and reapply procedure for the frozen perception consumer from source commit `fbb62ac8b24a6310c467c422a6b65116435e9921`. The final running `watch.py` SHA-256 was `e86032e8d3fc9335b388a0db83889422a9fc05590cd48d3153909986e8587598`; the exercised rollback was `1396d352d8868bc421937a538e4e073cdd8f2a5df8261cae637ebfe9c359cd3d`.
@@ -261,6 +261,20 @@ Freeze #4 (cursor 126304, onset 09:22:54Z) resolved after discover restored the 
 - Probe identity: uid=10225 groups=3002 3003 9997 50225.
 
 This is consumer-view evidence of resumed sensing after freeze #4. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. Redmi10 still cursor 0 (NOT_CONNECTED). No source, APK, or consumer mutation this wake.
+
+## Note3 freeze #5 resolution — 2026-10-12T01:52Z
+
+Freeze #5 (cursor 143382, onset 2026-10-11 21:26:38Z phone time) resolved by phone restart. Deployed `watch.py view` at 01:52Z verified live Note3 data:
+
+- Cursor 144471 (advanced from frozen 143382), session `a0617824-7e10-456c-bd8d-0c3e35499ac2` (new session; prior `b60c6c18` ended by restart), transport reachable, no pending backlog page.
+- New session hello at phone time 01:27:36Z (events #143387–143395); first sensor observations at cursor 144457+ around phone time 01:49:44Z (~22min after restart).
+- All sensor channels `fresh-clock-conditional` at phone_sample 01:49:59Z, consumer_receipt 01:50:23Z.
+- Battery: level=1.0 (100%), charging=true. Light: 0.0 lux, age_ms=172. Acceleration: x=2.662 y=5.246 z=14.650 m/s² (magnitude 15.787 m/s², includes gravity). Wi-Fi RSSI: −12 dBm.
+- Composite stillness: still (accel_std=0.026 m/s² n=8, light_std=0.000 lux n=8, rssi_std=0.433 dBm n=8).
+- Freeze duration: ~4h01m onset-to-restart, ~4h23m onset-to-first-new-observation. Freeze #5 (~4h01m) is shorter than freeze #4 (~6h36m) and freeze #3 (~64 min); it is the second-longest recorded freeze.
+- Redmi10: cursor 0, no observations, transport reachable.
+
+This is consumer-view evidence of resumed sensing after freeze #5. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. The class-A detector redeployment (source 364326b) is no longer blocked by freeze #5. No source, APK, or consumer mutation this wake.
 
 ## Live perception snapshot — 2026-10-11T17:26Z
 
