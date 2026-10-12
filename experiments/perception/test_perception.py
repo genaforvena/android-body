@@ -206,7 +206,8 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual((node["source"], node["session"], node["cursor"]),
                          (state["source"], "s1", 2))
         self.assertEqual(node["light"]["status"], "fresh-clock-conditional")
-        self.assertEqual(node["light"]["validity_seconds"], 30)
+        self.assertEqual(node["light"]["freshness_basis"],
+                         "phone event time and age_ms compared with host clock")
         self.assertEqual(node["light"]["lux"], 12.5)
         self.assertEqual(node["light"]["units"], "lux")
         self.assertEqual(node["light"]["sequence"], 2)
@@ -239,6 +240,28 @@ class PerceptionTests(unittest.TestCase):
         stale = watch.space_snapshot([state], 1031, 30)["nodes"][0]
         self.assertEqual(stale["light"]["status"], "stale")
         self.assertIsNone(stale["light"]["lux"])
+    def test_space_snapshot_light_reason_carries_measured_clock_bound(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1024)
+        self.page(state, ["1001 light lux=12.5 accuracy=3 age_ms=21"], received=1026)
+        node = watch.space_snapshot([state], 1026, 30)["nodes"][0]["light"]
+        self.assertEqual(node["status"], "fresh-clock-conditional")
+        self.assertEqual(node["status_reason"],
+                         "phone/host clock skew <=24000ms behind host "
+                         "(acquisition span 24000-25000ms, n=3 retained); "
+                         "skew/latency split unknown")
+
+    def test_space_snapshot_clock_bound_falls_back_to_unverified_without_history(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1000)
+        state["history"] = []
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]["light"]
+        self.assertEqual(node["status"], "fresh-clock-conditional")
+        self.assertEqual(node["status_reason"],
+                         "phone/host clock agreement is unverified")
+
 
     def test_space_snapshot_parses_phone_elapsed_realtime_when_present(self):
         state = self.state()

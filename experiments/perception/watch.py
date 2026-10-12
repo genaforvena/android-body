@@ -1233,6 +1233,35 @@ def render_events(state, now, stale):
 
 
 
+def acquisition_span_stats(state):
+    """Bound phone/host clock skew from retained receipt spans.
+
+    received - collected = transport latency + (host wall - phone wall), and
+    latency is non-negative, so the smallest observed span bounds how far
+    behind the host clock the phone clock can be. The skew/latency split
+    stays unknown and the bound covers only the retained window.
+    """
+    spans = [round((item["received"] - item["collected"]) * 1000, 1)
+             for item in state.get("history", [])
+             if item.get("collected") is not None]
+    if not spans:
+        return None
+    ordered = sorted(spans)
+    middle = len(ordered) // 2
+    median = (ordered[middle] if len(ordered) % 2 else
+              round((ordered[middle - 1] + ordered[middle]) / 2, 1))
+    return {"min_ms": min(spans), "max_ms": max(spans),
+            "median_ms": median, "n": len(spans)}
+
+
+def clock_agreement_reason(span_stats):
+    if span_stats is None:
+        return "phone/host clock agreement is unverified"
+    return ("phone/host clock skew <=%.0fms behind host (acquisition span "
+            "%.0f-%.0fms, n=%d retained); skew/latency split unknown"
+            % (span_stats["min_ms"], span_stats["min_ms"],
+               span_stats["max_ms"], span_stats["n"]))
+
 def space_snapshot(states, now, stale):
     nodes = []
     for state in states:
@@ -1248,6 +1277,7 @@ def space_snapshot(states, now, stale):
             "invalid phone_elapsed_ms value")
         acquisition_span = (round((item["received"] - item["collected"]) * 1000, 1)
                             if item and item["collected"] is not None else None)
+        span_stats = acquisition_span_stats(state)
         nodes.append({
             "node": state["node"], "source": state["source"], "session": state["session"],
             "cursor": state["cursor"], "phone_status": node_status(state, now, stale),
@@ -1270,9 +1300,9 @@ def space_snapshot(states, now, stale):
                 "status_reason": (fields.get("reason") or
                                   ("no-light-observation" if item is None else
                                    status if status != "fresh-clock-conditional" else
-                                   "phone/host clock agreement is unverified")),
-                "validity_seconds": stale,
+                                   clock_agreement_reason(span_stats))),
                 "freshness_basis": "phone event time and age_ms compared with host clock",
+                "validity_seconds": stale,
                 "sequence": item["sequence"] if item else None,
                 "lux": number(fields, "lux") if status == "fresh-clock-conditional" else None,
                 "units": "lux", "accuracy": fields.get("accuracy") if item else None,
