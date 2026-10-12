@@ -160,6 +160,14 @@ yielding `status=moving` on a stationary phone (observed repeatedly, e.g.
 light_std ≈ 0.6 lux with accel_std ≤ 0.13 m/s² and rssi_std = 0 dBm). Treat
 isolated light-term excursions as a known false-positive mode, not motion.
 
+**Accel baseline anomaly (Note3):** On 2026-10-11T03:14:41Z the Note3
+accelerometer resting magnitude stepped from ~10.21 m/s² (near Earth gravity)
+to ~15.93 m/s² (1.6×g) in one 5-second interval. Cause UNKNOWN (sensor fault
+vs fixture force). The std-based composite is baseline-shift-immune: std of a
+constant stream is zero regardless of baseline. Absolute-magnitude thresholds
+(e.g. "still if |a| < 11") would be unsound on this device in its current state
+and are not deployed.
+
 ## Class-B stop detection
 
 The consumer detects a class-B stop: a cursor freeze or session change with two or

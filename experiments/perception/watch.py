@@ -780,6 +780,12 @@ BLE_STATES = {
     "advertiser_supported": {"supported", "unsupported", "unavailable", "error"},
 }
 
+# Accel magnitude baseline on Note3 stepped from ~10.21 to ~15.93 m/s² at
+# 2026-10-11T03:14:41Z (discrete 5-second step, cause UNKNOWN: sensor fault
+# vs fixture force). Std-based composite is baseline-shift-immune: std of a
+# constant stream is zero regardless of baseline. Absolute-magnitude thresholds
+# (e.g. "still if |a| < 11") would be unsound on this device in its current
+# state and are not deployed.
 STILLNESS_ACCEL_STD = 0.5
 STILLNESS_LIGHT_STD = 0.1
 STILLNESS_RSSI_STD = 2.0
