@@ -266,22 +266,28 @@ def _run_interrupt(name):
     return record
 
 def _scratch_write_arg():
-    """Fixed sh -c argument writing SCRATCH_SCRIPT via printf (no stdin pipe).
-    The entire printf+redirect is wrapped as a single device-shell token so
-    the redirect evaluates inside the run-as context, not the device shell.
-    The inner command's exit code is echoed as RC=N for explicit capture.
+    """Fixed sh -c argument writing SCRATCH_SCRIPT via echo (no stdin pipe).
+    The entire echo+redirect sequence is wrapped as a single device-shell
+    token so the redirects evaluate inside the run-as context, not the
+    device shell. The inner command's exit code is echoed as RC=N for
+    explicit capture. Uses the echo builtin: this device has no printf
+    applet and its sh (toybox ash) has no printf builtin either
+    (verified on-device 2026-10-12: `type printf` silent, echo a builtin).
     """
-    quoted = " ".join("'" + line.replace("'", "'\\''") + "'" for line in SCRATCH_SCRIPT.splitlines())
-    cmd = "printf '%s\\n' {0} > {1}; echo RC=$?".format(quoted, SCRATCH_PATH)
+    parts = []
+    for i, line in enumerate(SCRATCH_SCRIPT.splitlines()):
+        quoted = "'" + line.replace("'", "'\\''") + "'"
+        parts.append("echo {0} {1} {2}".format(quoted, ">" if i == 0 else ">>", SCRATCH_PATH))
+    cmd = " && ".join(parts) + "; echo RC=$?"
     # Wrap in single quotes so the device shell passes the whole command
-    # (including redirect) as one argument to sh -c
+    # (including redirects) as one argument to sh -c
     return "'" + cmd.replace("'", "'\\''") + "'"
 
 
 def _run_scratch(name):
     spec = PROBES[name]
     started = time.monotonic()
-    command = ("adb shell run-as org.androidbody sh -c 'printf ... > {0}' (write); "
+    command = ("adb shell run-as org.androidbody sh -c 'echo ... > {0}; echo RC=$?' (write); "
                "adb shell run-as org.androidbody sh {0} (run 1 and run 2); "
                "adb shell run-as org.androidbody rm {0} (delete); "
                "adb shell run-as org.androidbody ls {0} (verify absent)").format(SCRATCH_PATH)
