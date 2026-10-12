@@ -147,7 +147,7 @@ public final class BodyService extends Service {
             session.worker.start();
             return START_STICKY;
         } catch (RuntimeException e) {
-            Settings.disarm(this);
+            // Do not disarm: a start failure must not kill a durable ON session.
             stopActive("OFF: start failed (" + e.getClass().getSimpleName() + ")");
             stopSelf();
             return START_NOT_STICKY;

@@ -55,6 +55,7 @@ final class BleScan {
     private volatile boolean stopped;
     private Sink sink;
     private Callback callback;
+    private final CountDownLatch finished = new CountDownLatch(1);
 
     BleScan() {
         HandlerThread thread = new HandlerThread("body-ble-scan");
@@ -71,6 +72,7 @@ final class BleScan {
         stopped = true;
         handler.post(new Runnable() { @Override public void run() { stopScan(); } });
         handler.getLooper().quitSafely();
+        try { finished.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
     private void loop() {
@@ -87,13 +89,14 @@ final class BleScan {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-        } catch (IOException e) {
+        } catch (IOException | IllegalStateException e) {
             // Spool unusable; the sampler path fails the session. Stop scanning.
         } finally {
             running.set(false);
             if (stopped) {
-                try { enqueue(BleScanEvents.stopEvent()); } catch (IOException e) { /* spool closing */ }
+                try { enqueue(BleScanEvents.stopEvent()); } catch (IOException | IllegalStateException e) { /* spool closing */ }
             }
+            finished.countDown();
         }
     }
 
@@ -140,12 +143,12 @@ final class BleScan {
         String event = BleScanEvents.sighting(name, rssi);
         if (event == null) return;
         try { enqueue(event); }
-        catch (IOException e) { /* spool unusable; loop exits via sampler failure */ }
+        catch (IOException | IllegalStateException e) { /* spool unusable; loop exits via sampler failure */ }
     }
 
     private void error(String reason) {
         try { enqueue("ble_scan error reason=" + reason); }
-        catch (IOException e) { /* spool unusable; loop exits via sampler failure */ }
+        catch (IOException | IllegalStateException e) { /* spool unusable; loop exits via sampler failure */ }
     }
 
     private void enqueue(String event) throws IOException {
