@@ -21,6 +21,8 @@ NOTES-*
 
 # Retained probe artifacts (bounded, gitignored)
 experiments/minimal-substrate/artifacts/
+# Outcome evidence files (never committed)
+artifacts/
 
 # Checked, installable milestone artifact
 !downloads/android-body-debug.apk
