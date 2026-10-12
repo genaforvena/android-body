@@ -5,6 +5,10 @@
     <string name="reset_cursor">Reset action cursor…</string>
     <string name="starting">Starting…</string>
     <string name="collect_only">Collect only / upload later</string>
+    <string name="owner_battery">Owner allows battery level</string>
+    <string name="owner_light">Owner allows light sensor</string>
+    <string name="owner_acceleration">Owner allows accelerometer</string>
+    <string name="owner_vibration">Owner allows vibration effects</string>
     <string name="connection_settings">Connection settings</string>
     <string name="clear_saved">Clear this node’s saved observations…</string>
 </resources>

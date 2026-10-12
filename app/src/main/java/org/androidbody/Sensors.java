@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -17,6 +18,7 @@ import android.os.SystemClock;
 /** Holds only the latest real samples; snapshots coalesce while the network is offline. */
 final class Sensors implements SensorEventListener {
     private final Context context;
+    private final SharedPreferences preferences;
     private final SensorManager manager;
     private final WifiManager wifi;
     private final Sensor light;
@@ -24,6 +26,7 @@ final class Sensors implements SensorEventListener {
     private String lightError = "no_sample";
     private String accelerationError = "no_sample";
     private boolean batteryRegistered;
+    private boolean ownerBattery, ownerLight, ownerAcceleration;
     private float lux;
     private float x, y, z;
     private long lightTime;
@@ -36,33 +39,51 @@ final class Sensors implements SensorEventListener {
     private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context ignored, Intent intent) { battery(intent); }
     };
-    Sensors(Context context) {
+    Sensors(Context context, SharedPreferences preferences) {
         this.context = context;
+        this.preferences = preferences;
+        ownerBattery = preferences.getBoolean("owner_battery", true);
+        ownerLight = preferences.getBoolean("owner_light", true);
+        ownerAcceleration = preferences.getBoolean("owner_acceleration", true);
         manager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
         wifi = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         light = manager == null ? null : manager.getDefaultSensor(Sensor.TYPE_LIGHT);
         acceleration = manager == null ? null : manager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
     }
+    /** Live-apply hook for owner checkboxes; true when registrations must be rebuilt. */
+    boolean ownerFlagsChanged(boolean battery, boolean light, boolean acceleration) {
+        boolean changed = battery != ownerBattery || light != ownerLight || acceleration != ownerAcceleration;
+        ownerBattery = battery; ownerLight = light; ownerAcceleration = acceleration;
+        return changed;
+    }
     void start() {
         if (manager != null) {
-            if (light != null && !manager.registerListener(this, light, SensorManager.SENSOR_DELAY_NORMAL)) lightError = "registration_failed";
-            if (acceleration != null && !manager.registerListener(this, acceleration, SensorManager.SENSOR_DELAY_NORMAL)) accelerationError = "registration_failed";
+            if (ownerLight && light != null && !manager.registerListener(this, light, SensorManager.SENSOR_DELAY_NORMAL)) lightError = "registration_failed";
+            if (ownerAcceleration && acceleration != null && !manager.registerListener(this, acceleration, SensorManager.SENSOR_DELAY_NORMAL)) accelerationError = "registration_failed";
         }
-        try {
-            Intent sticky = context.registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-            batteryRegistered = true;
-            if (sticky != null) battery(sticky);
-        } catch (RuntimeException e) { battery = "battery unavailable reason=registration_failed"; }
+        if (ownerBattery) {
+            try {
+                Intent sticky = context.registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+                batteryRegistered = true;
+                if (sticky != null) battery(sticky);
+            } catch (RuntimeException e) { battery = "battery unavailable reason=registration_failed"; }
+        }
     }
     void stop() {
         if (manager != null) manager.unregisterListener(this);
         if (batteryRegistered) { context.unregisterReceiver(batteryReceiver); batteryRegistered = false; }
     }
     String capabilities() {
-        return Protocol.event("cap battery")
-                + Protocol.event(light == null ? "sensor light absent" : "cap light")
-                + Protocol.event(acceleration == null ? "sensor accelerometer absent" : "cap accelerometer")
-                + Protocol.event("cap wifi_link_rssi");
+        StringBuilder caps = new StringBuilder();
+        caps.append(Protocol.event(ownerBattery ? "cap battery" : "owner battery off"));
+        if (light == null) caps.append(Protocol.event("sensor light absent"));
+        else if (!ownerLight) caps.append(Protocol.event("owner light off"));
+        else caps.append(Protocol.event("cap light"));
+        if (acceleration == null) caps.append(Protocol.event("sensor accelerometer absent"));
+        else if (!ownerAcceleration) caps.append(Protocol.event("owner accelerometer off"));
+        else caps.append(Protocol.event("cap accelerometer"));
+        caps.append(Protocol.event("cap wifi_link_rssi"));
+        return caps.toString();
     }
     private synchronized void battery(Intent intent) {
         int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
@@ -86,16 +107,18 @@ final class Sensors implements SensorEventListener {
             accelerationTime = time; accelerationSensorTimeNs = event.timestamp; accelerationAccuracy = event.accuracy; accelerationError = null;
         }
     }
-    @Override public void onAccuracyChanged(Sensor sensor, int accuracy) { }
+    @Override public synchronized void onAccuracyChanged(Sensor sensor, int accuracy) { }
     synchronized String snapshot() {
         long now = SystemClock.elapsedRealtime();
-        StringBuilder body = new StringBuilder(Protocol.event(battery));
+        StringBuilder body = new StringBuilder(Protocol.event(ownerBattery ? battery : "battery unavailable reason=owner_off"));
         body.append(Protocol.event(wifiRssi(now)));
-        if (light == null) body.append(Protocol.event("light unavailable reason=absent"));
+        if (!ownerLight) body.append(Protocol.event("light unavailable reason=owner_off"));
+        else if (light == null) body.append(Protocol.event("light unavailable reason=absent"));
         else if (lightError != null) body.append(Protocol.event("light unavailable reason=" + lightError));
         else if (now < lightTime || now - lightTime > 60000) body.append(Protocol.event("light unavailable reason=stale"));
         else body.append(sample(lightTime, lightSensorTimeNs, now, "light lux=" + lux + " accuracy=" + lightAccuracy));
-        if (acceleration == null) body.append(Protocol.event("acceleration unavailable reason=absent"));
+        if (!ownerAcceleration) body.append(Protocol.event("acceleration unavailable reason=owner_off"));
+        else if (acceleration == null) body.append(Protocol.event("acceleration unavailable reason=absent"));
         else if (accelerationError != null) body.append(Protocol.event("acceleration unavailable reason=" + accelerationError));
         else if (now < accelerationTime || now - accelerationTime > 15000) body.append(Protocol.event("acceleration unavailable reason=stale"));
         else body.append(sample(accelerationTime, accelerationSensorTimeNs, now, "acceleration x=" + x + " y=" + y + " z=" + z + " accuracy=" + accelerationAccuracy));

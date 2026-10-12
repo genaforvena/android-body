@@ -22,6 +22,7 @@ EXCURSION_LOG_LINES = 128
 EVENTS = 16
 SENSORS = ("battery", "light", "acceleration")
 CAPABILITIES = ("battery", "light", "accelerometer", "vibration", "wifi_link_rssi", "bluetooth_le")
+OWNER_CHECKBOXES = ("battery", "light", "acceleration", "vibration")
 
 NODE_STATUS_ENTER_MARGIN = 15.0
 NODE_STATUS_EXIT_MARGIN = 10.0
@@ -55,7 +56,7 @@ def save(path, state):
 
 def initial(node, source):
     return {"version": 1, "node": node, "source": source, "cursor": 0,
-            "session": None, "capabilities": {}, "latest": {}, "history": [],
+            "session": None, "capabilities": {}, "owner_checkboxes": {}, "latest": {}, "history": [],
             "session_records": 0, "ble_scan_error_streak": 0,
             "actions": [], "events": [], "event_key": None,
             "last_light_sequence": None, "last_light_transition": None,
@@ -134,6 +135,7 @@ def apply_page(state, records, received, has_more, log_dir=None):
                     emit_excursion(log_dir, state, received)
                 state["session_records"] = 0
                 state["capabilities"] = {}
+                state["owner_checkboxes"] = {}
                 state["latest"] = {}
                 state["history"] = []
                 state["session"] = session
@@ -146,6 +148,13 @@ def apply_page(state, records, received, has_more, log_dir=None):
         elif kind in ("sensor", "actuator") and len(words) >= 4 and words[3] == "absent":
             if words[2] in CAPABILITIES:
                 state["capabilities"][words[2]] = "absent"
+        if kind == "owner_checkboxes":
+            checkboxes = {}
+            for word in words[1:]:
+                name, separator, value = word.partition("=")
+                if separator and value in ("on", "off"):
+                    checkboxes[name] = value
+            state["owner_checkboxes"] = checkboxes
         if kind == "action":
             state["actions"].append(item)
             state["actions"] = state["actions"][-EVENTS:]
@@ -1037,7 +1046,7 @@ def compact_key(state, now, stale):
               scan["status"], scan["subtype"], scan["reason"]]
     return [node_status(state, now, stale), transport(state, now, stale),
             state["session"], dict(state["capabilities"]), measured, actions,
-            rssi_key, ble_key, rf_key]
+            rssi_key, ble_key, rf_key, dict(state["owner_checkboxes"])]
 
 
 def light_bucket_transition(state, previous, current, now, stale):
@@ -1160,6 +1169,8 @@ def render(state, now, stale):
              f"phone={state.get('node_status') or node_status(state, now, stale)} transport={transport(state, now, stale)} "
              f"backlog_page_pending={str(state['has_more']).lower()} last_poll={stamp(state['poll_at'])}",
              "capabilities: " + " ".join(f"{key}={state['capabilities'].get(key, 'unknown')}" for key in CAPABILITIES)]
+    lines.append("owner checkboxes: " + " ".join(
+        f"{key}={state['owner_checkboxes'].get(key, 'unknown')}" for key in OWNER_CHECKBOXES))
     lines.append("raw units: battery level=fraction, light lux=lux, acceleration x/y/z=m/s²; "
                  "phone clocks are not synchronized; receipt is consumer fetch, not server receipt")
     for kind in SENSORS:
@@ -1243,7 +1254,10 @@ def render_events(state, now, stale):
     key = compact_key(state, now, stale)
     lines = [f"{state['node']} source={state['source']} phone={key[0]} "
              f"transport={key[1]} caps=" +
-             ",".join(f"{cap}:{state['capabilities'].get(cap, 'unknown')}" for cap in CAPABILITIES)]
+             ",".join(f"{cap}:{state['capabilities'].get(cap, 'unknown')}" for cap in CAPABILITIES) +
+             " owner=" +
+             ",".join(f"{name}:{state['owner_checkboxes'].get(name, 'unknown')}"
+                      for name in OWNER_CHECKBOXES)]
     rssi_status, rssi_dbm, rssi_reason, rssi_source = key[6]
     lines.append(f"  wifi_link_rssi {rssi_status} rssi_dbm={rssi_dbm} "
                  f"reason={rssi_reason or 'unspecified'} source={rssi_source or 'unknown'}")
@@ -1327,6 +1341,7 @@ def space_snapshot(states, now, stale):
             "backlog_page_pending": state["has_more"],
             "capabilities": {key: state["capabilities"].get(key, "unknown")
                              for key in CAPABILITIES},
+            "owner_checkboxes": dict(state.get("owner_checkboxes") or {}),
             "wifi_link_rssi": wifi_rssi_snapshot(
                 state["latest"].get("wifi_link_rssi_dbm"), now, stale),
             "bluetooth_le": ble_status_snapshot(

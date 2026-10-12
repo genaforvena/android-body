@@ -49,6 +49,7 @@ public final class BodyService extends Service {
         final Vibrator vibrator;
         final Object signal = new Object();
         volatile boolean active = true, collectOnly;
+        boolean ownerVibration;
         volatile int modeVersion, queued;
         volatile String mode = "Starting";
         volatile Transport transport;
@@ -67,7 +68,8 @@ public final class BodyService extends Service {
             secret = Protocol.secret(preferences.getString("secret", ""));
             cursorKey = Settings.cursorKey(endpoint);
             collectOnly = preferences.getBoolean("collect_only", false);
-            sensors = new Sensors(owner);
+            ownerVibration = preferences.getBoolean("owner_vibration", true);
+            sensors = new Sensors(owner, preferences);
             vibrator = (Vibrator) owner.getSystemService(VIBRATOR_SERVICE);
             transport = new Transport(endpoint, secret, allowHttp);
             evalSession = new BoundedEvaluator.Session();
@@ -183,9 +185,20 @@ public final class BodyService extends Service {
     }
     private void changeMode(Session session) {
         boolean collect = session.preferences.getBoolean("collect_only", false);
-        if (collect == session.collectOnly) return;
+        boolean ownerBattery = session.preferences.getBoolean("owner_battery", true);
+        boolean ownerLight = session.preferences.getBoolean("owner_light", true);
+        boolean ownerAcceleration = session.preferences.getBoolean("owner_acceleration", true);
+        boolean ownerVibration = session.preferences.getBoolean("owner_vibration", true);
+        boolean ownerChanged = session.sensors.ownerFlagsChanged(ownerBattery, ownerLight, ownerAcceleration)
+                || ownerVibration != session.ownerVibration;
+        if (collect == session.collectOnly && !ownerChanged) return;
         synchronized (session.signal) {
             session.collectOnly = collect;
+            session.ownerVibration = ownerVibration;
+            if (ownerChanged) {
+                session.sensors.stop();
+                session.sensors.start();
+            }
             if (collect && session.vibrator != null) { try { session.vibrator.cancel(); } catch (RuntimeException ignored) { } }
             session.modeVersion++;
             try { session.transport.cancel(); } catch (RuntimeException ignored) { }
@@ -195,6 +208,7 @@ public final class BodyService extends Service {
         }
         requestNotice(session);
     }
+    private static String onOff(boolean value) { return value ? "on" : "off"; }
     private void runSession(final Session session) {
         try {
             // A prior stopped service can still be unwinding I/O. Do not open its file twice.
@@ -214,7 +228,11 @@ public final class BodyService extends Service {
             String sessionId = UUID.randomUUID().toString();
             String hello = Protocol.event("hello node=" + Protocol.node(session.endpoint) + " protocol=1 session=" + sessionId)
                     + Protocol.event("android sdk=" + Build.VERSION.SDK_INT) + session.sensors.capabilities()
-                    + Protocol.event(session.vibrator != null && session.vibrator.hasVibrator() ? "cap vibration" : "actuator vibration absent");
+                    + Protocol.event(session.vibrator != null && session.vibrator.hasVibrator() ? "cap vibration" : "actuator vibration absent")
+                    + Protocol.event("owner_checkboxes battery=" + onOff(session.preferences.getBoolean("owner_battery", true))
+                            + " light=" + onOff(session.preferences.getBoolean("owner_light", true))
+                            + " acceleration=" + onOff(session.preferences.getBoolean("owner_acceleration", true))
+                            + " vibration=" + onOff(session.ownerVibration));
             try {
                 FileInputStream statusFile = new FileInputStream("/proc/self/status");
                 String identity;
@@ -305,7 +323,9 @@ public final class BodyService extends Service {
                     String outcome = execute(session, action);
                     if (outcome == null) continue;
                     cursor = action.id;
-                    try { session.spool.enqueue(outcome); } catch (IOException e) { throw new StorageFailure(e); }
+                    try { session.spool.enqueue(outcome); }
+                    catch (IOException e) { throw new StorageFailure(e); }
+                    catch (IllegalStateException e) { continue; } // spool closed by stopActive during eval
                     // A persisted outcome, rather than a network ACK, now closes the crash marker.
                     if (!session.preferences.edit().remove(session.cursorKey + "_pending").commit()) throw new StorageFailure("Cannot persist action receipt");
                     session.queued = session.spool.lineCount();
@@ -355,6 +375,7 @@ public final class BodyService extends Service {
                 String failure = null;
                 if (!notificationsVisible(BodyService.this)) failure = "notifications_disabled";
                 else if (duration < 0) failure = action.command.startsWith("vibrate") ? "invalid_arguments" : "unsupported_action";
+                else if (!session.ownerVibration) failure = "owner_vibration_off";
                 else if (session.vibrator == null || !session.vibrator.hasVibrator()) failure = "absent";
                 else if (SystemClock.elapsedRealtime() - session.lastVibration < 3000) failure = "rate_limited";
                 if (failure != null) { result[0] = requested + Protocol.event("action " + action.id + " failed reason=" + failure); return; }

@@ -4,4 +4,8 @@
     <item name="secret" type="id" />
     <item name="status" type="id" />
     <item name="collect_only" type="id" />
+    <item name="owner_battery" type="id" />
+    <item name="owner_light" type="id" />
+    <item name="owner_acceleration" type="id" />
+    <item name="owner_vibration" type="id" />
 </resources>

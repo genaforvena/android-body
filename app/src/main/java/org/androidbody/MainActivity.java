@@ -29,6 +29,7 @@ import java.io.IOException;
 public final class MainActivity extends Activity {
     private EditText endpoint, secret;
     private CheckBox allowHttp, collectOnly;
+    private CheckBox ownerBattery, ownerLight, ownerAcceleration, ownerVibration;
     private TextView status;
     private Button toggle, reset, clear;
     private LinearLayout settings;
@@ -74,6 +75,17 @@ public final class MainActivity extends Activity {
         root.addView(collectOnly);
         root.addView(label("Checked: store locally, with no uploads or remote actions. Uncheck to send this node’s saved observations while ON.", 13));
         addGap(root, 14);
+        root.addView(label("Owner choices are stored on this phone only. A disabled capability collects nothing, and remote commands cannot enable it.", 13));
+        addGap(root, 8);
+        ownerBattery = ownerCheckBox("owner_battery", R.string.owner_battery, R.id.owner_battery);
+        root.addView(ownerBattery);
+        ownerLight = ownerCheckBox("owner_light", R.string.owner_light, R.id.owner_light);
+        root.addView(ownerLight);
+        ownerAcceleration = ownerCheckBox("owner_acceleration", R.string.owner_acceleration, R.id.owner_acceleration);
+        root.addView(ownerAcceleration);
+        ownerVibration = ownerCheckBox("owner_vibration", R.string.owner_vibration, R.id.owner_vibration);
+        root.addView(ownerVibration);
+        addGap(root, 14);
         root.addView(label("ON is remembered. Android can restore the visible session after a process kill or reboot. OFF disarms restoration. Force-stop and Xiaomi restrictions can still prevent operation.", 14));
         addGap(root, 10);
         root.addView(label("Keeps the CPU awake while ON, using more battery. The notification shows sending, offline collection or collect-only mode. No camera, microphone, location or account.", 14));
@@ -116,7 +128,11 @@ public final class MainActivity extends Activity {
             }
             if (!BodyService.notificationsVisible(this)) { show("Enable Body notifications and its ‘Body is ON’ channel in Android Settings, then try again."); return; }
             if (!Settings.preferences(this).edit().putString("endpoint", url).putString("secret", token)
-                    .putBoolean("allow_http", allowHttp.isChecked()).putBoolean("collect_only", collectOnly.isChecked()).commit()
+                    .putBoolean("allow_http", allowHttp.isChecked()).putBoolean("collect_only", collectOnly.isChecked())
+                    .putBoolean("owner_battery", ownerBattery.isChecked())
+                    .putBoolean("owner_light", ownerLight.isChecked())
+                    .putBoolean("owner_acceleration", ownerAcceleration.isChecked())
+                    .putBoolean("owner_vibration", ownerVibration.isChecked()).commit()
                     || !Settings.arm(this, url)) { show("Could not save configuration and ON state. Body remains OFF."); return; }
             Intent intent = new Intent(this, BodyService.class);
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent); else startService(intent);
@@ -181,11 +197,31 @@ public final class MainActivity extends Activity {
     private void render() {
         boolean on = enabled();
         endpoint.setEnabled(!on && !clearing); secret.setEnabled(!on && !clearing); allowHttp.setEnabled(!on && !clearing);
-        reset.setEnabled(!on && !clearing); clear.setEnabled(!on && !clearing); collectOnly.setEnabled(!clearing);
+        collectOnly.setEnabled(!clearing);
+        ownerBattery.setEnabled(!clearing); ownerLight.setEnabled(!clearing);
+        ownerAcceleration.setEnabled(!clearing); ownerVibration.setEnabled(!clearing);
         toggle.setText(on ? "Turn OFF" : "Turn ON"); toggle.setEnabled(!clearing);
         String text = BodyService.status;
         if (on && !BodyService.running && "OFF".equals(text)) text = "ON requested • Android paused it; switch OFF then ON to resume";
         status.setText(clearing ? "Deleting saved observations…" : text);
+    }
+    private CheckBox ownerCheckBox(final String key, int label, int id) {
+        final CheckBox box = new CheckBox(this);
+        box.setId(id);
+        box.setText(label);
+        box.setChecked(Settings.preferences(this).getBoolean(key, true));
+        box.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(CompoundButton button, boolean checked) {
+                if (!Settings.preferences(MainActivity.this).edit().putBoolean(key, checked).commit()) {
+                    boolean saved = Settings.disarm(MainActivity.this);
+                    BodyService.stopFromUi(MainActivity.this, saved ? "OFF • choice could not be saved" : "OFF now; storage failed. Use Android Force stop before reboot.");
+                    show("Could not save the owner choice, so Body has stopped. Check storage before turning ON again.");
+                    return;
+                }
+                BodyService.applyModeFromUi();
+            }
+        });
+        return box;
     }
     private void show(String message) { new AlertDialog.Builder(this).setMessage(message).setPositiveButton("OK", null).show(); }
     private TextView label(String text, int size) { TextView v = new TextView(this); v.setText(text); v.setTextSize(size); v.setTextColor(Color.rgb(32, 50, 41)); return v; }
