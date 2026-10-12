@@ -460,6 +460,91 @@ def detect_class_b_stop(state, log_dir):
 
     return detection
 
+CLASS_A_WINDOW_SECONDS = 120
+CLASS_A_DETECTOR_LINES = 128
+
+
+def _emit_class_a(log_dir, detection):
+    path = log_dir / "class-a-detectors.jsonl"
+    previous = []
+    if path.exists():
+        text = path.read_text(encoding="utf-8").strip()
+        if text:
+            previous = text.split("\n")
+    line = json.dumps(detection, ensure_ascii=False, allow_nan=False, sort_keys=True)
+    atomic(path, "\n".join([*previous, line][-CLASS_A_DETECTOR_LINES:]) + "\n")
+
+
+def detect_class_a_freeze(state, log_dir):
+    """Detect class-A freeze: BLE scan code=2 followed by sensor delivery halt.
+
+    When a ble_scan error code=2 event is seen in history, arms a bounded
+    window (CLASS_A_WINDOW_SECONDS). If cursor does not advance past the
+    code=2 event's sequence within the window, emits 'class-a-freeze'
+    (causal link confirmed). If cursor advances before the window expires,
+    emits 'class-a-rejected' (hypothesis rejected for this instance).
+    Emits bounded JSONL to log_dir/class-a-detectors.jsonl.
+    """
+    if log_dir is None:
+        return None
+
+    now = time.time()
+    cursor = state["cursor"]
+
+    code2_item = None
+    for item in state["history"]:
+        if item["kind"] == "ble_scan":
+            words = item["raw"].split(" ")
+            subtype = words[2] if len(words) > 2 and words[2] in BLE_SCAN_SUBTYPES else None
+            if subtype == "error" and item.get("fields", {}).get("code") == "2":
+                code2_item = item
+
+    if code2_item is None:
+        state["_class_a_code2_cursor"] = None
+        state["_class_a_code2_received"] = None
+        state["_class_a_detection_emitted"] = False
+        return None
+
+    code2_cursor = code2_item["sequence"]
+    code2_received = code2_item["received"]
+
+    if code2_cursor != state.get("_class_a_code2_cursor"):
+        state["_class_a_code2_cursor"] = code2_cursor
+        state["_class_a_code2_received"] = code2_received
+        state["_class_a_detection_emitted"] = False
+        return None
+
+    if state.get("_class_a_detection_emitted"):
+        return None
+
+    if cursor > code2_cursor:
+        state["_class_a_detection_emitted"] = True
+        detection = {
+            "kind": "class-a-rejected",
+            "detected_at": stamp(now),
+            "cursor": cursor,
+            "code2_cursor": code2_cursor,
+            "window_seconds": CLASS_A_WINDOW_SECONDS,
+            "reason": "cursor advanced past code=2 within window",
+        }
+        _emit_class_a(log_dir, detection)
+        return detection
+
+    if now - code2_received >= CLASS_A_WINDOW_SECONDS:
+        state["_class_a_detection_emitted"] = True
+        detection = {
+            "kind": "class-a-freeze",
+            "detected_at": stamp(now),
+            "cursor": cursor,
+            "code2_cursor": code2_cursor,
+            "window_seconds": CLASS_A_WINDOW_SECONDS,
+            "reason": "cursor frozen at code=2 cursor for window",
+        }
+        _emit_class_a(log_dir, detection)
+        return detection
+
+    return None
+
 
 
 def freshness(item, now, stale):
@@ -1199,6 +1284,9 @@ def follow(args, directory):
                 detection = detect_class_b_stop(state, directory)
                 if detection:
                     print(f"class-b-stop: {detection}", flush=True)
+                detection_a = detect_class_a_freeze(state, directory)
+                if detection_a:
+                    print(f"class-a-freeze: {detection_a}", flush=True)
                 if changed:
                     print(state["events"][-1], flush=True)
                 # Publish each durable node result before polling the next node.

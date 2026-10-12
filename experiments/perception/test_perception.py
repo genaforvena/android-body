@@ -1,6 +1,7 @@
 """Deterministic consumer-visible boundaries; no phone or physical requests."""
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -1132,6 +1133,71 @@ class PerceptionTests(unittest.TestCase):
             path = log_dir / "class-b-detectors.jsonl"
             lines = path.read_text(encoding="utf-8").strip().split("\n")
             self.assertEqual(len(lines), watch.CLASS_B_DETECTOR_LINES)
+
+    def test_class_a_detector_freeze_on_code2_cursor_halt(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            self.page(state, ["1000 ble_scan error reason=scan_failed code=2"],
+                      received=time.time() - 121, log_dir=log_dir)
+            watch.detect_class_a_freeze(state, log_dir)
+            detection = watch.detect_class_a_freeze(state, log_dir)
+            self.assertIsNotNone(detection)
+            self.assertEqual(detection["kind"], "class-a-freeze")
+            self.assertEqual(detection["code2_cursor"], 1)
+
+    def test_class_a_detector_rejected_when_cursor_advances(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            self.page(state, ["1000 ble_scan error reason=scan_failed code=2"],
+                      received=time.time() - 60, log_dir=log_dir)
+            watch.detect_class_a_freeze(state, log_dir)
+            self.page(state, ["1001 light lux=12.5 accuracy=3 age_ms=0 phone_elapsed_ms=1000"],
+                      received=time.time() - 30, log_dir=log_dir)
+            detection = watch.detect_class_a_freeze(state, log_dir)
+            self.assertIsNotNone(detection)
+            self.assertEqual(detection["kind"], "class-a-rejected")
+
+    def test_class_a_detector_silent_without_code2(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0 phone_elapsed_ms=1000"],
+                      received=time.time() - 200, log_dir=log_dir)
+            detection = watch.detect_class_a_freeze(state, log_dir)
+            self.assertIsNone(detection)
+
+    def test_class_a_detector_no_repeat_for_same_code2(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            self.page(state, ["1000 ble_scan error reason=scan_failed code=2"],
+                      received=time.time() - 121, log_dir=log_dir)
+            watch.detect_class_a_freeze(state, log_dir)
+            detection1 = watch.detect_class_a_freeze(state, log_dir)
+            self.assertIsNotNone(detection1)
+            detection2 = watch.detect_class_a_freeze(state, log_dir)
+            self.assertIsNone(detection2)
+
+    def test_class_a_detector_bounded_output(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            for i in range(watch.CLASS_A_DETECTOR_LINES + 5):
+                state["cursor"] = 100 + i
+                state["history"] = [{"kind": "ble_scan",
+                                     "raw": "1000 ble_scan error reason=scan_failed code=2",
+                                     "fields": {"reason": "scan_failed", "code": "2"},
+                                     "sequence": 100,
+                                     "collected": 1000,
+                                     "received": time.time() - 200}]
+                state.pop("_class_a_detection_emitted", None)
+                watch.detect_class_a_freeze(state, log_dir)
+            path = log_dir / "class-a-detectors.jsonl"
+            lines = path.read_text(encoding="utf-8").strip().split("\n")
+            self.assertEqual(len(lines), watch.CLASS_A_DETECTOR_LINES)
 
 if __name__ == "__main__":
     unittest.main()
