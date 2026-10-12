@@ -84,7 +84,7 @@ PROBES = {
     "runas-identity":   {"args": ["shell", "run-as", "org.androidbody", "id"], "context": RUNAS, "expect": "ok", "identity": True},
     "runas-status":     {"args": ["shell", "run-as", "org.androidbody", "cat", "/proc/self/status"], "context": RUNAS, "expect": "ok", "identity": True},
     "runas-selinux":    {"args": ["shell", "run-as", "org.androidbody", "cat", "/proc/self/attr/current"], "context": RUNAS, "expect": "ok"},
-    "runas-denied":     {"args": ["shell", "run-as", "org.androidbody", "cat", "/data/data/com.android.settings/databases/settings.db"], "context": RUNAS, "expect": "denied"},
+    "runas-denied":     {"args": ["shell", "run-as", "org.androidbody", "cat", "/data/system/packages.list"], "context": RUNAS, "expect": "denied"},
     "host-interrupt":   {"args": ["shell", "sleep", "30"], "context": HOST, "expect": "interrupted", "interrupt": True},
     "apk-identity":     {"context": APKUID, "expect": "ok", "apk": True},
     "apk-dex":          {"context": HOST, "expect": "ok", "apk_dex": True},
@@ -266,9 +266,16 @@ def _run_interrupt(name):
     return record
 
 def _scratch_write_arg():
-    """Fixed sh -c argument writing SCRATCH_SCRIPT via printf (no stdin pipe)."""
+    """Fixed sh -c argument writing SCRATCH_SCRIPT via printf (no stdin pipe).
+    The entire printf+redirect is wrapped as a single device-shell token so
+    the redirect evaluates inside the run-as context, not the device shell.
+    The inner command's exit code is echoed as RC=N for explicit capture.
+    """
     quoted = " ".join("'" + line.replace("'", "'\\''") + "'" for line in SCRATCH_SCRIPT.splitlines())
-    return "printf '%s\\n' {0} > {1}".format(quoted, SCRATCH_PATH)
+    cmd = "printf '%s\\n' {0} > {1}; echo RC=$?".format(quoted, SCRATCH_PATH)
+    # Wrap in single quotes so the device shell passes the whole command
+    # (including redirect) as one argument to sh -c
+    return "'" + cmd.replace("'", "'\\''") + "'"
 
 
 def _run_scratch(name):
@@ -280,6 +287,17 @@ def _run_scratch(name):
                "adb shell run-as org.androidbody ls {0} (verify absent)").format(SCRATCH_PATH)
     record = _new_record(name, spec, command)
     write = _adbrun(["shell", "run-as", "org.androidbody", "sh", "-c", _scratch_write_arg()])
+    # Parse inner rc from stdout (adb exit codes are unreliable on this device)
+    write_rc = None
+    for line in write["stdout"].splitlines():
+        if line.startswith("RC="):
+            try:
+                write_rc = int(line[3:])
+            except ValueError:
+                pass
+    if write_rc is None:
+        write_rc = write["rc"]  # fallback to adb rc if inner rc not found
+    write_ok = (write_rc == 0 and not (write["note"] and "exit0-failure" in write["note"]))
     run1 = _adbrun(["shell", "run-as", "org.androidbody", "sh", SCRATCH_PATH])
     run2 = _adbrun(["shell", "run-as", "org.androidbody", "sh", SCRATCH_PATH])
     delete = _adbrun(["shell", "run-as", "org.androidbody", "rm", SCRATCH_PATH])
@@ -288,7 +306,7 @@ def _run_scratch(name):
     record["script"] = SCRATCH_SCRIPT
     record["script_sha256"] = hashlib.sha256(SCRATCH_SCRIPT.encode("utf-8")).hexdigest()
     record["script_path"] = SCRATCH_PATH
-    record["write_returncode"] = write["rc"]
+    record["write_returncode"] = write_rc
     record["run1_output"] = _cap(_compose_output(run1))
     record["run2_output"] = _cap(_compose_output(run2))
     record["rerun_matches"] = (_step_ok(run1) and _step_ok(run2)
@@ -302,13 +320,13 @@ def _run_scratch(name):
         record["verify_outcome"] = "ok"
     else:
         record["verify_outcome"] = "denied"
-    ok = (_step_ok(write) and _step_ok(run1) and _step_ok(run2)
+    ok = (write_ok and _step_ok(run1) and _step_ok(run2)
           and record["rerun_matches"] and _step_ok(delete)
           and record["verify_outcome"] == "denied")
     record["outcome"] = "ok" if ok else "error"
     record["output"] = ("write rc={0}; run1 rc={1}; run2 rc={2}; rerun matches={3}; "
                         "delete rc={4}; verify={5}").format(
-        write["rc"], run1["rc"], run2["rc"], record["rerun_matches"],
+        write_rc, run1["rc"], run2["rc"], record["rerun_matches"],
         delete["rc"], record["verify_outcome"])
     record["note"] = ("device-side persisted trivial script rerun; run-as context, "
                       "NOT apk-uid evidence; script deleted after experiment "

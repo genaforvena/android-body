@@ -74,6 +74,7 @@ if "run-as" in joined:
         print("Permission denied", file=sys.stderr)
         sys.exit(1)
     if rest[:2] == ["sh", "-c"] and ("printf" in rest[2] or "cat >" in rest[2]):
+        print("RC=0")
         sys.exit(0)
     if rest[:1] == ["sh"]:
         print("probe script uid=10224 cwd=/data/data/org.androidbody")
@@ -181,7 +182,7 @@ class ProbeTest(unittest.TestCase):
         readonly = {"shell", "id", "date", "-u", "+%Y-%m-%dT%H:%M:%SZ", "dumpsys",
                     "package", "sensorservice", "run-as", "org.androidbody", "cat",
                     "/proc/self/status", "/proc/self/attr/current",
-                    "/data/data/com.android.settings/databases/settings.db", "sleep", "30"}
+                    "/data/system/packages.list", "sleep", "30"}
         for name, spec in probe.PROBES.items():
             self.assertIn(spec["context"], {"host", "run-as", "apk-uid"}, name)
             self.assertIn(spec["expect"], {"ok", "denied", "interrupted"}, name)

@@ -55,5 +55,8 @@ Subsequent commits fixed the identified defects: `b82dab0` (API-1 bounded
 read), `9863007` (daemon thread pool), `e69d798` (wire into
 `BodyService.execute` as `eval` action branch with collect-only skip,
 failure classification, result identity hash, truncation marking, and
-session close). The evaluator is now live in the app; physical acceptance
-evidence is pending (no phone trial executed).
+session close). The evaluator is now live in the app. A bounded phone
+trial on the owned Note3 (2026-10-12, discover wake 48948) executed
+10 of 11 expected probes; the scratch-rerun failure was root-caused to
+adb argv rejoining (harness quoting, not device denial). Physical
+acceptance is partial; full acceptance awaits a corrected harness.
