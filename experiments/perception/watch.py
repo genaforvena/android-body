@@ -924,24 +924,30 @@ def node_status(state, now, stale):
     threshold minus NODE_STATUS_EXIT_MARGIN. Sensor-level freshness semantics
     are unchanged; only the node label is damped. The follower persists the
     emitted label in node state so the next poll applies the margins.
+
+    Age is measured from the consumer receipt time, not the phone event
+    time, so host/phone clock skew and transport lag do not pin the label
+    stale. The receipt time is the consumer's own observation of liveness.
     """
     if not state["history"]:
         return "unknown/no-observations"
     if state["has_more"]:
         return "backlog/draining"
     # Battery snapshots provide collection heartbeat even when on-change sensors are old.
-    recent = [item for item in state["history"] if item["collected"] is not None]
+    recent = [item for item in state["history"] if item["received"] is not None]
     if not recent:
         return "unknown/no-phone-clock"
-    latest = max(recent, key=lambda item: item["collected"])
-    status = freshness(latest, now, stale)
-    previous = state.get("node_status")
-    if status == "stale":
+    latest = max(recent, key=lambda item: item["received"])
+    age = now - latest["received"]
+    if age < 0:
+        return "unknown-clock-future"
+    if age > stale:
         status = "stale/phone-silent-or-delayed"
-    if status == "unknown-clock-future" or previous not in (
-            "fresh-clock-conditional", "stale/phone-silent-or-delayed"):
+    else:
+        status = "fresh-clock-conditional"
+    previous = state.get("node_status")
+    if previous not in ("fresh-clock-conditional", "stale/phone-silent-or-delayed"):
         return status
-    age = now - latest["collected"]
     if previous == "stale/phone-silent-or-delayed":
         if status == "fresh-clock-conditional" and age < stale - NODE_STATUS_EXIT_MARGIN:
             return "fresh-clock-conditional"
@@ -1123,7 +1129,7 @@ def describe(item, now, stale):
 
 def render(state, now, stale):
     lines = [f"NODE {state['node']} source={state['source']} cursor={state['cursor']}",
-             f"phone={node_status(state, now, stale)} transport={transport(state, now, stale)} "
+             f"phone={state.get('node_status') or node_status(state, now, stale)} transport={transport(state, now, stale)} "
              f"backlog_page_pending={str(state['has_more']).lower()} last_poll={stamp(state['poll_at'])}",
              "capabilities: " + " ".join(f"{key}={state['capabilities'].get(key, 'unknown')}" for key in CAPABILITIES)]
     lines.append("raw units: battery level=fraction, light lux=lux, acceleration x/y/z=m/s²; "
@@ -1280,7 +1286,7 @@ def space_snapshot(states, now, stale):
         span_stats = acquisition_span_stats(state)
         nodes.append({
             "node": state["node"], "source": state["source"], "session": state["session"],
-            "cursor": state["cursor"], "phone_status": node_status(state, now, stale),
+            "cursor": state["cursor"], "phone_status": state.get("node_status") or node_status(state, now, stale),
             "transport": transport(state, now, stale), "last_error": state["error"],
             "last_poll_utc": stamp(state["poll_at"]),
             "backlog_page_pending": state["has_more"],

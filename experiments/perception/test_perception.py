@@ -74,8 +74,10 @@ class PerceptionTests(unittest.TestCase):
         self.assertIn("backlog/draining", watch.render(state, 1000, 30))
         self.assertIn("delayed_at_receipt=true", watch.render(state, 1000, 30))
         self.page(state, [], more=False)
-        self.assertIn("stale/phone-silent-or-delayed", watch.render(state, 1000, 30))
-        self.assertNotIn("magnitude=3.742", watch.render(state, 1000, 30))
+        # Node responded to the poll: receipt is recent, node label is fresh.
+        # Sensor data is old: acceleration reports stale separately.
+        self.assertIn("fresh-clock-conditional", watch.render(state, 1000, 30))
+        self.assertIn("acceleration [stale]", watch.render(state, 1000, 30))
         self.page(state, ["1001 battery level=0.5 charging=true",
                           "1001 acceleration x=0 y=0 z=10 age_ms=0"], received=1001)
         self.assertIn("acceleration magnitude=10.000 m/s²", watch.render(state, 1001, 30))
@@ -721,6 +723,62 @@ class PerceptionTests(unittest.TestCase):
         key = watch.compact_key(state, 1040, 30)
         self.assertEqual(key[0], "fresh-clock-conditional")
         self.assertEqual(key[4][0][1], "stale")
+
+    def test_node_status_uses_receipt_time_not_phone_event_time(self):
+        """Clock skew and transport lag must not pin the node label stale.
+
+        The phone clock is ~24s behind the host. Sensor-level freshness uses
+        the phone event time and correctly reports fresh (24s < 30s threshold).
+        The node label must use the consumer receipt time for the same reason:
+        liveness is the consumer's observation of when it last heard from the
+        node, not the phone's claim of when it collected the sample.
+        """
+        stale = 30
+        state = self.state()
+        # Phone event time 976, consumer receipt 1000: 24s clock skew + lag.
+        self.page(state, ["976 battery level=0.5 charging=true"], received=1000)
+        # Sensor-level freshness uses phone event time: 1000-976=24 < 30, fresh.
+        self.assertEqual(watch.sensor_status(state["latest"]["battery"], 1000, stale),
+                         "fresh-clock-conditional")
+        # Simulate the stuck stale label from prior skew-limited hysteresis.
+        state["node_status"] = "stale/phone-silent-or-delayed"
+        # One second after receipt: receipt-age is 1s, below the 20s exit margin.
+        self.assertEqual(watch.node_status(state, 1001, stale), "fresh-clock-conditional")
+
+    def test_render_uses_stored_node_status_not_render_time_recompute(self):
+        """Render-time now can be 20-30s after poll due to slow multi-node polling.
+
+        The follower computes node_status at poll time (age ~0 → fresh), but
+        render recomputes with render-time now. When render-time age exceeds
+        the enter margin, the recompute returns stale even though the poll was
+        recent. The fix: render uses the stored node_status.
+        """
+        stale = 30
+        state = self.state()
+        self.page(state, ["1000 battery level=0.5 charging=true"], received=1000)
+        # Follower computes node_status at poll time (age ~0 → fresh).
+        state["node_status"] = "fresh-clock-conditional"
+        # Render-time now is 50s after poll: age=50 exceeds enter margin
+        # (stale + ENTER_MARGIN = 45), so recompute returns stale.
+        self.assertEqual(watch.node_status(state, 1050, stale), "stale/phone-silent-or-delayed")
+        # But render uses the stored value, not the recompute.
+        rendered = watch.render(state, 1050, stale)
+        self.assertIn("phone=fresh-clock-conditional", rendered)
+        # space_snapshot likewise uses the stored value.
+        node = watch.space_snapshot([state], 1050, stale)["nodes"][0]
+        self.assertEqual(node["phone_status"], "fresh-clock-conditional")
+
+    def test_render_falls_back_to_compute_when_no_stored_node_status(self):
+        """When node_status is not yet stored (initial state), render computes it."""
+        stale = 30
+        state = self.state()
+        self.page(state, ["1000 battery level=0.5 charging=true"], received=1000)
+        # No stored node_status: render computes with render-time now.
+        self.assertNotIn("node_status", state)
+        rendered = watch.render(state, 1001, stale)
+        self.assertIn("phone=fresh-clock-conditional", rendered)
+        rendered_stale = watch.render(state, 1040, stale)
+        self.assertIn("phone=stale/phone-silent-or-delayed", rendered_stale)
 
     def test_stillness_reports_frozen_when_sensors_stale(self):
         """During a freeze, pre-frozen samples roll through the history window.
