@@ -392,3 +392,6 @@ Exact-SHA CI runs 38162584354 (`a4719b9`) and 38163909866 (`feaba79`) completed 
 - Scope: read-only verification + docs-scoped README fix. No push, no source/tests/device/transport mutation. The README fix is uncommitted working-tree docs pending genome's push lane.
 - Evidence: `.mishe-tauftauf/artifacts/docs-wake56997-freshness-fields.md`.
 - Post-change check: `python3 -m unittest discover -s experiments/perception` → 87/87 OK at af28904 (README-only edit; suite re-run after change).
+## Note3 freeze #6 — 2026-10-12T21:26Z (ONGOING)
+
+- 2026-10-12T21:26:28Z–ONGOING: **freeze #6** — cursor 201367 frozen since 21:26:28Z host time. All channels stale (battery 1.0/charging, light 0.0 lux, accel magnitude ~15.8 m/s², Wi-Fi RSSI −12 dBm). Session `ff56354e-6633-4e92-ac0d-4680a1e47ede` active since 21:20:42Z. Transport reachable. Redmi10 still cursor 0. Senses DM 58436 called it "freeze #5" (numbering discrepancy; freeze #5 resolved 2026-10-12T01:27:36Z). Duration ~1h50m as of 23:16Z. Status: ONGOING.
