@@ -21,4 +21,24 @@ Read [delivery semantics](../protocol/README.md#delivery-collection-and-restart-
 
 Torch, speech, notification, sound, screen wake and camera are deliberately unimplemented. A validly numbered unsupported command returns failure and advances the cursor; malformed batches pause uploads/actions without executing anything in that response; local collection continues.
 
+## Bounded eval probes
+
+Since commit `e69d798` (2026-10-11) a second action kind, `eval`, provides a bounded investigation surface. It is not arbitrary code execution — the grammar is a fixed allowlist:
+
+```text
+eval identity
+eval clock
+eval read /proc/self/status
+eval read /proc/self/attr/current
+eval read /proc/meminfo
+eval env
+```
+
+- `identity` — UID/groups from `/proc/self/status` (bounded to 4096 bytes)
+- `clock` — `elapsedRealtime` milliseconds
+- `read <path>` — only the three allowlisted `/proc` paths above; each read bounded to 4096 bytes
+- `env` — `/proc/self/status` (bounded)
+
+Non-allowlist paths return `failed reason=read_denied path=<path>`. Output is bounded to 1024 bytes per command and 65536 bytes per session, with a 10-second timeout and 128 commands per session. Eval is skipped in collect-only mode and is not advertised in hello capabilities. See the [minimal-substrate investigation](../experiments/minimal-substrate/README.md) for the full programme context.
+
 Collect-only makes no action requests and executes no remote commands. Returning to sending mode also resumes queued, previously unconsumed vibration commands after the observation backlog drains. There is no command expiry in this small protocol; consumers should not enqueue time-sensitive physical effects for an offline body. Persisted cursors prevent replay of consumed commands, not execution of new commands queued during an outage.

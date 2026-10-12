@@ -113,4 +113,8 @@ The example rendezvous never prunes silently. Queue-full 507, non-retryable clie
 
 ## Boundaries
 
-No request can evaluate code, open arbitrary URLs, start an intent, access files or issue shell commands. The protocol implements only `vibrate duration=N`, where `1 <= N <= 2000` milliseconds and accepted vibrations are at least three seconds apart. The endpoint is authoritative, not safe: keep its secret private and turn OFF before moving a phone into a sensitive environment.
+The shipped actuator protocol implements only `vibrate duration=N`, where `1 <= N <= 2000` milliseconds and accepted vibrations are at least three seconds apart. No request can open arbitrary URLs, start an intent, or issue shell commands.
+
+Since commit `e69d798` (2026-10-11) a second action kind, `eval`, provides a bounded investigation surface for the minimal-substrate programme. It is not arbitrary code execution: the grammar is a fixed allowlist — `identity` (UID/groups from `/proc/self/status`), `clock` (elapsedRealtime ms), `read <path>` (only `/proc/self/status`, `/proc/self/attr/current`, `/proc/meminfo`, each bounded to 4096 bytes), and `env` (`/proc/self/status`, bounded). Non-allowlist paths return `failed reason=read_denied`. Output is bounded to 1024 bytes per command and 65536 bytes per session, with a 10-second timeout and 128 commands per session. Eval is skipped in collect-only mode and is not advertised in hello capabilities.
+
+The endpoint is authoritative, not safe: keep its secret private and turn OFF before moving a phone into a sensitive environment.

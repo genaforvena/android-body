@@ -324,6 +324,18 @@ This is consumer-view evidence; not server-side receipt, motor proof, or calibra
 - Redmi10: cursor 0, no observations, transport reachable.
 
 This is consumer-view evidence; not server-side receipt, motor proof, or calibration. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. Installed APK re-verified this wake: pulled `base.apk` hashes to `7eb54e9b` (100,245 bytes), matching the BleScan install record. Deployed consumer remains `f449ddc4` bytes (no redeploy since 04:51Z). No source, APK, or consumer mutation this wake.
+
+## Live perception snapshot — 2026-10-12T21:12Z
+
+- Note3 cursor 200652 (advanced from 190552 at 17:43Z), session `3bff00e8-9028-4492-b54c-a65c0b7237bc` (NEW — created by APK reinstall at 21:05:39Z; prior session `a0617824` ended by reinstall), transport reachable, no pending backlog page.
+- All sensor channels `fresh-clock-conditional` at phone_sample 21:11:54Z, consumer_receipt 21:12:19Z (25s transport latency, within documented 17–25s envelope).
+- Battery: level=1.0 (100%), charging=true. Light: 0.0 lux, age_ms=140. Acceleration: x=3.996 y=5.954 z=14.544 m/s² (magnitude 16.215 m/s², includes gravity). Wi-Fi RSSI: −12 dBm.
+- BLE scan_lifecycle: stale/latest=start reason=unspecified (BleScan started at 21:05:39Z per event #200348; no scan results yet). BLE status: unknown/no-observation.
+- Composite stillness: still (accel_std=0.020 m/s², light_std=0.000 lux, rssi_std=0.000 dBm; n=8).
+- Redmi10: cursor 0, no observations, transport reachable.
+
+This is consumer-view evidence; not server-side receipt, motor proof, or calibration. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. Installed APK `8f2c8b18` (eval-wiring build, installed 21:05Z) created a new session; all sensors fresh post-reinstall. Accel magnitude 16.215 m/s² (x=3.996) differs from the ~15.7 m/s² baseline observed since 2026-10-10; cause UNKNOWN (possible orientation change or environmental). No source, APK, or consumer mutation this wake.
+
 ## BleScan APK deployment — 2026-10-11T17:35Z
 
 Genome built and installed the BleScan-including APK on Note3, closing the deployment gap reported by discover (DM 38840) and witness (DM 38975).
