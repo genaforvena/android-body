@@ -407,6 +407,7 @@ public final class BodyService extends Service {
         }
         String identity = command.name + ":" + (command.argument != null ? command.argument : "");
         String hash = Integer.toHexString(identity.hashCode());
+        String canonical = command.name + (command.argument != null ? " " + command.argument : "");
         BoundedEvaluator.Result evalResult = session.evalSession.execute(command, new BoundedEvaluator.Clock() {
             @Override public long elapsedRealtime() { return SystemClock.elapsedRealtime(); }
         });
@@ -417,9 +418,9 @@ public final class BodyService extends Service {
         StringBuilder sb = new StringBuilder();
         sb.append(requested);
         if (evalResult.ok) {
-            sb.append(Protocol.event("action " + actionId + " succeeded kind=eval identity=" + hash + " status=" + evalResult.status + " truncated=" + evalResult.truncated + " output=" + output));
+            sb.append(Protocol.event("action " + actionId + " succeeded kind=eval command=" + canonical + " identity=" + hash + " status=" + evalResult.status + " truncated=" + evalResult.truncated + " output=" + output));
         } else {
-            sb.append(Protocol.event("action " + actionId + " failed kind=eval identity=" + hash + " status=" + evalResult.status + " error=" + evalResult.error));
+            sb.append(Protocol.event("action " + actionId + " failed kind=eval command=" + canonical + " identity=" + hash + " status=" + evalResult.status + " error=" + evalResult.error));
         }
         return sb.toString();
     }
