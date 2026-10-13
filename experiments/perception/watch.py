@@ -1554,7 +1554,7 @@ def main():
     parser.add_argument("--node", action="append", default=[], metavar="NODE:SECRET_ENV_NAME")
     parser.add_argument("--poll-seconds", type=float, default=2)
     parser.add_argument("--timeout", type=float, default=5)
-    parser.add_argument("--stale-seconds", type=float, default=45)
+    parser.add_argument("--stale-seconds", type=float, default=30)
     args = parser.parse_args()
     if not all(math.isfinite(value) and value > 0 for value in
                (args.poll_seconds, args.timeout, args.stale_seconds)):

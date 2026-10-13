@@ -32,7 +32,7 @@ stops it. Only one follower can lock a perception directory. The parent operator
 owns service installation; this script does not modify services or phone settings.
 
 Default polling is one page per node every two seconds, five-second request
-timeout, 45-second freshness window; optional flags are `--poll-seconds`,
+timeout, 30-second freshness window; optional flags are `--poll-seconds`,
 `--timeout`, and `--stale-seconds`. Each cycle is bounded to one 128-record page per
 node so a deep backlog does not monopolize the consumer. Catch-up is deliberately
 bounded rather than instantaneous. State and view updates continue through network
