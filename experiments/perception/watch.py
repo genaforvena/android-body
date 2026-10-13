@@ -1179,7 +1179,7 @@ def render(state, now, stale):
                  ",".join(f"{name}:{state['owner_checkboxes'].get(name, 'unknown')}"
                           for name in OWNER_CHECKBOXES))
     lines.append("raw units: battery level=fraction, light lux=lux, acceleration x/y/z=m/s²; "
-                 "phone clocks are not synchronized; receipt is consumer fetch, not server receipt")
+                 "phone clocks UTC-aligned (<0.2s offset, not NTP-synced); receipt is consumer fetch, not server receipt")
     for kind in SENSORS:
         item = state["latest"].get(kind)
         lines.append(f"{kind} [{sensor_status(item, now, stale)}]: " +
