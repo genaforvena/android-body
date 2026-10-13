@@ -47,6 +47,7 @@ final class BleScan {
         }
         @Override public void onScanFailed(int errorCode) {
             error("scan_failed code=" + errorCode);
+            stopped = true;
         }
     }
 
