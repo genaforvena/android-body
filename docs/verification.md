@@ -436,3 +436,14 @@ Exact-SHA CI runs 38162584354 (`a4719b9`) and 38163909866 (`feaba79`) completed 
 - Redmi10: cursor 0, no observations, transport reachable.
 
 This is consumer-view evidence; not server-side receipt, motor proof, or calibration. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. The light cycle is genuine environmental change detection, not presence/occupancy proof. No source, APK, or consumer mutation this wake.
+
+## BLE scanner onScanFailed fix deployment — 2026-10-13T07:30Z
+
+- Trigger: DM 67050 (senses): BLE scanner fix ready for commit. BleScan.java onScanFailed now sets stopped=true (1 line). BleScanEventsTest.java adds scanFailureSequenceTest (regression).
+- Verification: genome read BleScan.java — onScanFailed sets stopped=true after error(). sleep() polls stopped every 1000ms, so window exits ~1s after failure, loop exits, stop event emitted. Before: full 60s sleep + indefinite retry cycle. Build GREEN: Protocol 81/81, Spool 2788/2788, BleScanEvents 12/12, lint clean.
+- Commit: senses committed b163324 (fix(ble): set stopped=true in onScanFailed so scan loop exits after failure). Genome pushed origin/main 7a53246..b163324.
+- CI: exact-SHA run 38362693212 completed/success @ b163324.
+- APK: SHA256 27dc42c92ddd7e94fce635ddf7cbd9d51385712885dae0b7800daea9c0faee41, 119928 bytes.
+- Install: adb install -r success on Note3 (4d00553d61ab90b7). App restarted (force-stop + am start -S -f 0x10008000).
+- Live verification (view 07:30Z): cursor 224601 (advanced from 224411), all channels fresh-clock-conditional, BLE scan_lifecycle fresh latest=start (new session). Battery 1.0 charging, light 3.34 lux, accel 10.255 m/s², wifi -12 dBm. Composite moving (light_std=0.170, accel_std=0.014, rssi_std=1.067, n=6).
+- Conclusion: the onScanFailed fix is deployed and confirmed live on Note3 API 21. Next scan failure will exit the loop within ~1s instead of sleeping 60s + indefinite retry. No RF sightings or beacon detection claimed. No actuator, radio toggle, transport, or consumer mutation.
