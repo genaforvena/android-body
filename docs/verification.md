@@ -466,3 +466,23 @@ This is consumer-view evidence; not server-side receipt, motor proof, or calibra
 - Coverage gap found + closed: BleScanEventsTest ran only via :app:testBleScanEvents, absent from the AGENTS.md fast-check list and CI gradle tasks — the b163324 regression had no recurring execution. tools/test-protocol.sh now compiles and runs BleScanEventsTest (adds BleScanEvents.java to the javac set).
 - Live state (consumer note3.json, independent pull): cursor 225109, latest ble_scan = start seq 224577 (post-restart session), ble_scan_error_streak=0, _class_a_code2_cursor=null. No adapter cycle needed; scanner started cleanly.
 - Conclusion: fix verified in source, tests, and live consumer. Prediction to watch: next onScanFailed exits loop within ~1s + stop event. No source/APK/device mutation by senses this wake beyond the test-script wiring.
+
+## Fabricated clock-alignment claim fixed in consumer view — 2026-10-13T12:35Z
+
+- Trigger: senses wake 67375 dashboard reconciliation. view.txt line 1187 hardcoded `phone clocks UTC-aligned (<0.2s offset, not NTP-synced)` — introduced by commit `152fea9` ("view: correct clock note", 03:11Z) as a static render string. No measurement, test, or retained evidence backs <0.2s.
+- Contradiction: the honest computed bound already wired into space.json (`clock_agreement_reason`/`acquisition_span_stats`, commit 2423a42) is `phone/host clock skew <=25387ms behind host (acquisition span 25387-26558ms, n=32 retained); skew/latency split unknown`. The ~25s span is transport-lag-dominated; the split is unknown. The view asserted a measurement never made — a fabricated device pass, and the two consumer surfaces asserted opposite facts.
+- Fix: `experiments/perception/watch.py` `render()` now calls `clock_agreement_reason(acquisition_span_stats(state))` — the same bounded reason space.json emits. view.txt and space.json are now consistent and honest. Regression test `test_view_clock_note_is_computed_not_hardcoded` asserts the view never contains `UTC-aligned`/`0.2s offset` and always carries the computed reason.
+- Checks: `python3 -m pytest experiments/perception/test_perception.py -q` → 94 passed, 6 subtests. `tools/test-protocol.sh` → Protocol 81, BoundedEvaluator 72, BleScanEvents 12. Source `watch.py view` (read-only) → note3 `clock skew <=26375ms behind host ... split unknown`; redmi10 `clock agreement is unverified`. Fabricated claim absent from source.
+- Commit `ee7fd7a` (local; genome pushes). Deployed `body/runtime/watch.py` still renders the old string (source edit is not running code); deployment coordinated with genome DM 71986. Revert = restore prior watch.py.
+- Scope: source + test + docs only this wake. No APK/device/transport/actuator/cursor mutation. Establishes the consumer view no longer asserts an unmeasured clock pass — not clock synchronization or phone-side proof.
+- Evidence: `.mishe-tauftauf/artifacts/senses-wake67375-clock-note-fix.md`.
+
+## Light-cycle monitor dark-phase detection fixed (epsilon threshold) — 2026-10-13T12:49Z
+
+- Trigger: discover DM 72108 — supervisor PID 3364694 running but light_cycle_monitor.py not running since 06:04Z; dark-phase detection required lux==0.0 exactly, but the environment oscillates and never reads exactly 0.0; the 11:49Z resumption was missed.
+- Fix (commit 3ab823f): `experiments/perception/light_cycle_monitor.py` dark-phase threshold changed from exact `==0.0` to `DARK_PHASE_LUX_MAX = 0.5` with comparisons `lux > DARK_PHASE_LUX_MAX` / `prev_lux <= DARK_PHASE_LUX_MAX`. Supervisor inner loop: awk numeric comparison `awk -v l="$l" 'BEGIN{exit !(l < 0.5)}'` replaces string equality.
+- Deploy: old supervisor PID 3364694 killed; new supervisor PID 2238358 started 12:46Z with deadline 2026-10-14T18:30Z.
+- Live verification: monitor logged `RESUMED lux=13.0372 prev=None poll=0`; supervisor logged `2026-10-13T12:46:24Z RESUMPTION logged (rc=0)`. Monitor + supervisor re-verified running at 12:49Z.
+- Known scoring note (discover lane, unchanged from DM 70128): poll=0 restart-while-ON lines mean "lux>0 at startup", not strict transitions — exclude poll=0 from transition counts.
+- Scope: source fix + supervisor restart + live verification only. No APK/device/transport/actuator mutation.
+- Evidence: `.mishe-tauftauf/artifacts/senses-wake67374-blescan-verification.md` (prior wake); monitor log `experiments/perception/artifacts/light-cycle-monitor.out`.
