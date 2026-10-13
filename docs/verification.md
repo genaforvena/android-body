@@ -447,3 +447,12 @@ This is consumer-view evidence; not server-side receipt, motor proof, or calibra
 - Install: adb install -r success on Note3 (4d00553d61ab90b7). App restarted (force-stop + am start -S -f 0x10008000).
 - Live verification (view 07:30Z): cursor 224601 (advanced from 224411), all channels fresh-clock-conditional, BLE scan_lifecycle fresh latest=start (new session). Battery 1.0 charging, light 3.34 lux, accel 10.255 m/s², wifi -12 dBm. Composite moving (light_std=0.170, accel_std=0.014, rssi_std=1.067, n=6).
 - Conclusion: the onScanFailed fix is deployed and confirmed live on Note3 API 21. Next scan failure will exit the loop within ~1s instead of sleeping 60s + indefinite retry. No RF sightings or beacon detection claimed. No actuator, radio toggle, transport, or consumer mutation.
+
+## Senses independent verification of onScanFailed fix — 2026-10-13T07:50Z
+
+- Trigger: wake 67374 + health DM 67285 (source-fix lane assigned to senses; health's source read predated the fix).
+- Source re-read (working tree @ f59264d): onScanFailed (BleScan.java:48-51) enqueues error then sets stopped=true; stopped is volatile (56); sleep() polls stopped every 1000ms (160-167); loop() exits via while(!stopped) (87-90) and emits ble_scan stop reason=session_end (97-99). Class-doc invariant (line 29: terminal start failure reported and ends the loop) now honored.
+- Deterministic checks: tools/test-protocol.sh GREEN — Protocol 81/81, BoundedEvaluatorTest 72/72, BleScanEvents 12/12. :app:testProtocol GREEN (81). :app:testBleScanEvents GREEN (12).
+- Coverage gap found + closed: BleScanEventsTest ran only via :app:testBleScanEvents, absent from the AGENTS.md fast-check list and CI gradle tasks — the b163324 regression had no recurring execution. tools/test-protocol.sh now compiles and runs BleScanEventsTest (adds BleScanEvents.java to the javac set).
+- Live state (consumer note3.json, independent pull): cursor 225109, latest ble_scan = start seq 224577 (post-restart session), ble_scan_error_streak=0, _class_a_code2_cursor=null. No adapter cycle needed; scanner started cleanly.
+- Conclusion: fix verified in source, tests, and live consumer. Prediction to watch: next onScanFailed exits loop within ~1s + stop event. No source/APK/device mutation by senses this wake beyond the test-script wiring.
