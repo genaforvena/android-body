@@ -12,6 +12,8 @@ from pathlib import Path
 SPACE_JSON = Path(__file__).resolve().parents[2] / ".mishe-tauftauf" / "body" / "space.json"
 LOG_FILE = Path(__file__).resolve().parent / "artifacts" / "light-cycle-resumed.jsonl"
 
+DARK_PHASE_LUX_MAX = 0.5
+
 
 def read_light_lux():
     """Read current Note3 light lux from deployed space.json. None on error."""
@@ -40,7 +42,8 @@ def main():
         lux = read_light_lux()
         now = time.time()
 
-        if lux is not None and lux > 0 and (prev_lux is None or prev_lux == 0):
+        if (lux is not None and lux > DARK_PHASE_LUX_MAX and
+                (prev_lux is None or prev_lux <= DARK_PHASE_LUX_MAX)):
             record = {
                 "event": "light-cycle-resumed",
                 "lux": lux,
