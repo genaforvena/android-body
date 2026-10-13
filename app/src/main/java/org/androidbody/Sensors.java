@@ -122,6 +122,7 @@ final class Sensors implements SensorEventListener {
         else if (accelerationError != null) body.append(Protocol.event("acceleration unavailable reason=" + accelerationError));
         else if (now < accelerationTime || now - accelerationTime > 15000) body.append(Protocol.event("acceleration unavailable reason=stale"));
         else body.append(sample(accelerationTime, accelerationSensorTimeNs, now, "acceleration x=" + x + " y=" + y + " z=" + z + " accuracy=" + accelerationAccuracy));
+        body.append(Protocol.event(bleStatus()));
         return body.toString();
     }
     private String wifiRssi(long now) {
@@ -135,6 +136,13 @@ final class Sensors implements SensorEventListener {
             return WifiRssi.unavailable("permission_denied", observedAt, now);
         } catch (RuntimeException e) {
             return WifiRssi.unavailable("read_failed", observedAt, now);
+        }
+    }
+    private String bleStatus() {
+        try {
+            return BleStatus.snapshot(context);
+        } catch (RuntimeException e) {
+            return "ble_status source=androidbody_bluetooth_api error=" + e.getClass().getSimpleName();
         }
     }
     private String sample(long time, long sensorTimeNs, long now, String value) {
