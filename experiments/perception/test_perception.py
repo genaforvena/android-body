@@ -450,6 +450,22 @@ class PerceptionTests(unittest.TestCase):
         self.assertIn("to=#3 lux=20.0", transitions[0])
         self.assertEqual(state["last_light_transition"]["to"]["sequence"], 3)
 
+    def test_consecutive_polls_do_not_repeat_transition_while_pair_stays_fresh(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=0 accuracy=3 age_ms=0"], received=1000)
+        watch.update_events(state, 1000, 30)
+        self.page(state, ["1005 light lux=20 accuracy=3 age_ms=0"], received=1005)
+        watch.update_events(state, 1005, 30)
+        # The 0->20 lux pair is still fresh at this poll; it must not be
+        # emitted a second time.
+        self.page(state, ["1010 light lux=21 accuracy=3 age_ms=0"], received=1010)
+        watch.update_events(state, 1010, 30)
+        transitions = [event for event in state["events"]
+                       if "measured-light-bucket-transition" in event]
+        self.assertEqual(len(transitions), 1)
+        self.assertIn("to=#3 lux=20.0", transitions[0])
+
     def test_space_publication_replaces_fast_node_before_later_node_completes(self):
         fast = self.state()
         slow = watch.initial("redmi10", "http://127.0.0.1:8765/node/redmi10")

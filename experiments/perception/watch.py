@@ -1115,6 +1115,11 @@ def new_light_transitions(state, now, stale):
         event = light_bucket_transition(state, previous, current, now, stale)
         if event:
             transitions.append(event)
+    # Advance the watermark past every examined pair: a pair already checked
+    # must not be re-examined (and re-emitted) on later polls while it stays
+    # fresh. Without this the normal branch re-emitted the same transition on
+    # every poll until the older sample went stale.
+    state["last_light_sequence"] = lights[-1]["sequence"]
     state["last_light_event_cursor"] = state["cursor"]
     return transitions
 
