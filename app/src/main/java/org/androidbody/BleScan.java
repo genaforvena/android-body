@@ -33,8 +33,8 @@ final class BleScan {
         void enqueue(String event) throws IOException;
     }
 
-    // API21-30 scanning is covered by the declared BLUETOOTH normal permission
-    // (maxSdkVersion=30). API31+ would require runtime BLUETOOTH_SCAN/BLUETOOTH_CONNECT,
+    // API21-30 scanning requires both BLUETOOTH and BLUETOOTH_ADMIN (declared in
+    // the manifest). API31+ would require runtime BLUETOOTH_SCAN/BLUETOOTH_CONNECT,
     // which this app does not request: a missing permission surfaces as a caught
     // SecurityException and an honest error event, never a crash.
     @android.annotation.TargetApi(21)
