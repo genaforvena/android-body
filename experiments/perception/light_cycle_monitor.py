@@ -43,7 +43,7 @@ def main():
         now = time.time()
 
         if (lux is not None and lux > DARK_PHASE_LUX_MAX and
-                (prev_lux is None or prev_lux <= DARK_PHASE_LUX_MAX)):
+                prev_lux is not None and prev_lux <= DARK_PHASE_LUX_MAX):
             record = {
                 "event": "light-cycle-resumed",
                 "lux": lux,
