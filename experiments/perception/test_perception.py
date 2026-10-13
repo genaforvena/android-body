@@ -83,6 +83,21 @@ class PerceptionTests(unittest.TestCase):
                           "1001 acceleration x=0 y=0 z=10 age_ms=0"], received=1001)
         self.assertIn("acceleration magnitude=10.000 m/s²", watch.render(state, 1001, 30))
 
+    def test_view_clock_note_is_computed_not_hardcoded(self):
+        # Regression: render() must not assert an unmeasured clock-alignment
+        # pass. The view uses the same bounded acquisition-span reason as
+        # space.json; it never hardcodes "UTC-aligned (<0.2s offset".
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"])
+        view = watch.render(state, 1000, 30)
+        self.assertNotIn("UTC-aligned", view)
+        self.assertNotIn("0.2s offset", view)
+        self.assertIn("clock skew <=", view)
+
+        empty = self.state()
+        self.assertIn("clock agreement is unverified", watch.render(empty, 1000, 30))
+
     def test_restart_preserves_cursor_raw_unknowns_and_no_timestamp_wakes(self):
         state = self.state()
         self.page(state, ["1000 battery level=0.5 charging=true future=kept",

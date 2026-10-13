@@ -1183,8 +1183,10 @@ def render(state, now, stale):
                  " owner=" +
                  ",".join(f"{name}:{state['owner_checkboxes'].get(name, 'unknown')}"
                           for name in OWNER_CHECKBOXES))
+    span_stats = acquisition_span_stats(state)
     lines.append("raw units: battery level=fraction, light lux=lux, acceleration x/y/z=m/s²; "
-                 "phone clocks UTC-aligned (<0.2s offset, not NTP-synced); receipt is consumer fetch, not server receipt")
+                 + clock_agreement_reason(span_stats) +
+                 "; receipt is consumer fetch, not server receipt")
     for kind in SENSORS:
         item = state["latest"].get(kind)
         lines.append(f"{kind} [{sensor_status(item, now, stale)}]: " +
