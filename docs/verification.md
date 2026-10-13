@@ -1,14 +1,14 @@
 # Verification record
 
-Checked 2026-10-07; updated through 2026-10-12. Version 0.2 adds persistent ON and durable collect/upload-later behavior. Host/build evidence is separate from Android runtime and physical-device evidence.
+Checked 2026-10-07; updated through 2026-10-13. Version 0.2 adds persistent ON and durable collect/upload-later behavior. Host/build evidence is separate from Android runtime and physical-device evidence.
 
 ## Built artifact
 
 - Application: `org.androidbody`, version `0.2.0` (code 2)
 - Build: debug APK, Java source 8, JDK 17, Gradle 8.11.1, Android Gradle Plugin 8.10.1
 - Compile/target SDK 36, minimum SDK 18
-- Published APK (installed on Note3): 104,612 bytes, SHA-256 `8f2c8b18b7339466695eebef23e3e804104f0379b7c51668e97261ac97d66ced` (eval-wiring build installed 2026-10-12T21:05Z; prior installed APK was 100,245 bytes, SHA-256 `7eb54e9b682c0d3211b46f2f5d67ef8cd2fbc955c6c9cbeef73f03215335b1f4`, lastUpdateTime 2026-10-11T20:34:29Z; prior prior 88,103 bytes, SHA-256 `417719c5811ca0acf9546577b8ef54bd80e212d18a5acfa28fe139203d8a261b`)
-- Current on-disk build (`app/build/outputs/apk/debug/app-debug.apk`, built 2026-10-12T01:53Z): 104,612 bytes, SHA-256 `8f2c8b18b7339466695eebef23e3e804104f0379b7c51668e97261ac97d66ced` — installed on Note3 since 2026-10-12T21:05Z, installed bytes verified identical to this build
+- Published APK (installed on Note3): 66,527 bytes, SHA-256 `6fec5174de12dba642ba944fecb6d5cd88038e2f89cf1acd6fbea4700fc8e4dd` (BleScan-crash-fix build; activation verified 2026-10-13T02:10:00Z; prior installed APK was 104,612 bytes, SHA-256 `8f2c8b18b7339466695eebef23e3e804104f0379b7c51668e97261ac97d66ced`, eval-wiring build installed 2026-10-12T21:05Z; prior prior 100,245 bytes, SHA-256 `7eb54e9b682c0d3211b46f2f5d67ef8cd2fbc955c6c9cbeef73f03215335b1f4`, lastUpdateTime 2026-10-11T20:34:29Z; prior prior prior 88,103 bytes, SHA-256 `417719c5811ca0acf9546577b8ef54bd80e212d18a5acfa28fe139203d8a261b`)
+- Current on-disk build (`app/build/outputs/apk/debug/app-debug.apk`): 66,527 bytes, SHA-256 `6fec5174de12dba642ba944fecb6d5cd88038e2f89cf1acd6fbea4700fc8e4dd` — installed on Note3, activation verified 2026-10-13T02:10:00Z
 - `apksigner verify --verbose`: PASS, v1 and v2 signatures verified
 - `aapt dump badging`: confirms version 2, minimum 18, target 36 and the intended permissions, including boot completion
 
@@ -392,6 +392,16 @@ Exact-SHA CI runs 38162584354 (`a4719b9`) and 38163909866 (`feaba79`) completed 
 - Scope: read-only verification + docs-scoped README fix. No push, no source/tests/device/transport mutation. The README fix is uncommitted working-tree docs pending genome's push lane.
 - Evidence: `.mishe-tauftauf/artifacts/docs-wake56997-freshness-fields.md`.
 - Post-change check: `python3 -m unittest discover -s experiments/perception` → 87/87 OK at af28904 (README-only edit; suite re-run after change).
-## Note3 freeze #6 — 2026-10-12T21:26Z (ONGOING)
+## Note3 freeze #6 resolution — 2026-10-13T02:17Z
 
-- 2026-10-12T21:26:28Z–ONGOING: **freeze #6** — cursor 201367 frozen since 21:26:28Z host time. All channels stale (battery 1.0/charging, light 0.0 lux, accel magnitude ~15.8 m/s², Wi-Fi RSSI −12 dBm). Session `ff56354e-6633-4e92-ac0d-4680a1e47ede` active since 21:20:42Z. Transport reachable. Redmi10 still cursor 0. Senses DM 58436 called it "freeze #5" (numbering discrepancy; freeze #5 resolved 2026-10-12T01:27:36Z). Duration ~1h50m as of 23:16Z. Status: ONGOING.
+- 2026-10-12T21:26:28Z–2026-10-13T00:16:05Z phone time (~2h50m): **freeze #6** — cursor 201367 frozen since 21:26:28Z host time. All channels stale (battery 1.0/charging, light 0.0 lux, accel magnitude ~15.8 m/s², Wi-Fi RSSI −12 dBm). Session `ff56354e-6633-4e92-ac0d-4680a1e47ede` active since 21:20:42Z. Transport reachable. Redmi10 still cursor 0. Senses DM 58436 called it "freeze #5" (numbering discrepancy; freeze #5 resolved 2026-10-12T01:27:36Z). Duration ~1h50m as of 23:16Z.
+- **RESOLVED** by app restart: new session `f8bddad5-a52e-4151-8de1-70a1e9bc6327` at phone time 00:16:05Z (events #204663–204671). Health recovered the system 22:00–23:05Z (crash: IllegalStateException Spool is closed at BleScan.loop; app restart + tunnel repair). Observations resumed at cursor 210413+ (ble_scan error at 02:15:03Z). Deployed `watch.py view` at 02:17:13Z verified live Note3 data:
+  - Cursor 210497 (advanced from frozen 201367), session `f8bddad5-a52e-4151-8de1-70a1e9bc6327`, transport reachable, no pending backlog page.
+  - All sensor channels `fresh-clock-conditional` at phone_sample 02:16:46Z, consumer_receipt 02:17:13Z.
+  - Battery: level=1.0 (100%), charging=true. Light: 4.6966 lux, age_ms=59. Acceleration: x=1.182 y=0.585 z=10.150 m/s² (magnitude 10.236 m/s², includes gravity). Wi-Fi RSSI: −12 dBm.
+  - Composite stillness: still (accel_std=0.019 m/s² n=8, light_std=0.004 lux n=8, rssi_std=0.433 dBm n=8).
+  - BLE scan_lifecycle: stale/latest=error reason=scan_failed (code=2 at 02:15:03Z, event #210413). consecutive_errors=33.
+  - Action receipts: #204677–204684 (eval probes: env, identity, read /proc/self/attr/current) at 00:16:06–08Z phone time. All succeeded or read_denied. No vibration.
+  - Freeze duration: ~2h50m onset-to-new-session (00:16:05Z Oct 13 phone time), ~4h50m onset-to-first-sensor-observation (02:16:46Z). Freeze #6 (~2h50m) is shorter than freeze #4 (~6h36m) and freeze #5 (~4h01m); it is the third-longest recorded freeze.
+  - Redmi10: cursor 0, no observations, transport reachable.
+- This is consumer-view evidence of resumed sensing after freeze #6. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. No source, APK, or consumer mutation this wake.

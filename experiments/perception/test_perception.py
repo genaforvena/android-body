@@ -75,9 +75,10 @@ class PerceptionTests(unittest.TestCase):
         self.assertIn("delayed_at_receipt=true", watch.render(state, 1000, 30))
         self.page(state, [], more=False)
         # Node responded to the poll: receipt is recent, node label is fresh.
-        # Sensor data is old: acceleration reports stale separately.
+        # Freshness uses receipt time, so acceleration is fresh (received at 1000).
+        # The old phone event time is captured by delayed_at_receipt=true above.
         self.assertIn("fresh-clock-conditional", watch.render(state, 1000, 30))
-        self.assertIn("acceleration [stale]", watch.render(state, 1000, 30))
+        self.assertIn("acceleration [fresh-clock-conditional]", watch.render(state, 1000, 30))
         self.page(state, ["1001 battery level=0.5 charging=true",
                           "1001 acceleration x=0 y=0 z=10 age_ms=0"], received=1001)
         self.assertIn("acceleration magnitude=10.000 m/s²", watch.render(state, 1001, 30))
@@ -269,7 +270,7 @@ class PerceptionTests(unittest.TestCase):
                          (state["source"], "s1", 2))
         self.assertEqual(node["light"]["status"], "fresh-clock-conditional")
         self.assertEqual(node["light"]["freshness_basis"],
-                         "phone event time and age_ms compared with host clock")
+                         "host receipt time; phone event time and age_ms retained for provenance")
         self.assertEqual(node["light"]["lux"], 12.5)
         self.assertEqual(node["light"]["units"], "lux")
         self.assertEqual(node["light"]["sequence"], 2)
@@ -486,9 +487,13 @@ class PerceptionTests(unittest.TestCase):
 
     def test_future_clock_and_sensor_age_do_not_license_derived_sense(self):
         state = self.state()
+        # Phone event time 1100 (future), consumer receipt 1000.
+        # Freshness uses receipt time, so a future phone clock does not
+        # produce unknown-clock-future. The data is fresh (received at 1000).
         self.page(state, ["1100 acceleration x=0 y=0 z=10 age_ms=0"])
-        self.assertIn("unknown-clock-future", watch.render(state, 1000, 30))
-        self.assertNotIn("magnitude=10.000", watch.render(state, 1000, 30))
+        self.assertIn("fresh-clock-conditional", watch.render(state, 1000, 30))
+        self.assertIn("magnitude=10.000", watch.render(state, 1000, 30))
+        # But a large age_ms (phone's own measurement) still prevents magnitude.
         self.page(state, ["1000 acceleration x=0 y=0 z=10 age_ms=60000"])
         self.assertNotIn("magnitude=10.000", watch.render(state, 1000, 30))
 
@@ -814,23 +819,49 @@ class PerceptionTests(unittest.TestCase):
     def test_node_status_uses_receipt_time_not_phone_event_time(self):
         """Clock skew and transport lag must not pin the node label stale.
 
-        The phone clock is ~24s behind the host. Sensor-level freshness uses
-        the phone event time and correctly reports fresh (24s < 30s threshold).
-        The node label must use the consumer receipt time for the same reason:
-        liveness is the consumer's observation of when it last heard from the
-        node, not the phone's claim of when it collected the sample.
+        The phone clock is ~24s behind the host. Freshness uses the consumer
+        receipt time (not phone event time), so age is 0s regardless of skew.
+        The node label uses the same receipt-time basis: liveness is the
+        consumer's observation of when it last heard from the node.
         """
         stale = 30
         state = self.state()
         # Phone event time 976, consumer receipt 1000: 24s clock skew + lag.
         self.page(state, ["976 battery level=0.5 charging=true"], received=1000)
-        # Sensor-level freshness uses phone event time: 1000-976=24 < 30, fresh.
+        # Freshness uses receipt time: 1000-1000=0 < 30, fresh.
         self.assertEqual(watch.sensor_status(state["latest"]["battery"], 1000, stale),
                          "fresh-clock-conditional")
         # Simulate the stuck stale label from prior skew-limited hysteresis.
         state["node_status"] = "stale/phone-silent-or-delayed"
         # One second after receipt: receipt-age is 1s, below the 20s exit margin.
         self.assertEqual(watch.node_status(state, 1001, stale), "fresh-clock-conditional")
+
+    def test_freshness_uses_receipt_time_not_phone_collection_time(self):
+        """Regression: phone clock ~27.5s behind host must not consume freshness budget.
+
+        Discovered 2026-10-13 (DM 61787): phone clock is ~27.5s behind host
+        (constant offset, stdev 0.7s). freshness() previously used
+        now - collected (host-minus-phone), so 27.5s skew consumed 92% of
+        the 30s budget, leaving ~2.5s for jitter. This froze composite
+        stillness and blocked light transitions (milestone-5 blockers).
+
+        Fix: freshness() uses now - received (host receipt time), so clock
+        skew does not affect freshness. Age measures transport + processing
+        only (~0.7s actual latency).
+        """
+        stale = 30
+        state = self.state()
+        # Phone event time 965, consumer receipt 1000: 35s clock skew.
+        # With old code: age = 1000 - 965 = 35 > 30 → stale (BUG).
+        # With fix: age = 1000 - 1000 = 0 < 30 → fresh-clock-conditional.
+        self.page(state, ["965 battery level=0.5 charging=true"], received=1000)
+        self.assertEqual(watch.sensor_status(state["latest"]["battery"], 1000, stale),
+                         "fresh-clock-conditional")
+        # Also verify wifi_rssi_status uses the same receipt-time basis.
+        self.page(state, ["965 wifi_link_rssi_dbm=-57 source=androidbody_wifi_api"],
+                 received=1000)
+        self.assertEqual(watch.wifi_rssi_status(state["latest"]["wifi_link_rssi_dbm"], 1000, stale),
+                         "fresh-clock-conditional")
 
     def test_render_uses_stored_node_status_not_render_time_recompute(self):
         """Render-time now can be 20-30s after poll due to slow multi-node polling.

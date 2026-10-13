@@ -710,9 +710,9 @@ def detect_class_c_stop(state, log_dir):
 
 
 def freshness(item, now, stale):
-    if item is None or item["collected"] is None:
+    if item is None or item["received"] is None:
         return "unknown"
-    age = now - item["collected"]
+    age = now - item["received"]
     if age < -5:
         return "unknown-clock-future"
     if age > stale:
@@ -1365,7 +1365,7 @@ def space_snapshot(states, now, stale):
                                   ("no-light-observation" if item is None else
                                    status if status != "fresh-clock-conditional" else
                                    clock_agreement_reason(span_stats))),
-                "freshness_basis": "phone event time and age_ms compared with host clock",
+                "freshness_basis": "host receipt time; phone event time and age_ms retained for provenance",
                 "validity_seconds": stale,
                 "sequence": item["sequence"] if item else None,
                 "lux": number(fields, "lux") if status == "fresh-clock-conditional" else None,
