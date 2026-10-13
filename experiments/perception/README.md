@@ -183,19 +183,20 @@ the next qualifying occurrence.
 
 ## Freshness and honest limits
 
-- `fresh-clock-conditional` means the phone timestamp is within the configured
-  window and no known sample-age constraint disqualifies it. Phone/host clocks are
-  not synchronized by this consumer. More than five seconds future-dated is unknown,
-  not fresh. Ordinary clock skew can make good samples unusable.
+- `fresh-clock-conditional` means the record's **host receipt time** is within the
+  configured window: age = `now - received`, not `now - collected`. Phone/host
+  clocks are not synchronized by this consumer, but clock skew does not consume
+  this budget — the age measures transport and processing latency, not the phone
+  offset. More than five seconds future-dated is unknown, not fresh. Phone event
+  time and `age_ms` are retained for provenance, not used for this verdict.
 - `real_age_upper_bound_ms` — conservative upper bound on the sample's real age
   at the host: current `acquisition_span_ms` minus the minimum span in the
   retained window (the minimum approximates fixed transport lag). Null without
   span history.
-- `is_fresh_at_host` — `real_age_upper_bound_ms / 1000 < validity_seconds`. The
-  Note3 clock has been observed roughly 25 s behind the host, so raw
-  `now − phone_time` spans approach or exceed the validity window under jitter
-  and yield false stale verdicts; this verdict uses the skew-corrected age
-  instead. Null when the bound is unknown.
+- `is_fresh_at_host` — `real_age_upper_bound_ms / 1000 < validity_seconds`. A
+  skew-corrected upper bound on the sample's real age, distinct from the
+  receipt-time base: even a freshly received record may hold an older sample, and
+  this verdict bounds that. Null when the bound is unknown.
 - The light/acceleration wire timestamp is the approximate **sensor sample time**,
   not necessarily the five-second snapshot collection time. `age_ms` is sample age
   at collection; it excludes queue residence. Do not add it to `now - phone_time`
