@@ -142,7 +142,9 @@ fi
 # not a frozen release -- is what publishes within 60s. Compare the live bytes
 # with HEAD: an uncommitted or half-applied edit is otherwise invisible until
 # the consumer misreads the document it produces. `git status` rather than
-# `git diff HEAD` because diff reports an untracked file as unchanged.
+# `git diff HEAD` because diff reports an untracked file as unchanged; a
+# skip-worktree/assume-unchanged bit hides even from status, so the index
+# flags are checked too.
 if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
   if NS_DIRTY=$(git status --porcelain --untracked-files=all -- tools/node_state.py tools/device_state.py 2>/dev/null); then
     if [ -z "$NS_DIRTY" ]; then
@@ -152,6 +154,9 @@ if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; th
     fi
   else
     echo "UNKNOWN node-state publisher bytes (git status failed)"
+  fi
+  if NS_BITS=$(git ls-files -v -- tools/node_state.py tools/device_state.py 2>/dev/null | awk '$1 != "H"'); then
+    fail "node-state publisher bytes carry an assume-unchanged/skip-worktree bit (invisible to git status)"
   fi
 else
   echo "UNKNOWN node-state publisher bytes (git unavailable)"
