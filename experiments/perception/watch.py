@@ -900,7 +900,11 @@ def _read_json_file(path):
 
 
 def _last_monitor_row(path, limit=MONITOR_LOG_TAIL_BYTES):
-    """Last complete detector row, or None. Reads only a bounded tail."""
+    """Last complete detector row, or None. Reads only a bounded tail.
+
+    A partial or unparseable line (crash mid-append, or the tail read starting mid-line)
+    is skipped rather than reported as "no row", so an earlier complete row is still read.
+    """
     try:
         with open(path, "rb") as stream:
             stream.seek(0, os.SEEK_END)
@@ -909,12 +913,13 @@ def _last_monitor_row(path, limit=MONITOR_LOG_TAIL_BYTES):
     except OSError:
         return None
     for line in reversed(chunk.split(b"\n")):
-        if line.strip():
-            try:
-                row = json.loads(line)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                return None
-            return row if isinstance(row, dict) else None
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        return row if isinstance(row, dict) else None
     return None
 
 
@@ -949,9 +954,10 @@ def light_resumption_view(now, stale, compact=False):
         age = None
         status = "unknown/no-monitor-heartbeat"
     if compact:
+        # No per-poll age here: the compact view caches to events.txt and must not churn
+        # every poll the way view.txt does.
         return (f"light-resumption-detector status={status} "
                 f"armed={state.get('armed') if have_heartbeat else None} "
-                f"heartbeat_age={'-' if age is None else format(age, '.0f') + 's'} "
                 f"last_row={_monitor_row_text(row)}")
     lines = ["Light-cycle resumption detector (host-side bounded monitor over the Note3 "
              "light channel; no phone, transport or actuator effect):",

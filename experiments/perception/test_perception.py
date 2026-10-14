@@ -1829,6 +1829,49 @@ class PerceptionTests(unittest.TestCase):
         self.assertIn("Light-cycle resumption detector", view)
         self.assertIn("status=fresh-clock-conditional", view)
         self.assertIn("light-resumption-detector status=fresh-clock-conditional", compact)
+        # The compact view is cached to events.txt; a per-poll age would rewrite it every poll.
+        self.assertNotIn("heartbeat_age", compact)
+
+
+    def test_last_monitor_row_survives_a_truncated_final_line(self):
+        # A crash mid-append must not turn earlier complete rows into "no row".
+        with tempfile.TemporaryDirectory() as folder:
+            log_file = Path(folder) / "light-cycle-resumed.jsonl"
+            log_file.write_text(json.dumps({
+                "event": "light-cycle-resumed", "lux": 11.4, "prev_lux": 0.2,
+                "prev_observed_unix": 960.0, "threshold_lux": 7.0, "poll": 7,
+                "timestamp_unix": 990.0}) + "\n" + '{"event": "light-cycle-resum')
+            with patch.object(watch, "MONITOR_STATE_FILE", Path(folder) / "absent.json"), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                view = watch.light_resumption_view(1000, 30)
+        self.assertIn("last_row=lux=11.4 prev_lux=0.2 threshold_lux=7.0 poll=7 "
+                      "prev_observed_gap=30s", view)
+        self.assertNotIn("last_row=none", view)
+
+    def test_last_monitor_row_reports_none_when_no_line_is_complete(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log_file = Path(folder) / "light-cycle-resumed.jsonl"
+            log_file.write_text('{"event": "light-cycle-resum')
+            with patch.object(watch, "MONITOR_STATE_FILE", Path(folder) / "absent.json"), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                view = watch.light_resumption_view(1000, 30)
+        self.assertIn("last_row=none", view)
+
+    def test_last_monitor_row_reads_past_the_bounded_tail_start(self):
+        # The tail read starts mid-line on a large log; the last complete row must survive.
+        with tempfile.TemporaryDirectory() as folder:
+            log_file = Path(folder) / "light-cycle-resumed.jsonl"
+            rows = [json.dumps({"event": "light-cycle-resumed", "lux": 8.0 + index,
+                                "prev_lux": 0.2, "prev_observed_unix": 900.0 + index,
+                                "threshold_lux": 7.0, "poll": index,
+                                "timestamp_unix": 930.0 + index})
+                    for index in range(60)]
+            log_file.write_text("\n".join(rows) + "\n")
+            self.assertGreater(log_file.stat().st_size, watch.MONITOR_LOG_TAIL_BYTES)
+            with patch.object(watch, "MONITOR_STATE_FILE", Path(folder) / "absent.json"), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                view = watch.light_resumption_view(1000, 30)
+        self.assertIn("last_row=lux=67.0 prev_lux=0.2 threshold_lux=7.0 poll=59", view)
 
 if __name__ == "__main__":
     unittest.main()
