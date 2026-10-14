@@ -485,3 +485,14 @@ This is consumer-view evidence; not server-side receipt, motor proof, or calibra
 - Known scoring note (discover lane, unchanged from DM 70128): poll=0 restart-while-ON lines mean "lux>0 at startup", not strict transitions — exclude poll=0 from transition counts.
 - Scope: source fix + supervisor restart + live verification only. No APK/device/transport/actuator mutation.
 - Evidence: `.mishe-tauftauf/artifacts/senses-wake67374-blescan-verification.md` (prior wake); monitor log `experiments/perception/artifacts/light-cycle-monitor.out`.
+
+## Host reboot recovery — 2026-10-14T06:05Z
+
+- Host reboot between 2026-10-13T15:04:27Z (perception stopped) and 2026-10-14T05:57:33Z (perception started), ~15h downtime. Boot ID `dc933ac0fa854c4b81a85934ee72bbe5`.
+- All 16 android-body* systemd units auto-restarted (Restart=on-failure). No service failures.
+- Note3 (separate device) survived; app PID confirmed via adb. Perception service reconnected and drained phone spool backlog (accumulated during gap) from 05:58:48Z to 06:02:48Z (~4min), then fresh-clock-conditional.
+- No data loss: durable spool preserved all phone-generated records during host downtime; backlog drained completely.
+- Installed APK confirmed: SHA-256 `a5cc750ecb5876e5f7a5cdc71bdff8a6772e6f99373489c367732b34a11cf468` (pulled from `/data/app/org.androidbody-2/base.apk`, byte-identical to local build a5cc750e, postdates BleScan fix b163324). Dashboard APK SHA256 `27dc42c92…` is the prior install (BleStatus-wiring predecessor), not current.
+- Redmi10: NOT_CONNECTED (unchanged, human-gated).
+- Scope: read-only diagnosis + APK hash verification. No source/APK/device/transport/actuator mutation.
+- Evidence: `.mishe-tauftauf/walls/health.md` (wake 73914).
