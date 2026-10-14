@@ -173,12 +173,12 @@ constant stream is zero regardless of baseline. Absolute-magnitude thresholds
 (e.g. "still if |a| < 11") would be unsound on this device in its current state
 and are not deployed.
 
-## Class-B stop detection
+## Class-B delivery-gap detection
 
-The consumer detects a class-B stop: a cursor freeze or session change with two or
+The consumer detects a class-B delivery gap: a cursor freeze or session change with two or
 more consecutive null-lux (`0.0` lux) reads. A detection fires only when the
 cursor/session pair has not already triggered one, and appends a bounded record to
-`SITE/body/perception/class-b-detectors.jsonl` (last 128 lines, atomically
+`SITE/body/perception/class-b-delivery-gap-detectors.jsonl` (last 128 lines, atomically
 replaced). The record includes the trigger type (`cursor-freeze` or
 `session-change`), the consecutive null-lux count, the frozen cursor, and the
 session. A freeze without null-lux reads is not class-B; the detector is armed for
