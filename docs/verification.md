@@ -473,17 +473,23 @@ This is consumer-view evidence; not server-side receipt, motor proof, or calibra
   transition" label in `discover-wake70077-light-detector-timeline.md`.
 - Fix: `DARK_PHASE_LUX_MAX = 0.5` -> `RESUME_LUX_MIN = 7.0` (`floor(log2(1+lux)) >= 3`, the
   consumer's own coarse-bucket boundary), predicate `lux >= RESUME_LUX_MIN and prev_lux is not
-  None and prev_lux < RESUME_LUX_MIN`; the log record now carries `threshold_lux`.
-- Checks: `python3 -m unittest discover -s experiments/perception` -> 104 tests OK (101 baseline
-  + 3 added; 4 boundary tests updated). Replay of the archived `light-cycle-resumed.jsonl`
+  None and prev_lux < RESUME_LUX_MIN`; the log record now carries `threshold_lux` and
+  `prev_observed_unix`.
+- Checks: `python3 -m unittest discover -s experiments/perception` -> 105 tests OK (101 baseline
+  + 4 added; 4 boundary tests updated). Replay of the archived `light-cycle-resumed.jsonl`
   entries: the two entries the old rule fires on (1.3224/1.2758 with prev 0.0) no longer fire.
-- Deploy/activation: `body/runtime/light_cycle_monitor.py` sha256 `fbd2da9c…` (differs from
-  source `bcd0b87e…` only by the documented `SPACE_JSON` path line and deploy note); service
-  restarted 07:49:40Z, Main PID 799861, `--interval 30 --max-polls 3300` (runs past the 18:00Z
-  gate); log unchanged, no false event. Revert = `light_cycle_monitor.py.pre-deploy-20261014-0749Z`
-  + restart.
-- Known limitation: a resumption spanning a phone-silence gap, or a genuinely dim (2-6 lux)
-  resumption, is not claimed — it stays UNKNOWN rather than inferred.
+  Independent read-only review (reviewer subagent) reproduced the counts and found one
+  documentation defect, fixed in `e54e0db`: the docstring claimed a phone-silence gap suppresses
+  the resumption, but the baseline is not aged, so a gap is spanned within a run and the event
+  now exposes it via `prev_observed_unix`.
+- Deploy/activation: `body/runtime/light_cycle_monitor.py` sha256 `96abef81…` (differs from
+  source `57a57f81…` only by the documented `SPACE_JSON` path line and deploy note); service
+  restarted 07:49:40Z and again after `e54e0db`, Main PID 907769, `--interval 30 --max-polls 3300`
+  (runs past the 18:00Z gate); log unchanged, no false event. Revert =
+  `light_cycle_monitor.py.pre-deploy-20261014-0749Z` + restart.
+- Known limitation: a genuinely dim (2-6 lux) resumption is not claimed — indistinguishable from
+  the dim band at one poll. A resumption observed across a phone-silence gap is claimed, with the
+  gap visible in `prev_observed_unix` (transition bounded by the gap, not measured inside it).
 - Scope: perception source + test + deployed host-side monitor + service restart. No APK,
   device, transport, actuator or cursor mutation.
 - Evidence: `.mishe-tauftauf/artifacts/senses-wake74526-light-resumption-threshold-fix.md`.

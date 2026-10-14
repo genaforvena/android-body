@@ -97,5 +97,12 @@ class TestLightCycleMonitor(unittest.TestCase):
         self.assertEqual(entries[0]["threshold_lux"], 7.0)
 
 
+    def test_record_carries_previous_observation_time(self):
+        """The event exposes when the dim baseline was read, so a gap is visible."""
+        ret, entries = self._run_monitor([0.1, None, 9.0])
+        self.assertEqual(len(entries), 1)
+        self.assertIn("prev_observed_unix", entries[0])
+        self.assertLessEqual(entries[0]["prev_observed_unix"], entries[0]["timestamp_unix"])
+
 if __name__ == "__main__":
     unittest.main()

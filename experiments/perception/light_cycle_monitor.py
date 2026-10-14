@@ -8,9 +8,13 @@ The channel is not binary. In dim/dark conditions the Note3 light sensor
 oscillates between 0.0 and ~1.3 lux on a seconds timescale (751 sub-5-lux
 coarse-bucket transitions in the consumer's retained history, 2026-10-07..13).
 A "lux > 0" rule therefore fires on that oscillation, not on a light cycle.
-Resumption here means a fresh dim reading followed by a fresh clearly-lit
-reading (RESUME_LUX_MIN); a rise spanning a phone-silence gap is not claimed,
-matching the consumer's session/backlog boundary rule.
+A resumption is claimed when the last fresh reading this run was below
+RESUME_LUX_MIN and the current fresh reading is at or above it. Only fresh
+readings update that baseline, so stale/unreadable polls are skipped, but the
+gap is not bounded: the record carries prev_observed_unix so the interval
+between the two observations is visible, and the transition is bounded by that
+interval rather than measured. A service restart clears the baseline, so a
+resumption whose dim reading was never observed is not claimed.
 """
 import argparse
 import json
@@ -48,6 +52,7 @@ def main():
 
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     prev_lux = None
+    prev_observed = None
 
     for poll in range(args.max_polls):
         lux = read_light_lux()
@@ -59,6 +64,7 @@ def main():
                 "event": "light-cycle-resumed",
                 "lux": lux,
                 "prev_lux": prev_lux,
+                "prev_observed_unix": prev_observed,
                 "threshold_lux": RESUME_LUX_MIN,
                 "poll": poll,
                 "timestamp_unix": now,
@@ -70,6 +76,7 @@ def main():
 
         if lux is not None:
             prev_lux = lux
+            prev_observed = now
 
         time.sleep(args.interval)
 
