@@ -62,6 +62,9 @@ METHOD = "adb-run-as-grep-counts"
 STATUSES = frozenset({"ok", "unavailable"})
 MAX_REASON_CHARS = 200
 
+#: BRE matching a spool row's leading 10-digit epoch; sent to device grep as-is.
+ROW_EPOCH_BRE = r"[0-9]\{10\}"
+
 #: Allowlisted protocol record kinds (verified from spool snapshot 2026-10-14T13:10Z).
 ALLOWED_KINDS = frozenset({
     "battery", "light", "acceleration", "ble_status", "wifi_link_rssi",
@@ -72,13 +75,15 @@ ALLOWED_KINDS = frozenset({
 #: Kinds counted but not sensor-data (protocol/control kinds).
 NON_SENSOR_KINDS = frozenset({"cap", "hello", "android", "owner_checkboxes", "probe", "action"})
 
-#: Light magnitude buckets (lux ranges).
+#: Light magnitude buckets (lux ranges). Each pattern is the exact BRE string
+#: sent to the device's ``grep -a -c``: toybox grep is BRE by default, so
+#: intervals must be brace-escaped (``\{3,\}``), like the epoch pattern above.
 LIGHT_BUCKETS = (
-    ("dark_exact", re.compile(r"lux=0\.0")),
-    ("dim_0_9", re.compile(r"lux=[0-9]\.[0-9]")),
-    ("moderate_10_99", re.compile(r"lux=[1-9][0-9]\.[0-9]")),
-    ("bright_100_999", re.compile(r"lux=[1-9][0-9][0-9]\.[0-9]")),
-    ("very_bright_1000_plus", re.compile(r"lux=[1-9][0-9]{3,}")),
+    ("dark_exact", r"lux=0\.0"),
+    ("dim_0_9", r"lux=[0-9]\.[0-9]"),
+    ("moderate_10_99", r"lux=[1-9][0-9]\.[0-9]"),
+    ("bright_100_999", r"lux=[1-9][0-9][0-9]\.[0-9]"),
+    ("very_bright_1000_plus", r"lux=[1-9][0-9]\{3,\}"),
 )
 
 #: Pattern to extract the spool path from run-as ls output.
@@ -144,10 +149,19 @@ def _find_spool_dir(argv, serial, timeout):
 
 
 def _count_kind(argv, serial, spool_path, kind, timeout):
-    """Count rows of one kind in the spool via grep -a -c."""
+    """Count rows of one kind in the spool via grep -a -c.
+
+    Rows are ``<epoch> <kind> <fields>``; the pattern matches the row's
+    10-digit epoch followed by the kind, so only rows of exactly that kind
+    are counted. A bare-substring count also matches rows that merely
+    mention the kind — ``source=androidbody_wifi_api`` made ``android``
+    count wifi and bluetooth rows. The epoch anchor also tolerates the
+    app's varying kind/field separator (space or glued underscore) and the
+    binary row prefix, which defeats a line-start ``^`` anchor.
+    """
     try:
         output = _run(argv, serial,
-                      f"run-as org.androidbody grep -a -c '{kind}' {spool_path}",
+                      f"run-as org.androidbody grep -a -c '{ROW_EPOCH_BRE} {kind}' {spool_path}",
                       timeout)
         return _parse_int(output, f"grep-count-{kind}")
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:
@@ -200,7 +214,7 @@ def _retention_window(argv, serial, spool_path, timeout):
 
     Returns ``(oldest_epoch_host, newest_epoch_host, window_seconds)`` or raises.
     """
-    ts_pattern = r"[0-9]\{10\}"
+    ts_pattern = ROW_EPOCH_BRE
     try:
         out = _run(argv, serial,
                    f"run-as org.androidbody grep -a -o '{ts_pattern}' {spool_path}",
@@ -339,7 +353,7 @@ def run_once(args):
         light_buckets = {}
         for bucket_name, pattern in LIGHT_BUCKETS:
             light_buckets[bucket_name] = _count_light_bucket(
-                argv, args.serial, spool_path, pattern.pattern, args.timeout)
+                argv, args.serial, spool_path, pattern, args.timeout)
         spool_bytes = _spool_size(argv, args.serial, spool_path, args.timeout)
         oldest, newest, window = _retention_window(
             argv, args.serial, spool_path, args.timeout)

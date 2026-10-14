@@ -7,6 +7,6 @@ Wants=android-body-usb.service
 Type=oneshot
 WorkingDirectory=/home/mesh-home/android-body
 Environment=PATH=/home/mesh-home/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/bin/python3 /home/mesh-home/android-body/tools/spool_read.py --site /home/mesh-home/android-body/.mishe-tauftauf --serial 4d00553d61ab90b7 --label note3 --adb "rtk proxy adb"
+ExecStart=/usr/bin/python3 /home/mesh-home/android-body/.mishe-tauftauf/body/runtime/spool_read.py --site /home/mesh-home/android-body/.mishe-tauftauf --serial 4d00553d61ab90b7 --label note3 --adb "rtk proxy adb"
 UMask=0077
 NoNewPrivileges=true

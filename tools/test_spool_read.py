@@ -13,6 +13,7 @@ allowlisted set.
 
 import json
 import os
+import re
 import stat
 import tempfile
 import unittest
@@ -314,9 +315,16 @@ class LightBucketRegexTests(unittest.TestCase):
     """Light bucket regex patterns match expected lux values."""
 
     def _match_bucket(self, lux_str):
-        """Return the first bucket name whose pattern matches lux_str."""
-        for name, pattern in spool_read.LIGHT_BUCKETS:
-            if pattern.search(lux_str):
+        """Return the first bucket name whose device-BRE pattern matches lux_str.
+
+        The device runs toybox grep (BRE), where ``\\{``/``\\}`` are interval
+        delimiters; Python re reads the same source as literal braces. The
+        bridge strips the backslashes, so the checked string is the exact
+        pattern the device receives.
+        """
+        for name, bre in spool_read.LIGHT_BUCKETS:
+            py = re.compile(bre.replace(r"\{", "{").replace(r"\}", "}"))
+            if py.search(lux_str):
                 return name
         return None
 
@@ -350,12 +358,37 @@ class LightBucketRegexTests(unittest.TestCase):
     def test_very_bright_does_not_match_three_digit(self):
         self.assertNotEqual(self._match_bucket("lux=999.9"), "very_bright_1000_plus")
 
+    def test_very_bright_interval_is_escaped_for_device_bre(self):
+        """Defect 4 regression: device grep is BRE, so the interval must reach
+        it brace-escaped; a raw ``{3,}`` is a literal there and the bucket
+        silently counts zero on-device."""
+        bre = dict(spool_read.LIGHT_BUCKETS)["very_bright_1000_plus"]
+        self.assertEqual(bre, r"lux=[1-9][0-9]\{3,\}")
+
     def test_bucket_names_are_exactly_expected(self):
         names = [name for name, _ in spool_read.LIGHT_BUCKETS]
         self.assertEqual(names, [
             "dark_exact", "dim_0_9", "moderate_10_99",
             "bright_100_999", "very_bright_1000_plus",
         ])
+
+
+
+class CountKindTests(unittest.TestCase):
+    """_count_kind counts rows of exactly one kind via epoch + kind match."""
+
+    def test_command_matches_row_epoch_and_kind(self):
+        with mock.patch.object(spool_read, "_run", return_value="7") as run:
+            result = spool_read._count_kind(["adb"], "S", "PATH", "light", 5.0)
+        self.assertEqual(result, 7)
+        command = run.call_args[0][2]
+        self.assertIn(f"'{spool_read.ROW_EPOCH_BRE} light'", command)
+        self.assertIn("grep -a -c", command)
+
+    def test_unparseable_output_raises(self):
+        with mock.patch.object(spool_read, "_run", return_value="not-a-count"):
+            with self.assertRaises(RuntimeError):
+                spool_read._count_kind(["adb"], "S", "PATH", "light", 5.0)
 
 
 class AllowedKindsTests(unittest.TestCase):
