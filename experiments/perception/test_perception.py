@@ -1351,7 +1351,7 @@ class PerceptionTests(unittest.TestCase):
             self.assertIn("light_oscillation=0->1->0", line)
             self.assertIn("light_transient=revert", line)
 
-    def test_class_b_detector_fires_on_cursor_freeze_with_null_lux(self):
+    def test_class_b_delivery_gap_detector_fires_on_cursor_freeze_with_null_lux(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1361,17 +1361,17 @@ class PerceptionTests(unittest.TestCase):
                               "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
                       received=1000, log_dir=log_dir)
             # First call seeds prev state
-            watch.detect_class_b_stop(state, log_dir)
+            watch.detect_class_b_delivery_gap(state, log_dir)
             # Simulate cursor frozen for > CLASS_B_FREEZE_SECONDS
             state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
             # Second poll: cursor frozen, still null-lux
-            detection = watch.detect_class_b_stop(state, log_dir)
+            detection = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNotNone(detection)
             self.assertEqual(detection["trigger"], "cursor-freeze")
             self.assertEqual(detection["null_lux_consecutive"], 2)
             self.assertEqual(detection["cursor"], state["cursor"])
 
-    def test_class_b_detector_fires_on_session_change_with_null_lux(self):
+    def test_class_b_delivery_gap_detector_fires_on_session_change_with_null_lux(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1379,19 +1379,19 @@ class PerceptionTests(unittest.TestCase):
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
                               "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000"],
                       received=1000, log_dir=log_dir)
-            watch.detect_class_b_stop(state, log_dir)
+            watch.detect_class_b_delivery_gap(state, log_dir)
             # Session s2 with null-lux (session change)
             # Session s2 with 2 null-lux reads (session change)
             self.page(state, ["1000 hello node=note3 protocol=1 session=s2",
                               "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000",
                               "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=3000"],
                       received=1001, log_dir=log_dir)
-            detection = watch.detect_class_b_stop(state, log_dir)
+            detection = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNotNone(detection)
             self.assertEqual(detection["trigger"], "session-change")
             self.assertEqual(detection["null_lux_consecutive"], 2)
 
-    def test_class_b_detector_silent_without_null_lux(self):
+    def test_class_b_delivery_gap_detector_silent_without_null_lux(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1399,12 +1399,12 @@ class PerceptionTests(unittest.TestCase):
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
                               "1000 light lux=12.5 accuracy=3 age_ms=0 phone_elapsed_ms=1000"],
                       received=1000, log_dir=log_dir)
-            watch.detect_class_b_stop(state, log_dir)
+            watch.detect_class_b_delivery_gap(state, log_dir)
             # Cursor frozen but no null-lux
-            detection = watch.detect_class_b_stop(state, log_dir)
+            detection = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNone(detection)
 
-    def test_class_b_detector_no_repeat_for_same_cursor_session(self):
+    def test_class_b_delivery_gap_detector_no_repeat_for_same_cursor_session(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1412,16 +1412,16 @@ class PerceptionTests(unittest.TestCase):
                               "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
                               "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
                       received=1000, log_dir=log_dir)
-            watch.detect_class_b_stop(state, log_dir)
+            watch.detect_class_b_delivery_gap(state, log_dir)
             # Simulate cursor frozen for > CLASS_B_FREEZE_SECONDS
             state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
-            detection1 = watch.detect_class_b_stop(state, log_dir)
+            detection1 = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNotNone(detection1)
             # Same cursor/session: no repeat
-            detection2 = watch.detect_class_b_stop(state, log_dir)
+            detection2 = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNone(detection2)
 
-    def test_class_b_detector_bounded_output(self):
+    def test_class_b_delivery_gap_detector_bounded_output(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1433,12 +1433,12 @@ class PerceptionTests(unittest.TestCase):
                                      {"kind": "light", "fields": {"lux": 0.0}}]
                 state.pop("_class_b_detected_cursor", None)
                 state.pop("_class_b_detected_session", None)
-                watch.detect_class_b_stop(state, log_dir)
-            path = log_dir / "class-b-detectors.jsonl"
+                watch.detect_class_b_delivery_gap(state, log_dir)
+            path = log_dir / "class-b-delivery-gap-detectors.jsonl"
             lines = path.read_text(encoding="utf-8").strip().split("\n")
             self.assertEqual(len(lines), watch.CLASS_B_DETECTOR_LINES)
 
-    def test_class_b_detector_no_false_positive_on_advancing_cursor(self):
+    def test_class_b_delivery_gap_detector_no_false_positive_on_advancing_cursor(self):
         """Cursor advancing slowly (+4 per poll) must NOT trigger cursor-freeze.
 
         Real-world scenario: 2s poll interval, cursor advances +4 per ~10s.
@@ -1454,21 +1454,21 @@ class PerceptionTests(unittest.TestCase):
                               "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
                       received=1000, log_dir=log_dir)
             # Seed prev state
-            watch.detect_class_b_stop(state, log_dir)
+            watch.detect_class_b_delivery_gap(state, log_dir)
             # Simulate cursor advancing +4 per poll (like real Note3 scenario)
             # Each poll is 2s apart, cursor advances every ~5 polls (~10s)
             # After 3 polls: cursor should have advanced at least once
             state["cursor"] = 1004  # advanced +4
-            detection = watch.detect_class_b_stop(state, log_dir)
+            detection = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNone(detection)
             # Continue advancing: cursor keeps moving, no freeze
             state["cursor"] = 1008  # advanced +4 again
-            detection = watch.detect_class_b_stop(state, log_dir)
+            detection = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNone(detection)
             # Even after many polls with null-lux, advancing cursor = no freeze
             for i in range(10):
                 state["cursor"] = 1008 + (i + 1) * 4
-                detection = watch.detect_class_b_stop(state, log_dir)
+                detection = watch.detect_class_b_delivery_gap(state, log_dir)
                 self.assertIsNone(detection)
 
     def test_class_a_detector_freeze_on_code2_cursor_halt(self):
@@ -1574,7 +1574,7 @@ class PerceptionTests(unittest.TestCase):
             path = log_dir / "class-a-detectors.jsonl"
             lines = path.read_text(encoding="utf-8").strip().split("\n")
             self.assertEqual(len(lines), watch.CLASS_A_DETECTOR_LINES)
-    def test_class_c_detector_fires_on_delivery_halt_without_known_cause(self):
+    def test_class_c_delivery_gap_detector_fires_on_delivery_halt_without_known_cause(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1583,13 +1583,13 @@ class PerceptionTests(unittest.TestCase):
                               "1000 light lux=12.5 accuracy=3 age_ms=0"],
                       received=start - 200, log_dir=log_dir)
             state["ok_at"] = time.time()
-            detection = watch.detect_class_c_stop(state, log_dir)
+            detection = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNotNone(detection)
-            self.assertEqual(detection["kind"], "class-c-stop")
+            self.assertEqual(detection["kind"], "class-c-delivery-gap")
             self.assertEqual(detection["reason"],
                              "delivery halted with polls succeeding; no code=2, no null-lux freeze")
 
-    def test_class_c_detector_silent_before_window(self):
+    def test_class_c_delivery_gap_detector_silent_before_window(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1598,10 +1598,10 @@ class PerceptionTests(unittest.TestCase):
                               "1000 light lux=12.5 accuracy=3 age_ms=0"],
                       received=start - 50, log_dir=log_dir)
             state["ok_at"] = time.time()
-            detection = watch.detect_class_c_stop(state, log_dir)
+            detection = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNone(detection)
 
-    def test_class_c_detector_silent_when_class_a_armed(self):
+    def test_class_c_delivery_gap_detector_silent_when_class_a_armed(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1611,10 +1611,10 @@ class PerceptionTests(unittest.TestCase):
                               "1000 ble_scan error code=2 node=note3"],
                       received=start - 200, log_dir=log_dir)
             state["ok_at"] = time.time()
-            detection = watch.detect_class_c_stop(state, log_dir)
+            detection = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNone(detection)
 
-    def test_class_c_detector_silent_when_null_lux_condition_met(self):
+    def test_class_c_delivery_gap_detector_silent_when_null_lux_condition_met(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1624,10 +1624,10 @@ class PerceptionTests(unittest.TestCase):
                               "1000 light lux=0 accuracy=3 age_ms=0"],
                       received=start - 200, log_dir=log_dir)
             state["ok_at"] = time.time()
-            detection = watch.detect_class_c_stop(state, log_dir)
+            detection = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNone(detection)
 
-    def test_class_c_detector_silent_when_polls_not_succeeding(self):
+    def test_class_c_delivery_gap_detector_silent_when_polls_not_succeeding(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1635,10 +1635,10 @@ class PerceptionTests(unittest.TestCase):
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
                               "1000 light lux=12.5 accuracy=3 age_ms=0"],
                       received=start - 200, log_dir=log_dir)
-            detection = watch.detect_class_c_stop(state, log_dir)
+            detection = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNone(detection)
 
-    def test_class_c_detector_no_repeat_for_same_cursor_session(self):
+    def test_class_c_delivery_gap_detector_no_repeat_for_same_cursor_session(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1647,12 +1647,12 @@ class PerceptionTests(unittest.TestCase):
                               "1000 light lux=12.5 accuracy=3 age_ms=0"],
                       received=start - 200, log_dir=log_dir)
             state["ok_at"] = time.time()
-            detection1 = watch.detect_class_c_stop(state, log_dir)
+            detection1 = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNotNone(detection1)
-            detection2 = watch.detect_class_c_stop(state, log_dir)
+            detection2 = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNone(detection2)
 
-    def test_class_c_detector_bounded_output(self):
+    def test_class_c_delivery_gap_detector_bounded_output(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1669,8 +1669,8 @@ class PerceptionTests(unittest.TestCase):
                                      "received": start - 200}]
                 state.pop("_class_c_detected_cursor", None)
                 state.pop("_class_c_detected_session", None)
-                watch.detect_class_c_stop(state, log_dir)
-            path = log_dir / "class-c-detectors.jsonl"
+                watch.detect_class_c_delivery_gap(state, log_dir)
+            path = log_dir / "class-c-delivery-gap-detectors.jsonl"
             lines = path.read_text(encoding="utf-8").strip().split("\n")
             self.assertEqual(len(lines), watch.CLASS_C_DETECTOR_LINES)
 
@@ -1704,7 +1704,7 @@ class PerceptionTests(unittest.TestCase):
         with patch("subprocess.run", side_effect=FileNotFoundError()):
             self.assertIsNone(watch._host_stopped_state())
 
-    def test_class_c_detection_includes_host_stopped(self):
+    def test_class_c_delivery_gap_detection_includes_host_stopped(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1718,11 +1718,11 @@ class PerceptionTests(unittest.TestCase):
                 mock_result.returncode = 0
                 mock_result.stdout = "    User 0:  installed=true hidden=false stopped=true notLaunched=false enabled=0\n"
                 mock_run.return_value = mock_result
-                detection = watch.detect_class_c_stop(state, log_dir)
+                detection = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNotNone(detection)
             self.assertTrue(detection["host_stopped"])
 
-    def test_class_c_detection_host_stopped_false(self):
+    def test_class_c_delivery_gap_detection_host_stopped_false(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1736,11 +1736,11 @@ class PerceptionTests(unittest.TestCase):
                 mock_result.returncode = 0
                 mock_result.stdout = "    User 0:  installed=true hidden=false stopped=false notLaunched=false enabled=0\n"
                 mock_run.return_value = mock_result
-                detection = watch.detect_class_c_stop(state, log_dir)
+                detection = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNotNone(detection)
             self.assertFalse(detection["host_stopped"])
 
-    def test_class_c_detection_host_stopped_unknown(self):
+    def test_class_c_delivery_gap_detection_host_stopped_unknown(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1754,7 +1754,7 @@ class PerceptionTests(unittest.TestCase):
                 mock_result.returncode = 1
                 mock_result.stdout = ""
                 mock_run.return_value = mock_result
-                detection = watch.detect_class_c_stop(state, log_dir)
+                detection = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNotNone(detection)
             self.assertIsNone(detection["host_stopped"])
 

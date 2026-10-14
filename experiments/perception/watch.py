@@ -413,12 +413,12 @@ CLASS_B_DETECTOR_LINES = 128
 CLASS_B_FREEZE_SECONDS = 30.0
 
 
-def detect_class_b_stop(state, log_dir):
-    """Detect class-B stop: emission halt with null-lux reads across time.
+def detect_class_b_delivery_gap(state, log_dir):
+    """Detect class-B delivery gap: emission halt with null-lux reads across time.
 
     Fires on (session change with null-lux) OR (cursor freeze with null-lux).
     Null-lux = light=0.0 persists across >= CLASS_B_MIN_NULL_LUX consecutive
-    retention events. Emits bounded JSONL to log_dir/class-b-detectors.jsonl.
+    retention events. Emits bounded JSONL to log_dir/class-b-delivery-gap-detectors.jsonl.
     """
     if log_dir is None:
         return None
@@ -467,7 +467,7 @@ def detect_class_b_stop(state, log_dir):
     state["_class_b_detected_session"] = session
 
     detection = {
-        "kind": "class-b-stop",
+        "kind": "class-b-delivery-gap",
         "detected_at": stamp(time.time()),
         "cursor": cursor,
         "session": session,
@@ -475,7 +475,7 @@ def detect_class_b_stop(state, log_dir):
         "null_lux_consecutive": max_consecutive,
     }
 
-    path = log_dir / "class-b-detectors.jsonl"
+    path = log_dir / "class-b-delivery-gap-detectors.jsonl"
     previous = []
     if path.exists():
         text = path.read_text(encoding="utf-8").strip()
@@ -598,7 +598,7 @@ CLASS_C_DETECTOR_LINES = 128
 
 
 def _emit_class_c(log_dir, detection):
-    path = log_dir / "class-c-detectors.jsonl"
+    path = log_dir / "class-c-delivery-gap-detectors.jsonl"
     previous = []
     if path.exists():
         text = path.read_text(encoding="utf-8").strip()
@@ -646,8 +646,8 @@ def _host_stopped_state():
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None
 
-def detect_class_c_stop(state, log_dir):
-    """Detect class-C stop: delivery halt with no known cause.
+def detect_class_c_delivery_gap(state, log_dir):
+    """Detect class-C delivery gap: delivery halt with no known cause.
 
     Fires when no new record has been received for CLASS_C_WINDOW_SECONDS
     while polls keep succeeding, AND the latest ble_scan is not a code=2
@@ -655,7 +655,7 @@ def detect_class_c_stop(state, log_dir):
     met (no null-lux freeze). Non-deterministic: phone asleep, force-stopped
     app, or other causes. The deterministic complement is the host-side adb
     check (dumpsys package stopped), owned by health/genome. Emits bounded
-    JSONL to log_dir/class-c-detectors.jsonl.
+    JSONL to log_dir/class-c-delivery-gap-detectors.jsonl.
     """
     if log_dir is None:
         return None
@@ -694,7 +694,7 @@ def detect_class_c_stop(state, log_dir):
     host_stopped = _host_stopped_state()
 
     detection = {
-        "kind": "class-c-stop",
+        "kind": "class-c-delivery-gap",
         "detected_at": stamp(now),
         "cursor": cursor,
         "session": session,
@@ -1626,15 +1626,15 @@ def follow(args, directory):
                 changed = update_events(state, now, args.stale_seconds)
                 state["node_status"] = node_status(state, now, args.stale_seconds)
                 save(path, state)
-                detection = detect_class_b_stop(state, directory)
+                detection = detect_class_b_delivery_gap(state, directory)
                 if detection:
-                    print(f"class-b-stop: {detection}", flush=True)
+                    print(f"class-b-delivery-gap: {detection}", flush=True)
                 detection_a = detect_class_a_freeze(state, directory)
                 if detection_a:
                     print(f"class-a-freeze: {detection_a}", flush=True)
-                detection_c = detect_class_c_stop(state, directory)
+                detection_c = detect_class_c_delivery_gap(state, directory)
                 if detection_c:
-                    print(f"class-c-stop: {detection_c}", flush=True)
+                    print(f"class-c-delivery-gap: {detection_c}", flush=True)
                 if changed:
                     print(state["events"][-1], flush=True)
                 # Publish each durable node result before polling the next node.
