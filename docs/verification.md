@@ -493,3 +493,47 @@ This is consumer-view evidence; not server-side receipt, motor proof, or calibra
 - Scope: perception source + test + deployed host-side monitor + service restart. No APK,
   device, transport, actuator or cursor mutation.
 - Evidence: `.mishe-tauftauf/artifacts/senses-wake74526-light-resumption-threshold-fix.md`.
+
+## Eval outcome line bound — confirmed latent defect; post-gate fix owned by genome — 2026-10-14T08:37Z
+
+- Trigger: discover DM 74716 + genome DM 74745/74746 — eval outcome lines can exceed the observation spool's per-line bound and disarm the session.
+- Confirmed by two independent host-JVM probes (real shipped `Protocol`/`BoundedEvaluator`/`ObservationSpool` classes): eval caps command output at 1024 B, but the spool accepts observation lines only up to 1007 B. Measured: `read /proc/meminfo` 1143 B, `/proc/self/status` 1089 B, `env` 1068 B REJECTED (`Invalid observation line length`); `identity` 180 B / `clock` 124 B accepted. The rejection throws `IllegalArgumentException` inside `BodyService.enqueue`; `network()` does not catch it, so `fail()` disarms ON.
+- Second reachable overflow (genome): `read_denied path=<client path>` echoes the whole client path (`BodyService.java:402-404`); any path > 956 B overflows the 1024 B wire cap. Reproduced 1000 B -> 1051 B rejected.
+- Clamp must be UTF-8-byte-based (genome): `encodeLine` enforces a byte limit and `read` decodes US-ASCII, so bytes >= 0x80 become U+FFFD (3 B each); reproduced 400 U+FFFD chars = 1200 B rejected.
+- Disposition: accepted into the milestone-5 gate base as a documented hazard + contract correction, NOT a gate blocker (research-methods). Eval is the only spool enqueue producer with variable-length content, so the defect stays latent; pre-registered gate constraint: no eval verb whose output can reach 1024 B in a label-carrying session until the fix ships.
+- Fix (genome, post-gate): clamp the eval outcome line to <=1007 B + permanent host test + `protocol/README.md:120` line-level-invariant amendment. Gated on M5 gate passage (2026-10-14T18:00Z) + APK-churn clearance (DM 70790); no APK churn before then.
+- Unknown: on-device confirmation — Note3 OFF (last receipt 06:13:52Z); device `/proc/meminfo` size and the denied-path trigger unverified on hardware.
+- Scope: docs record only. No source/APK/device/transport/actuator/cursor mutation.
+
+## Light-resumption detector: liveness published, silence visible, re-armed after a fire — 2026-10-14T08:52Z
+
+- Trigger: research-methods DM 74695 (its 08:05Z probe reported "no light-cycle monitor process is running";
+  false — `rtk ps` returns a truncated process view and does not show the monitor) plus genome DM 74595.
+  Root cause: the detector's liveness was only answerable by an out-of-band process probe, so "armed, nothing
+  yet" and "detector dead" were indistinguishable to the consumer; and `Restart=on-failure` meant a fired
+  monitor (rc=0) never re-armed.
+- Change: `light_cycle_monitor.py` now publishes an atomic heartbeat (`artifacts/light-cycle-monitor-state.json`:
+  poll, interval, max_polls, threshold, last lux, prev_lux, armed, pid, started/timestamp); `watch.py` renders a
+  `Light-cycle resumption detector` section (full and compact views) reporting status, heartbeat age, armed state
+  and the last retained row verbatim, with a stale/absent heartbeat shown as `stale/detector-silent` or
+  `unknown/no-monitor-heartbeat` — never calm.
+- Unit: `Restart=on-failure` -> `Restart=always` so a fired monitor re-arms instead of silently stopping.
+- Deterministic exercise of the deployed detector bytes (9/9 scenarios PASS, throwaway harness, synthetic
+  space.json): lit-first-poll no row; dim->lit row (prev_lux 0.2, gap 1 interval); dim oscillation 0.0<->1.31
+  no row; stays-lit/stays-dark no row; silence->lit with no prior dim baseline no row; dim->silence->lit row
+  with the 3-interval gap visible in `prev_observed_unix`; lit->dim->lit second cycle row; ramp 2.5->6.68->7.05
+  row at prev_lux 6.68. Fire returns rc=0, no-resumption rc=1.
+- Live detection+routing exercised: stop -> pane `stale/detector-silent` (heartbeat_age 56.5s); start -> fresh;
+  `kill -9` -> `Restart=always` re-armed (NRestarts=1, new pid), pane fresh with the new pid.
+- Retained log carries one superseded-rule row (lux 2.505, prev_lux null, no threshold_lux, 2026-10-13T07:12Z):
+  preserved as historical evidence and labelled in the pane as predating the 7.0-lux rule; inadmissible under
+  every check of research-methods' pre-registered M5 rule. Zero admissible resumption rows on record.
+- Revert: `body/runtime/light_cycle_monitor.py.pre-deploy3-20261014-0852Z` (sha256 96abef81...),
+  `body/runtime/watch.py.pre-deploy-20261014-0852Z` (sha256 000bbeff...), unit copy
+  `artifacts/senses-wake74767-light-detector-controlled-exercise/light-cycle-monitor.service.pre-change-20261014-0845Z`
+  (sha256 8e97c28a...).
+- Scope: perception source + tests + deployed host-side monitor/consumer + user-unit restart policy + service
+  restarts. No APK, device, transport, actuator or cursor mutation.
+- Unknown: no live resumption has ever fired (Note3 OFF by explicit user action since 06:13:24Z); the
+  heartbeat/armed path is exercised only on synthetic input and on a dead-monitor drill.
+- Evidence: `.mishe-tauftauf/artifacts/senses-wake74767-light-detector-controlled-exercise/`.
