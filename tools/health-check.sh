@@ -141,12 +141,17 @@ fi
 # device_state.py import) straight from this checkout, so the working tree --
 # not a frozen release -- is what publishes within 60s. Compare the live bytes
 # with HEAD: an uncommitted or half-applied edit is otherwise invisible until
-# the consumer misreads the document it produces.
+# the consumer misreads the document it produces. `git status` rather than
+# `git diff HEAD` because diff reports an untracked file as unchanged.
 if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
-  if git diff --quiet HEAD -- tools/node_state.py tools/device_state.py; then
-    pass "node-state publisher bytes match HEAD"
+  if NS_DIRTY=$(git status --porcelain --untracked-files=all -- tools/node_state.py tools/device_state.py 2>/dev/null); then
+    if [ -z "$NS_DIRTY" ]; then
+      pass "node-state publisher bytes match HEAD"
+    else
+      fail "node-state publisher bytes differ from HEAD (uncommitted edits go live within 60s)"
+    fi
   else
-    fail "node-state publisher bytes differ from HEAD (uncommitted edits go live within 60s)"
+    echo "UNKNOWN node-state publisher bytes (git status failed)"
   fi
 else
   echo "UNKNOWN node-state publisher bytes (git unavailable)"
