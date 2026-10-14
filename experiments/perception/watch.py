@@ -74,6 +74,12 @@ def load(path, node=None, source=None):
         raise ValueError("state belongs to a different endpoint; reconcile explicitly")
     if "owner_checkboxes" not in state:
         state["owner_checkboxes"] = {}
+    if ("_class_b_detected_session" in state and
+            "_class_b_detected_light_sequence" not in state):
+        # Pre-change state keyed class-B dedup on (cursor, session). Seed the
+        # light-sequence identity from the retained history so a restart does
+        # not re-fire the still-current gap.
+        state["_class_b_detected_light_sequence"] = _last_light_sequence(state)
     return state
 
 
@@ -240,8 +246,9 @@ def excursion_window(state):
     only the retained tail, not the whole session. The acquisition-span range
     is a separate cross-clock transport diagnostic, never folded into the
     phone window. The protocol v2.1 retention set (windowed standard
-    deviations, oscillation/quantization and transient-revert evidence) is
-    computed over the same retained window; see retention_set.
+    deviations, oscillation/quantization and transient-revert evidence) and
+    the offset-invariant accel guard are computed over the same retained
+    window; see retention_set and accel_guard.
     """
     history = state.get("history", [])
     values = [value for value in
@@ -270,6 +277,7 @@ def excursion_window(state):
         "accel_std": retention["accel_std"],
         "rssi_std": retention["rssi_std"],
         "light_transient": retention["light_transient"],
+        "accel_guard": accel_guard(history),
     }
 
 
@@ -334,6 +342,79 @@ def retention_set(history):
         "light_transient": transient,
     }
 
+ACCEL_GUARD_MIN_SAMPLES = 5
+ACCEL_GUARD_GRAVITY = 9.80665
+ACCEL_GUARD_MAGNITUDE_TOLERANCE = 0.20
+ACCEL_GUARD_MAGNITUDE_STABILITY = 0.5
+
+
+def median(values):
+    """Median of a non-empty list of finite numbers."""
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def accel_guard(history):
+    """Offset-invariant accel-channel guard over the retained window.
+
+    A pinned axis (bit-identical values across the window) or a stable
+    magnitude far from Earth gravity makes the accel leg indeterminate: a
+    pinned axis yields std ~ 0, which a stillness/change scorer reads as
+    "still", and a stable 1.6 g for hours is not real acceleration. Both
+    regimes were observed on Note3 (research-methods wake 75303/75378).
+    Every test is offset-invariant (magnitude ratio to g, per-axis range), so
+    the verdict survives the baseline steps documented above. No value is
+    substituted: an indeterminate verdict never authorizes a stillness or a
+    movement claim from the accel leg.
+    """
+    axes = {"x": [], "y": [], "z": []}
+    magnitudes = []
+    for item in history:
+        if item["kind"] != "acceleration":
+            continue
+        fields = item.get("fields", {})
+        values = [number(fields, key) for key in ("x", "y", "z")]
+        if any(value is None for value in values):
+            continue
+        for key, value in zip(("x", "y", "z"), values):
+            axes[key].append(value)
+        magnitudes.append(math.hypot(*values))
+
+    pinned = sorted(key for key, values in axes.items()
+                    if values and max(values) == min(values))
+    count = len(magnitudes)
+    median_magnitude = round(median(magnitudes), 3) if magnitudes else None
+    std_magnitude = None
+    if magnitudes:
+        mean = sum(magnitudes) / count
+        variance = sum((value - mean) ** 2 for value in magnitudes) / count
+        std_magnitude = round(math.sqrt(variance), 3)
+
+    if count < ACCEL_GUARD_MIN_SAMPLES:
+        status = "few-samples"
+    elif pinned:
+        status = "pinned-axis"
+    elif (abs(median_magnitude - ACCEL_GUARD_GRAVITY) / ACCEL_GUARD_GRAVITY
+          > ACCEL_GUARD_MAGNITUDE_TOLERANCE and
+          std_magnitude < ACCEL_GUARD_MAGNITUDE_STABILITY):
+        status = "implausible-magnitude"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "samples": count,
+        "pinned_axes": pinned,
+        "magnitude_median": median_magnitude,
+        "magnitude_std": std_magnitude,
+        "gravity": ACCEL_GUARD_GRAVITY,
+        "tolerance": ACCEL_GUARD_MAGNITUDE_TOLERANCE,
+        "stability": ACCEL_GUARD_MAGNITUDE_STABILITY,
+        "indeterminate": status != "ok",
+    }
+
 
 def freeze_entries(path):
     """Documented freeze onsets from the discovery index; [] when absent/unreadable."""
@@ -396,6 +477,11 @@ def emit_excursion(log_dir, state, now):
             f"light_std={optional_text(window['light_std'])} "
             f"light_oscillation={window['light_oscillation']} "
             f"accel_std={optional_text(window['accel_std'])} "
+            f"accel_guard={window['accel_guard']['status']} "
+            f"accel_samples={window['accel_guard']['samples']} "
+            f"accel_pinned_axes={','.join(window['accel_guard']['pinned_axes']) or 'null'} "
+            f"accel_magnitude_median={optional_text(window['accel_guard']['magnitude_median'])} "
+            f"accel_magnitude_std={optional_text(window['accel_guard']['magnitude_std'])} "
             f"rssi_std={optional_text(window['rssi_std'])} "
             f"light_transient={window['light_transient']} "
             f"freeze_overlap={str(freeze is not None).lower()} "
@@ -419,6 +505,13 @@ def detect_class_b_delivery_gap(state, log_dir):
     Fires on (session change with null-lux) OR (cursor freeze with null-lux).
     Null-lux = light=0.0 persists across >= CLASS_B_MIN_NULL_LUX consecutive
     retention events. Emits bounded JSONL to log_dir/class-b-delivery-gap-detectors.jsonl.
+
+    Dedup keys on (session, newest retained light sequence): the null-lux light
+    evidence is the quantity that must be unmoving for two onsets to be the
+    same gap. A non-producer write (an authenticated POST of a malformed queue
+    line) advances the cursor without adding light evidence, so it can no
+    longer re-arm a spurious second onset for one continuous gap. The cursor's
+    observed state is recorded as provenance, never used as identity.
     """
     if log_dir is None:
         return None
@@ -437,21 +530,12 @@ def detect_class_b_delivery_gap(state, log_dir):
     if prev_cursor is None or prev_session is None:
         return None
 
-    if (cursor == state.get("_class_b_detected_cursor") and
+    last_light_sequence = _last_light_sequence(state)
+    if (last_light_sequence == state.get("_class_b_detected_light_sequence") and
             session == state.get("_class_b_detected_session")):
         return None
 
-    light_items = [item for item in state["history"] if item["kind"] == "light"]
-    max_consecutive = 0
-    current = 0
-    for item in light_items:
-        lux = number(item.get("fields", {}), "lux")
-        if lux == 0.0:
-            current += 1
-            max_consecutive = max(max_consecutive, current)
-        else:
-            current = 0
-
+    max_consecutive = _max_consecutive_null_lux(state)
     if max_consecutive < CLASS_B_MIN_NULL_LUX:
         return None
 
@@ -463,14 +547,17 @@ def detect_class_b_delivery_gap(state, log_dir):
     if not (session_changed or cursor_frozen):
         return None
 
-    state["_class_b_detected_cursor"] = cursor
     state["_class_b_detected_session"] = session
+    state["_class_b_detected_light_sequence"] = last_light_sequence
 
     detection = {
         "kind": "class-b-delivery-gap",
         "detected_at": stamp(time.time()),
         "cursor": cursor,
+        "cursor_state": ("advanced" if cursor != prev_cursor
+                         else "frozen" if cursor_frozen else "unknown"),
         "session": session,
+        "light_sequence": last_light_sequence,
         "trigger": "session-change" if session_changed else "cursor-freeze",
         "null_lux_consecutive": max_consecutive,
     }
@@ -608,6 +695,14 @@ def _emit_class_c(log_dir, detection):
     atomic(path, "\n".join([*previous, line][-CLASS_C_DETECTOR_LINES:]) + "\n")
 
 
+def _last_light_sequence(state):
+    """Sequence of the newest retained light observation, or None."""
+    for item in reversed(state.get("history", [])):
+        if item["kind"] == "light":
+            return item.get("sequence")
+    return None
+
+
 def _max_consecutive_null_lux(state):
     """Max consecutive null-lux reads across the retained light history."""
     light_items = [item for item in state["history"] if item["kind"] == "light"]
@@ -681,7 +776,7 @@ def detect_class_c_delivery_gap(state, log_dir):
 
     cursor = state["cursor"]
     session = state["session"]
-    if (cursor == state.get("_class_b_detected_cursor") and
+    if (_last_light_sequence(state) == state.get("_class_b_detected_light_sequence") and
             session == state.get("_class_b_detected_session")):
         return None
     if (cursor == state.get("_class_c_detected_cursor") and
@@ -1343,6 +1438,20 @@ def render(state, now, stale):
         lines.append(f"  stale_sensors={','.join(stillness['stale_sensors'])} "
                      "(history window contains pre-frozen samples; std not computed)")
     lines.append(f"  consumer={stillness['consumer']}")
+    guard = accel_guard(state.get("history", []))
+    median_text = ("null" if guard["magnitude_median"] is None
+                   else f"{guard['magnitude_median']:.3f}")
+    std_text = ("null" if guard["magnitude_std"] is None
+                else f"{guard['magnitude_std']:.3f}")
+    lines.append("Accel guard (retained window; offset-invariant, baseline-step-immune):")
+    lines.append(f"  status={guard['status']} samples={guard['samples']} "
+                 f"pinned_axes={','.join(guard['pinned_axes']) or 'null'} "
+                 f"magnitude_median={median_text} m/s² magnitude_std={std_text} m/s² "
+                 f"(g={guard['gravity']}, tolerance={guard['tolerance']}, "
+                 f"stability<{guard['stability']})")
+    if guard["indeterminate"]:
+        lines.append("  accel leg indeterminate: no stillness or movement claim from accel; "
+                     "magnitude is not a motion or occupancy proof")
     acceleration = state["latest"].get("acceleration")
     norm = magnitude(acceleration)
     if norm is not None and sensor_status(acceleration, now, stale) == "fresh-clock-conditional":

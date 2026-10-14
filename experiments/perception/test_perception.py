@@ -1351,6 +1351,103 @@ class PerceptionTests(unittest.TestCase):
             self.assertIn("light_oscillation=0->1->0", line)
             self.assertIn("light_transient=revert", line)
 
+    def test_accel_guard_ok_for_healthy_rest_with_varying_axes(self):
+        state = self.state()
+        lines = ["1000 hello node=note3 protocol=1 session=s1"]
+        lines += [f"1000 acceleration x={0.01 * i:.3f} y={-0.02 * i:.3f} "
+                  f"z={9.80 + 0.01 * i:.3f} age_ms=0 phone_elapsed_ms={1000 + i}"
+                  for i in range(6)]
+        self.page(state, lines)
+        guard = watch.accel_guard(state["history"])
+        self.assertEqual(guard["status"], "ok")
+        self.assertEqual(guard["samples"], 6)
+        self.assertEqual(guard["pinned_axes"], [])
+        self.assertFalse(guard["indeterminate"])
+
+    def test_accel_guard_flags_pinned_axis_as_indeterminate(self):
+        state = self.state()
+        lines = ["1000 hello node=note3 protocol=1 session=s1"]
+        lines += [f"1000 acceleration x=-19.6133 y={0.01 * i:.3f} "
+                  f"z={9.80 + 0.01 * i:.3f} age_ms=0 phone_elapsed_ms={1000 + i}"
+                  for i in range(6)]
+        self.page(state, lines)
+        guard = watch.accel_guard(state["history"])
+        self.assertEqual(guard["status"], "pinned-axis")
+        self.assertEqual(guard["pinned_axes"], ["x"])
+        self.assertTrue(guard["indeterminate"])
+
+    def test_accel_guard_flags_stable_implausible_magnitude(self):
+        state = self.state()
+        lines = ["1000 hello node=note3 protocol=1 session=s1"]
+        lines += [f"1000 acceleration x={0.001 * i:.4f} y={-0.001 * i:.4f} "
+                  f"z={15.70 + 0.002 * i:.4f} age_ms=0 phone_elapsed_ms={1000 + i}"
+                  for i in range(6)]
+        self.page(state, lines)
+        guard = watch.accel_guard(state["history"])
+        self.assertEqual(guard["status"], "implausible-magnitude")
+        self.assertLess(guard["magnitude_std"], watch.ACCEL_GUARD_MAGNITUDE_STABILITY)
+        self.assertTrue(guard["indeterminate"])
+
+    def test_accel_guard_reports_few_samples_below_minimum(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 acceleration x=0.1 y=0.2 z=9.8 age_ms=0 phone_elapsed_ms=1000"])
+        guard = watch.accel_guard(state["history"])
+        self.assertEqual(guard["status"], "few-samples")
+        self.assertEqual(guard["samples"], 1)
+        self.assertTrue(guard["indeterminate"])
+
+    def test_excursion_log_carries_accel_guard_evidence(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            lines = ["1000 hello node=note3 protocol=1 session=s1"]
+            lines += [f"1000 acceleration x={0.01 * i:.3f} y={-0.02 * i:.3f} "
+                      f"z={9.80 + 0.01 * i:.3f} age_ms=0 phone_elapsed_ms={1000 + i}"
+                      for i in range(6)]
+            self.page(state, lines, received=1000, log_dir=log_dir)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1001, log_dir=log_dir)
+            line = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[0]
+            self.assertIn("accel_guard=ok accel_samples=6 accel_pinned_axes=null", line)
+
+    def test_excursion_log_flags_indeterminate_accel_guard(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = self.excursion_log(folder)
+            lines = ["1000 hello node=note3 protocol=1 session=s1"]
+            lines += [f"1000 acceleration x=-19.6133 y={0.01 * i:.3f} "
+                      f"z={9.80 + 0.01 * i:.3f} age_ms=0 phone_elapsed_ms={1000 + i}"
+                      for i in range(6)]
+            self.page(state, lines, received=1000, log_dir=log_dir)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2"],
+                      received=1001, log_dir=log_dir)
+            line = (log_dir / "excursion-log-note3.txt").read_text().splitlines()[0]
+            self.assertIn("accel_guard=pinned-axis", line)
+            self.assertIn("accel_pinned_axes=x", line)
+
+    def test_view_names_accel_guard_and_flags_indeterminate_leg(self):
+        state = self.state()
+        lines = ["1000 hello node=note3 protocol=1 session=s1"]
+        lines += [f"1000 acceleration x={0.01 * i:.3f} y={-0.02 * i:.3f} "
+                  f"z={9.80 + 0.01 * i:.3f} age_ms=0 phone_elapsed_ms={1000 + i}"
+                  for i in range(6)]
+        self.page(state, lines, received=1000)
+        text = watch.render(state, 1000, 30)
+        self.assertIn("Accel guard (retained window; offset-invariant, baseline-step-immune):", text)
+        self.assertIn("status=ok samples=6 pinned_axes=null", text)
+        self.assertNotIn("accel leg indeterminate", text)
+
+        pinned = self.state()
+        pinned_lines = ["1000 hello node=note3 protocol=1 session=s1"]
+        pinned_lines += [f"1000 acceleration x=-19.6133 y={0.01 * i:.3f} "
+                         f"z={9.80 + 0.01 * i:.3f} age_ms=0 phone_elapsed_ms={1000 + i}"
+                         for i in range(6)]
+        self.page(pinned, pinned_lines, received=1000)
+        pinned_text = watch.render(pinned, 1000, 30)
+        self.assertIn("status=pinned-axis samples=6 pinned_axes=x", pinned_text)
+        self.assertIn("accel leg indeterminate", pinned_text)
+
     def test_class_b_delivery_gap_detector_fires_on_cursor_freeze_with_null_lux(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
@@ -1404,7 +1501,7 @@ class PerceptionTests(unittest.TestCase):
             detection = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNone(detection)
 
-    def test_class_b_delivery_gap_detector_no_repeat_for_same_cursor_session(self):
+    def test_class_b_delivery_gap_detector_no_repeat_for_same_session_and_light(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
@@ -1417,7 +1514,7 @@ class PerceptionTests(unittest.TestCase):
             state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
             detection1 = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNotNone(detection1)
-            # Same cursor/session: no repeat
+            # Same session and same retained light evidence: no repeat
             detection2 = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNone(detection2)
 
@@ -1431,7 +1528,7 @@ class PerceptionTests(unittest.TestCase):
                 state["session"] = f"s{i}"
                 state["history"] = [{"kind": "light", "fields": {"lux": 0.0}},
                                      {"kind": "light", "fields": {"lux": 0.0}}]
-                state.pop("_class_b_detected_cursor", None)
+                state.pop("_class_b_detected_light_sequence", None)
                 state.pop("_class_b_detected_session", None)
                 watch.detect_class_b_delivery_gap(state, log_dir)
             path = log_dir / "class-b-delivery-gap-detectors.jsonl"
@@ -1470,6 +1567,86 @@ class PerceptionTests(unittest.TestCase):
                 state["cursor"] = 1008 + (i + 1) * 4
                 detection = watch.detect_class_b_delivery_gap(state, log_dir)
                 self.assertIsNone(detection)
+
+    def test_class_b_detector_ignores_non_producer_cursor_advance(self):
+        """A malformed authenticated POST advances the queue cursor without
+        adding light evidence: 30 s later the cursor is frozen again, but this
+        must not re-arm a second onset for one continuous gap.
+
+        Live case: queue lines 265955-265956 ("invalid line here") advanced
+        Note3 cursor 265954 -> 265956 at 2026-10-14T08:58:04Z and produced a
+        duplicate class-b row at 08:58:34Z for the same session (discover
+        DM 75390).
+        """
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                      received=1000, log_dir=log_dir)
+            watch.detect_class_b_delivery_gap(state, log_dir)  # seed prev state
+            state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
+            first = watch.detect_class_b_delivery_gap(state, log_dir)
+            self.assertIsNotNone(first)
+            self.assertEqual(first["trigger"], "cursor-freeze")
+            self.assertEqual(first["cursor_state"], "frozen")
+            # Non-producer write: the queue cursor advances, no light arrives.
+            state["cursor"] += 2
+            watch.detect_class_b_delivery_gap(state, log_dir)
+            # 30 s later the cursor is frozen again; the gap is the same one.
+            state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
+            self.assertIsNone(watch.detect_class_b_delivery_gap(state, log_dir))
+            rows = (log_dir / "class-b-delivery-gap-detectors.jsonl").read_text().strip().split("\n")
+            self.assertEqual(len(rows), 1)
+
+    def test_class_b_detector_fires_again_after_new_light_evidence(self):
+        """A genuine resumption (a new light observation) followed by a new halt
+        is a distinct gap and must still be reported."""
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                      received=1000, log_dir=log_dir)
+            watch.detect_class_b_delivery_gap(state, log_dir)
+            state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
+            self.assertIsNotNone(watch.detect_class_b_delivery_gap(state, log_dir))
+            # Delivery resumes: a fresh null-lux light observation arrives.
+            self.page(state, ["1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=3000"],
+                      received=1001, log_dir=log_dir)
+            watch.detect_class_b_delivery_gap(state, log_dir)
+            state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
+            again = watch.detect_class_b_delivery_gap(state, log_dir)
+            self.assertIsNotNone(again)
+            self.assertEqual(again["trigger"], "cursor-freeze")
+            rows = (log_dir / "class-b-delivery-gap-detectors.jsonl").read_text().strip().split("\n")
+            self.assertEqual(len(rows), 2)
+
+    def test_load_seeds_class_b_light_identity_for_legacy_state(self):
+        """State persisted before the dedup change keys class-B on (cursor,
+        session). Loading must seed the light-sequence identity so a restart
+        does not re-fire the still-current gap."""
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "note3.json"
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                      received=1000)
+            state["_class_b_detected_session"] = "s1"
+            state["_class_b_detected_cursor"] = state["cursor"]
+            state.pop("_class_b_detected_light_sequence", None)
+            watch.save(path, state)
+            loaded = watch.load(path)
+            self.assertEqual(loaded["_class_b_detected_light_sequence"], 3)
+            with tempfile.TemporaryDirectory() as logfolder:
+                log_dir = Path(logfolder)
+                watch.detect_class_b_delivery_gap(loaded, log_dir)  # seed prev state
+                loaded["_class_b_last_cursor_advance_at"] = (
+                    time.time() - watch.CLASS_B_FREEZE_SECONDS - 1)
+                self.assertIsNone(watch.detect_class_b_delivery_gap(loaded, log_dir))
 
     def test_class_a_detector_freeze_on_code2_cursor_halt(self):
         state = self.state()

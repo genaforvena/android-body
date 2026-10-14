@@ -165,24 +165,49 @@ yielding `status=moving` on a stationary phone (observed repeatedly, e.g.
 light_std ≈ 0.6 lux with accel_std ≤ 0.13 m/s² and rssi_std = 0 dBm). Treat
 isolated light-term excursions as a known false-positive mode, not motion.
 
-**Accel baseline anomaly (Note3):** On 2026-10-11T03:14:41Z the Note3
-accelerometer resting magnitude stepped from ~10.21 m/s² (near Earth gravity)
-to ~15.93 m/s² (1.6×g) in one 5-second interval. Cause UNKNOWN (sensor fault
-vs fixture force). The std-based composite is baseline-shift-immune: std of a
-constant stream is zero regardless of baseline. Absolute-magnitude thresholds
-(e.g. "still if |a| < 11") would be unsound on this device in its current state
-and are not deployed.
+**Accel baseline anomaly and offset-invariant guard (Note3):** On
+2026-10-11T03:14:41Z the Note3 accelerometer resting magnitude stepped from
+~10.21 m/s² (near Earth gravity) to ~15.93 m/s² (1.6×g) in one 5-second
+interval. Two further regimes were measured over the retained queue
+(research-methods wake 75303/75378): a stable ~15.7–16.2 m/s² magnitude held
+for ~48 h (2026-10-10T23:14Z → 2026-10-12T23:30Z), and a pinned-axis run
+(x = −19.6133, y = 19.612701 across 25,066 consecutive samples, |a| ≈ 29.57
+m/s²) held for 57.17 h (2026-10-07T16:29:49Z → 2026-10-10T01:40:11Z). Cause
+UNKNOWN (sensor fault vs fixture force). The std-based composite is
+baseline-shift-immune: std of a constant stream is zero regardless of
+baseline. Absolute-magnitude thresholds (e.g. "still if |a| < 11") would be
+unsound on this device in its current state and are not deployed.
+
+`view` therefore renders an offset-invariant **accel guard** over the retained
+window, and the excursion log carries the same verdict. Statuses: `few-samples`
+(fewer than 5 accel samples), `pinned-axis` (any axis is bit-identical across
+the window — std ≈ 0, which a stillness/change scorer would misread as "still"),
+`implausible-magnitude` (a stable magnitude more than 20% from g with
+pstdev(|a|) < 0.5 m/s² is not real acceleration), else `ok`. `ok` is the only
+status under which the accel leg supports a stillness or movement claim; an
+indeterminate verdict never substitutes a value and never authorizes a current
+sense. Every test is offset-invariant, so the verdict survives the baseline
+steps above.
 
 ## Class-B delivery-gap detection
 
-The consumer detects a class-B delivery gap: a cursor freeze or session change with two or
-more consecutive null-lux (`0.0` lux) reads. A detection fires only when the
-cursor/session pair has not already triggered one, and appends a bounded record to
-`SITE/body/perception/class-b-delivery-gap-detectors.jsonl` (last 128 lines, atomically
-replaced). The record includes the trigger type (`cursor-freeze` or
-`session-change`), the consecutive null-lux count, the frozen cursor, and the
-session. A freeze without null-lux reads is not class-B; the detector is armed for
-the next qualifying occurrence.
+The consumer detects a class-B delivery gap: a cursor freeze or session change
+with two or more consecutive null-lux (`0.0` lux) reads. A detection fires at
+most once per `(session, newest retained light sequence)` pair — the null-lux
+light evidence is the quantity that must be unmoving for two onsets to be the
+same gap — and appends a bounded record to
+`SITE/body/perception/class-b-delivery-gap-detectors.jsonl` (last 128 lines,
+atomically replaced). The record includes the trigger type (`cursor-freeze` or
+`session-change`), the consecutive null-lux count, the frozen cursor, the
+`light_sequence` join key, and the session. The cursor's observed state is
+recorded as provenance (`cursor_state`: `frozen`, `advanced`, `unknown`), never
+as identity: a non-producer write (an authenticated POST of a malformed queue
+line) advances the cursor without adding light evidence and therefore cannot
+re-arm a spurious second onset for one continuous gap. A genuine resumption
+followed by a new halt adds a new light observation and is reported as a
+distinct gap. A freeze without null-lux reads is not class-B; the detector is
+armed for the next qualifying occurrence. Historical rows written before this
+dedup change keep `kind=class-b-stop` and carry no `light_sequence`.
 
 ## Freshness and honest limits
 
@@ -285,6 +310,12 @@ samples), `light_oscillation` (adjacent 0↔1 lux flip path such as `0->1->0`,
 `quantized` for a constant stream confined to the two-level grid, `none`),
 `light_transient` (`revert` when the flip path returns to its starting level,
 `open` when it does not, `none` without a flip).
+
+The same line carries the offset-invariant accel guard: `accel_guard` (`ok`,
+`few-samples`, `pinned-axis`, `implausible-magnitude`), `accel_samples`,
+`accel_pinned_axes` (`null` or the pinned axis names), `accel_magnitude_median`
+and `accel_magnitude_std`. An excursion whose accel guard is not `ok` is
+indeterminate for the accel leg and must not be scored as still or moving.
 
 The retention set is required by the space-trial protocol v2.1: an excursion
 missing any of these conditions scores `indeterminate`, never silently
