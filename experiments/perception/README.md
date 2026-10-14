@@ -68,8 +68,8 @@ separate values, including unavailable/error states. Getter `returned` means onl
 that the accessor returned an object; it does not prove scanner/advertiser operation,
 an over-air event, or RF reception. These are declarations/status, not proof of an
 operational scanner, advertiser, or over-air event. The installed phone emits this
-read-only snapshot live (observed 2026-10-13T11:03Z and 2026-10-14T06:13Z on the
-BleStatus-wiring APK `a5cc750e`), reporting Note3 `api=21 adapter=enabled
+read-only snapshot live (latest retained `ble_status` #265954, 2026-10-14T06:13Z on
+the BleStatus-wiring APK `a5cc750e`), reporting Note3 `api=21 adapter=enabled
 scanner_getter=returned advertiser_getter=null advertiser_supported=unsupported`.
 The `ble_sighting` and `ble_scan` projections render bounded BLE scan evidence:
 sighting name and RSSI (only when fresh-clock-conditional) and scan lifecycle
