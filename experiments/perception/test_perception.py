@@ -2334,5 +2334,92 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(row["node_mode"], "ON_COLLECT_ONLY")
         self.assertEqual(row["node_state_status"], "ok")
 
+    def write_clock(self, directory, document):
+        (Path(directory).parent / "clock-domain-note3.json").write_text(
+            json.dumps(document))
+
+
+    def test_read_clock_domain_reports_absent_invalid_and_stale_as_unknown(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder) / "perception"
+            directory.mkdir()
+            watch.save(directory / "note3.json", state)
+            self.assertEqual(watch.read_clock_domain(directory, "note3", 1000.0)["status"],
+                             "absent")
+            self.assertIsNone(watch.read_clock_domain(directory, "note3", 1000.0)["offset_nominal_s"])
+            self.write_clock(directory, {"node": "note3", "status": "unavailable"})
+            self.assertEqual(watch.read_clock_domain(directory, "note3", 1000.0)["status"],
+                             "invalid")
+            self.write_clock(directory, {"node": "redmi10", "status": "ok",
+                                         "offset_min_s": 1.0, "offset_max_s": 2.0,
+                                         "offset_nominal_s": 1.5,
+                                         "observed_at_epoch_s": 1000.0,
+                                         "validity_seconds": 3600.0})
+            self.assertEqual(watch.read_clock_domain(directory, "note3", 1000.0)["status"],
+                             "invalid")
+            self.write_clock(directory, {"node": "note3", "status": "ok",
+                                         "offset_min_s": 24.0, "offset_max_s": 25.0,
+                                         "offset_nominal_s": 25.4, "samples": 7,
+                                         "observed_at_epoch_s": 1000.0,
+                                         "validity_seconds": 3600.0})
+            fresh = watch.read_clock_domain(directory, "note3", 1000.0)
+            expired = watch.read_clock_domain(directory, "note3", 1000.0 + 3601)
+        self.assertEqual(fresh["status"], "ok")
+        self.assertEqual(fresh["offset_max_s"], 25.0)
+        self.assertEqual(fresh["age_s"], 0.0)
+        self.assertEqual(expired["status"], "stale")
+        self.assertIsNone(expired["offset_min_s"])
+
+    def test_clock_agreement_resolves_the_split_only_with_a_fresh_measurement(self):
+        spans = {"min_ms": 26900.0, "max_ms": 28968.0, "median_ms": 27000.0, "n": 30}
+        self.assertEqual(watch.clock_agreement_reason(spans),
+                         "phone/host clock skew <=26900ms behind host (acquisition span "
+                         "26900-28968ms, n=30 retained); skew/latency split unknown")
+        clock = {"status": "ok", "offset_min_s": 24.0, "offset_max_s": 25.0,
+                 "offset_nominal_s": 25.4, "age_s": 12.0, "samples": 7}
+        self.assertEqual(watch.clock_agreement_reason(spans, clock),
+                         "phone/host clock skew <=26900ms behind host (acquisition span "
+                         "26900-28968ms, n=30 retained); measured phone/host offset "
+                         "+25.4s behind host (age 12s, n=7, bounds +24.0..+25.0s) "
+                         "resolves the split: implied transport latency 1.9-5.0s")
+
+    def test_clock_agreement_names_a_measurement_that_conflicts_with_the_span_bound(self):
+        spans = {"min_ms": 26900.0, "max_ms": 28968.0, "median_ms": 27000.0, "n": 30}
+        clock = {"status": "ok", "offset_min_s": 30.0, "offset_max_s": 31.0,
+                 "offset_nominal_s": 30.5, "age_s": 1.0, "samples": 7}
+        reason = watch.clock_agreement_reason(spans, clock)
+        self.assertIn("conflicts with the span bound", reason)
+        self.assertIn("split unresolved", reason)
+
+    def test_space_snapshot_light_reason_carries_the_resolved_split(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1024)
+        self.page(state, ["1001 light lux=12.5 accuracy=3 age_ms=21"], received=1026)
+        clock = {"status": "ok", "offset_min_s": 19.0, "offset_max_s": 20.0,
+                 "offset_nominal_s": 19.6, "age_s": 12.0, "samples": 7}
+        node = watch.space_snapshot([state], 1026, 30,
+                                    clocks={"note3": clock})["nodes"][0]["light"]
+        self.assertEqual(node["status"], "fresh-clock-conditional")
+        self.assertIn("resolves the split", node["status_reason"])
+        unmeasured = watch.space_snapshot([state], 1026, 30)["nodes"][0]["light"]
+        self.assertIn("skew/latency split unknown", unmeasured["status_reason"])
+
+    def test_render_shows_a_clock_domain_alarm_only_on_a_measured_step(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1024)
+        base = {"status": "ok", "offset_min_s": 24.0, "offset_max_s": 25.0,
+                "offset_nominal_s": 25.4, "age_s": 12.0, "samples": 7, "jump": None}
+        self.assertNotIn("clock-domain alarm", watch.render(state, 1024, 30, None, base))
+        stepped = dict(base, jump={"previous_offset_nominal_s": 25.4,
+                                   "previous_observed_at_epoch_s": 1000.0,
+                                   "delta_s": -22.4, "threshold_s": 2.0})
+        view = watch.render(state, 1024, 30, None, stepped)
+        self.assertIn("clock-domain alarm: measured phone/host offset stepped -22.4s", view)
+        self.assertIn("not comparable across the step", view)
+        # The compact view accepts the same argument (a jump must not crash the cached render).
+        self.assertIn("clock-domain alarm", watch.render_events(state, 1024, 30, None, stepped))
 if __name__ == "__main__":
     unittest.main()

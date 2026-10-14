@@ -1434,7 +1434,7 @@ def describe(item, now, stale):
             f"consumer_receipt={stamp(item['received'])} delayed_at_receipt={str(delayed).lower()}")
 
 
-def render(state, now, stale, node_state=None):
+def render(state, now, stale, node_state=None, clock=None):
     lines = [f"NODE {state['node']} source={state['source']} cursor={state['cursor']}",
              f"phone={state.get('node_status') or node_status(state, now, stale)} transport={transport(state, now, stale)} "
              f"backlog_page_pending={str(state['has_more']).lower()} last_poll={stamp(state['poll_at'])}",
@@ -1451,8 +1451,11 @@ def render(state, now, stale, node_state=None):
                           for name in OWNER_CHECKBOXES))
     span_stats = acquisition_span_stats(state)
     lines.append("raw units: battery level=fraction, light lux=lux, acceleration x/y/z=m/s²; "
-                 + clock_agreement_reason(span_stats) +
+                 + clock_agreement_reason(span_stats, clock) +
                  "; receipt is consumer fetch, not server receipt")
+    alarm = clock_domain_line(clock)
+    if alarm is not None:
+        lines.append(alarm)
     for kind in SENSORS:
         item = state["latest"].get(kind)
         lines.append(f"{kind} [{sensor_status(item, now, stale)}]: " +
@@ -1543,7 +1546,7 @@ def render(state, now, stale, node_state=None):
     return "\n".join(lines)
 
 
-def render_events(state, now, stale, node_state=None):
+def render_events(state, now, stale, node_state=None, clock=None):
     # Recompute this heading even if the follower died; never label cached data current.
     key = compact_key(state, now, stale)
     lines = [f"{state['node']} source={state['source']} phone={key[0]} "
@@ -1555,6 +1558,9 @@ def render_events(state, now, stale, node_state=None):
     state_line = node_state_line(node_state)
     if state_line is not None:
         lines.append("  " + state_line)
+    alarm = clock_domain_line(clock)
+    if alarm is not None:
+        lines.append("  " + alarm)
     rssi_status, rssi_dbm, rssi_reason, rssi_source = key[6]
     lines.append(f"  wifi_link_rssi {rssi_status} rssi_dbm={rssi_dbm} "
                  f"reason={rssi_reason or 'unspecified'} source={rssi_source or 'unknown'}")
@@ -1602,20 +1608,45 @@ def acquisition_span_stats(state):
             "median_ms": median, "n": len(spans)}
 
 
-def clock_agreement_reason(span_stats):
+def clock_agreement_reason(span_stats, clock=None):
+    """Bound phone/host clock skew from retained receipt spans, or resolve the split.
+
+    ``received - collected = transport latency + (host wall - phone wall)`` and
+    latency is non-negative, so the smallest retained span bounds the offset above
+    and the split itself stays unknown. A measured offset reading
+    (tools/clock_offset.py) resolves it: ``latency = span - offset`` over both
+    intervals. A reading that conflicts with the span bound is reported as a
+    conflict, not silently averaged away.
+    """
     if span_stats is None:
         return "phone/host clock agreement is unverified"
-    return ("phone/host clock skew <=%.0fms behind host (acquisition span "
-            "%.0f-%.0fms, n=%d retained); skew/latency split unknown"
-            % (span_stats["min_ms"], span_stats["min_ms"],
-               span_stats["max_ms"], span_stats["n"]))
+    bound = ("phone/host clock skew <=%.0fms behind host (acquisition span "
+             "%.0f-%.0fms, n=%d retained)"
+             % (span_stats["min_ms"], span_stats["min_ms"],
+                span_stats["max_ms"], span_stats["n"]))
+    if not clock or clock.get("status") != "ok":
+        return bound + "; skew/latency split unknown"
+    measured = ("measured phone/host offset %+.1fs behind host (age %.0fs, n=%d, "
+                "bounds %+.1f..%+.1fs)"
+                % (clock["offset_nominal_s"], clock["age_s"], clock["samples"],
+                   clock["offset_min_s"], clock["offset_max_s"]))
+    low = span_stats["min_ms"] / 1000.0 - clock["offset_max_s"]
+    high = span_stats["max_ms"] / 1000.0 - clock["offset_min_s"]
+    if low < 0:
+        return (bound + "; " + measured + " conflicts with the span bound "
+                "(implied latency %.1f-%.1fs); split unresolved" % (low, high))
+    return (bound + "; " + measured +
+            " resolves the split: implied transport latency %.1f-%.1fs" % (low, high))
 
-def space_snapshot(states, now, stale, node_states=None):
+def space_snapshot(states, now, stale, node_states=None, clocks=None):
     """Project the observed states into the read-only space.json boundary.
 
     ``node_states`` maps node name -> verdict from ``read_node_state``; a node
     without one publishes mode UNKNOWN (never OFF) so a consumer can tell a
-    designed collect-only silence from a delivery failure.
+    designed collect-only silence from a delivery failure. ``clocks`` maps node
+    name -> verdict from ``read_clock_domain``, which resolves the clock
+    skew/latency split on a fresh light reading; without one the bound stands
+    unresolved rather than being guessed.
     """
     nodes = []
     for state in states:
@@ -1661,7 +1692,7 @@ def space_snapshot(states, now, stale, node_states=None):
                 "status_reason": (fields.get("reason") or
                                   ("no-light-observation" if item is None else
                                    status if status != "fresh-clock-conditional" else
-                                   clock_agreement_reason(span_stats))),
+                                   clock_agreement_reason(span_stats, (clocks or {}).get(state["node"])))),
                 "freshness_basis": "host receipt time; phone event time and age_ms retained for provenance",
                 "validity_seconds": stale,
                 "sequence": item["sequence"] if item else None,
@@ -1710,6 +1741,13 @@ NODE_STATE_MAX_AGE_SECONDS = 300.0
 NODE_MODES = ("ON_SENDING", "ON_COLLECT_ONLY", "ON_NOT_RUNNING", "OFF", "UNKNOWN")
 NODE_STATE_MAX_REASONS = 4
 NODE_STATE_MAX_REASON_CHARS = 200
+
+#: Host-side phone/host clock-offset readings (tools/clock_offset.py). Published one
+#: directory above the perception states: this consumer globs body/perception/*.json
+#: for its own states and skips only the node-state prefix, so a document published
+#: there would be parsed as a state and crash the consumer.
+CLOCK_DOMAIN_PREFIX = "clock-domain-"
+CLOCK_DOMAIN_MAX_AGE_SECONDS = 3600.0
 
 
 def state_paths(directory):
@@ -1796,6 +1834,80 @@ def read_node_state(directory, node, now, max_age=NODE_STATE_MAX_AGE_SECONDS):
             "reasons": _bounded_reasons(document.get("reasons"))}
 
 
+def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS):
+    """Read the bounded host-side phone/host clock-offset reading for one node.
+
+    Published by tools/clock_offset.py at ``body/clock-domain-<node>.json`` (one
+    directory above the perception states). A missing, unreadable, malformed,
+    foreign or expired document is reported with ``status`` absent/invalid/stale and
+    null offsets: the reader never invents an offset, and a stale reading is not a
+    current one. The document's own ``validity_seconds`` bounds the reading, capped
+    by ``max_age``, so a long-past measurement cannot keep resolving the
+    skew/latency split.
+    """
+    def unknown(status, reason):
+        return {"status": status, "offset_min_s": None, "offset_max_s": None,
+                "offset_nominal_s": None, "observed_at_epoch_s": None, "age_s": None,
+                "samples": 0, "jump": None, "reason": reason}
+
+    path = directory.parent / f"{CLOCK_DOMAIN_PREFIX}{node}.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return unknown("absent", "no-clock-domain-file")
+    except (OSError, ValueError):
+        return unknown("invalid", "clock-domain-unreadable")
+    if (not isinstance(document, dict) or document.get("node") != node
+            or document.get("status") != "ok"):
+        return unknown("invalid", "clock-domain-invalid")
+
+    def finite(key):
+        value = document.get(key)
+        if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                or not math.isfinite(value)):
+            return None
+        return float(value)
+
+    numbers = {key: finite(key) for key in
+               ("offset_min_s", "offset_max_s", "offset_nominal_s",
+                "observed_at_epoch_s")}
+    validity = finite("validity_seconds")
+    if any(value is None for value in numbers.values()) or validity is None or validity <= 0:
+        return unknown("invalid", "clock-domain-invalid")
+    if numbers["offset_min_s"] > numbers["offset_max_s"]:
+        return unknown("invalid", "clock-domain-invalid")
+    age = now - numbers["observed_at_epoch_s"]
+    if age > min(validity, max_age):
+        return unknown("stale", "clock-domain-stale")
+    samples = document.get("samples")
+    jump = document.get("jump")
+    return {"status": "ok",
+            "offset_min_s": numbers["offset_min_s"],
+            "offset_max_s": numbers["offset_max_s"],
+            "offset_nominal_s": numbers["offset_nominal_s"],
+            "observed_at_epoch_s": numbers["observed_at_epoch_s"],
+            "age_s": round(max(age, 0.0), 1),
+            "samples": samples if isinstance(samples, int) and not isinstance(samples, bool) else 0,
+            "jump": jump if isinstance(jump, dict) else None,
+            "reason": None}
+
+
+def clock_domain_line(clock):
+    """The alarm line for a measured phone wall-clock step, or None without one."""
+    if not clock or clock.get("status") != "ok" or not clock.get("jump"):
+        return None
+    jump = clock["jump"]
+    previous = jump.get("previous_offset_nominal_s")
+    delta = jump.get("delta_s")
+    if not all(isinstance(value, (int, float)) and not isinstance(value, bool)
+               for value in (previous, delta)):
+        return None
+    return (f"clock-domain alarm: measured phone/host offset stepped {delta:+.1f}s "
+            f"(previous {previous:+.1f}s, threshold {jump.get('threshold_s')}s) - "
+            f"retained span bounds and offset-derived freshness are not comparable "
+            f"across the step; re-measure before relying on either")
+
+
 def node_state_line(node_state):
     """One human-readable line for the node-state verdict, or None without one."""
     if node_state is None:
@@ -1857,6 +1969,8 @@ def read_space(directory, now, stale):
     states = [load(path) for path in paths]
     return space_snapshot(states, now, stale,
                           {state["node"]: read_node_state(directory, state["node"], now)
+                           for state in states},
+                          {state["node"]: read_clock_domain(directory, state["node"], now)
                            for state in states})
 
 
@@ -1909,7 +2023,8 @@ def read_views(directory, now, stale, compact=False):
     for path in paths:
         state = load(path)
         parts.append(view(state, now, stale,
-                          read_node_state(directory, state["node"], now)))
+                          read_node_state(directory, state["node"], now),
+                          read_clock_domain(directory, state["node"], now)))
     parts.append(light_resumption_view(now, stale, compact))
     return "\n\n".join(parts) + "\n"
 
