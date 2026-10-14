@@ -10,6 +10,20 @@ import watch
 
 
 class PerceptionTests(unittest.TestCase):
+    def setUp(self):
+        # This suite makes no phone or physical request. Unpatched
+        # detect_class_c_delivery_gap() calls reach _host_stopped_state(), which
+        # runs `adb shell dumpsys package org.androidbody` against the physically
+        # connected phone: measured 2026-10-14 at 135 real device round-trips per
+        # suite run (bounded-output 133, fires-on-halt 1, no-repeat 1). OSError is
+        # the failure mode _host_stopped_state maps to an honest unknown, so the
+        # offline verdict is what these tests observe; tests asserting a specific
+        # host_stopped outcome patch subprocess.run themselves.
+        patcher = patch("subprocess.run",
+                        side_effect=OSError("subprocess disabled in unit tests"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def state(self):
         return watch.initial("note3", "http://127.0.0.1:8765/node/note3")
 
@@ -1880,6 +1894,15 @@ class PerceptionTests(unittest.TestCase):
     def test_host_stopped_state_unknown_on_no_adb(self):
         with patch("subprocess.run", side_effect=FileNotFoundError()):
             self.assertIsNone(watch._host_stopped_state())
+
+    def test_host_stopped_probe_stays_offline_in_this_suite(self):
+        # Regression guard for the observed defect: without setUp's guard the
+        # class-C tests spawned 135 real `adb shell dumpsys` calls per run
+        # against the connected phone (2026-10-14). With the device present the
+        # real probe returns stopped=false, so this fails loudly if the guard is
+        # dropped; the contract under test is "unknown when spawning is
+        # unavailable", never a device read.
+        self.assertIsNone(watch._host_stopped_state())
 
     def test_class_c_delivery_gap_detection_includes_host_stopped(self):
         state = self.state()
