@@ -163,6 +163,31 @@ else
   echo "UNKNOWN node-state publisher bytes (git unavailable)"
 fi
 
+# 7c. Runtime activation record (body/runtime-manifest.json). tools/runtime_manifest.py
+# compares each recorded deployed module's sha256 with the bytes in body/runtime, with
+# the declared repository source, and with the owning unit's start time (a unit started
+# before its bytes were written is running older code). The record drifted silently on
+# 2026-10-13/14 because it was the last step of a prose deploy, so supervise it here
+# rather than only on genome wakes. A missing record or runtime directory is RED (like
+# the node-state file above); the tool's own UNKNOWN (e.g. an unreadable unit start) is
+# printed, never silently passed.
+RUNTIME_MANIFEST="$SITE/body/runtime-manifest.json"
+if [ ! -f "$RUNTIME_MANIFEST" ] || [ ! -d "$SITE/body/runtime" ]; then
+  fail "runtime activation record or body/runtime MISSING"
+elif command -v python3 >/dev/null 2>&1 && [ -x "$PWD/tools/runtime_manifest.py" ]; then
+  RM_OUT=$(env XDG_RUNTIME_DIR=/run/user/$(id -u) python3 "$PWD/tools/runtime_manifest.py" check 2>&1)
+  RM_RC=$?
+  case "$RM_RC" in
+    0) pass "runtime activation record matches deployed bytes" ;;
+    1) fail "runtime activation record drifted (drift, unrecorded file, or process older than its bytes)"
+       printf '%s\n' "$RM_OUT" ;;
+    2) printf 'UNKNOWN runtime activation record: %s\n' "$RM_OUT" ;;
+    *) printf 'UNKNOWN runtime activation record (exit %s): %s\n' "$RM_RC" "$RM_OUT" ;;
+  esac
+else
+  echo "UNKNOWN runtime activation record (python3 or tools/runtime_manifest.py unavailable)"
+fi
+
 
 echo "---"
 if [ "$FAIL" -eq 0 ]; then
