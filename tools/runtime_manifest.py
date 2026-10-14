@@ -35,7 +35,11 @@ Deployed bytes that differ from source are legitimate only when the difference i
 declared (the light-cycle monitor's path line is adjusted for the ``body/runtime``
 location). Undeclared difference is RED. A unit start time that cannot be read, a
 manifest key that is not a bare file name, and a declared source outside the
-repository are all refusals or UNKNOWN, never passes.
+repository are all refusals or UNKNOWN, never passes. A unit's start time is the
+main process's exec time, with its active-period start as the fallback: systemd
+clears ``ActiveEnterTimestamp`` when a ``Type=oneshot`` invocation finishes, so a
+completed publication timer (``android-body-spool-read.service``, 2026-10-14) read
+UNKNOWN forever although its process had run the recorded bytes.
 
 Manifest schema 2 (schema 1 stored ``files`` as name -> sha256 string and is
 still readable):
@@ -170,7 +174,7 @@ def resolve_source(repo: Path, source: str) -> Path | None:
 
 
 def parse_unit_timestamp(text: str) -> datetime.datetime | None:
-    """Parse systemd's local-time ActiveEnterTimestamp as UTC, or None.
+    """Parse a systemd local-time unit timestamp as UTC, or None.
 
     systemd prints local time with a zone abbreviation. Only ``UTC``/``GMT`` are
     treated as UTC directly; an abbreviation matching the host's own zone is
@@ -193,16 +197,28 @@ def parse_unit_timestamp(text: str) -> datetime.datetime | None:
     return None
 
 
+#: systemd properties that name when the unit's main process started, most
+#: authoritative first. ``ExecMainStartTimestamp`` is the exec time of the last
+#: main process (kept after a ``Type=oneshot`` invocation finishes and updated on
+#: a restart, so it is tighter than the unit's active period);
+#: ``ActiveEnterTimestamp`` covers a unit that is active without a main process.
+UNIT_START_PROPERTIES = ("ExecMainStartTimestamp", "ActiveEnterTimestamp")
+
+
 def unit_entered(unit: str) -> datetime.datetime | None:
     """Unit start time as UTC, or None when it cannot be read."""
-    try:
-        out = subprocess.run(
-            ["systemctl", "--user", "show", "-p", "ActiveEnterTimestamp", "--value", unit],
-            capture_output=True, text=True, timeout=10, check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return parse_unit_timestamp(out.stdout)
+    for prop in UNIT_START_PROPERTIES:
+        try:
+            out = subprocess.run(
+                ["systemctl", "--user", "show", "-p", prop, "--value", unit],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        stamp = parse_unit_timestamp(out.stdout)
+        if stamp is not None:
+            return stamp
+    return None
 
 
 def git_head(repo: Path) -> str | None:

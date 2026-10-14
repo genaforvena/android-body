@@ -30,6 +30,41 @@ def write(path: Path, text: str) -> Path:
     return path
 
 
+@contextlib.contextmanager
+def stub_systemctl(**properties: str):
+    """Put a stub ``systemctl`` first on PATH that prints the named property values.
+
+    ``unit_entered`` asks ``systemctl --user show -p PROP --value UNIT``; a real
+    completed oneshot cannot be staged in a unit test, so the stub answers that
+    query shape from ``properties`` and every other property with an empty value.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        stub = Path(tmp) / "systemctl"
+        stub.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "prop = args[args.index('-p') + 1]\n"
+            "print(os.environ.get('STUB_' + prop, ''))\n",
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+        old_path = os.environ.get("PATH", "")
+        saved = {key: os.environ.get("STUB_" + key) for key in properties}
+        os.environ["PATH"] = str(tmp) + os.pathsep + old_path
+        for key, value in properties.items():
+            os.environ["STUB_" + key] = value
+        try:
+            yield
+        finally:
+            os.environ["PATH"] = old_path
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop("STUB_" + key, None)
+                else:
+                    os.environ["STUB_" + key] = value
+
+
 class ManifestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -250,6 +285,54 @@ class ManifestCase(unittest.TestCase):
         self.assertEqual(2, code, lines)
         self.assertTrue(any("cannot prove the process runs the recorded bytes" in line
                             for line in lines), lines)
+
+    def test_unit_entered_falls_back_to_the_exec_start_of_a_completed_oneshot(self) -> None:
+        # systemd clears ActiveEnterTimestamp when a Type=oneshot invocation
+        # finishes, so android-body-spool-read.service read UNKNOWN forever
+        # (2026-10-14) although its process had run the recorded bytes.
+        with stub_systemctl(ActiveEnterTimestamp="",
+                            ExecMainStartTimestamp="Wed 2026-10-14 19:58:34 UTC"):
+            self.assertEqual(
+                datetime.datetime(2026, 10, 14, 19, 58, 34, tzinfo=datetime.timezone.utc),
+                runtime_manifest.unit_entered("android-body-spool-read.service"))
+
+    def test_unit_entered_prefers_the_exec_start_over_the_active_period(self) -> None:
+        # A main process that restarts inside one active period (Restart=on-failure)
+        # moves ExecMainStartTimestamp without moving ActiveEnterTimestamp, so the
+        # exec time is the tighter fact.
+        with stub_systemctl(ActiveEnterTimestamp="Wed 2026-10-14 14:00:00 UTC",
+                            ExecMainStartTimestamp="Wed 2026-10-14 19:00:00 UTC"):
+            self.assertEqual(
+                datetime.datetime(2026, 10, 14, 19, 0, 0, tzinfo=datetime.timezone.utc),
+                runtime_manifest.unit_entered("android-body-perception.service"))
+
+    def test_unit_entered_uses_the_active_period_when_the_exec_start_is_empty(self) -> None:
+        with stub_systemctl(ActiveEnterTimestamp="Wed 2026-10-14 14:00:00 UTC",
+                            ExecMainStartTimestamp=""):
+            self.assertEqual(
+                datetime.datetime(2026, 10, 14, 14, 0, 0, tzinfo=datetime.timezone.utc),
+                runtime_manifest.unit_entered("android-body-perception.service"))
+
+    def test_unit_entered_is_unknown_when_neither_timestamp_is_readable(self) -> None:
+        with stub_systemctl(ActiveEnterTimestamp="", ExecMainStartTimestamp=""):
+            self.assertIsNone(runtime_manifest.unit_entered("android-body-spool-read.service"))
+
+    def test_green_when_a_completed_oneshot_left_only_the_exec_start(self) -> None:
+        # The observed defect end to end: check() returned 2 (UNKNOWN) for a
+        # publication timer whose ActiveEnterTimestamp systemd had cleared.
+        self.deploy("watch.py", "print('v1')\n")
+        written = (self.runtime / "watch.py").stat().st_mtime
+        started = datetime.datetime.fromtimestamp(written + 60, tz=datetime.timezone.utc)
+        self.record_doc({"watch.py": {
+            "sha256": runtime_manifest.sha256_file(self.runtime / "watch.py"),
+            "source": None, "divergence": None,
+            "unit": "android-body-spool-read.service"}})
+        with stub_systemctl(ActiveEnterTimestamp="",
+                            ExecMainStartTimestamp=started.strftime("%a %Y-%m-%d %H:%M:%S UTC")):
+            code, lines = runtime_manifest.check(self.site, self.repo)
+        self.assertEqual(0, code, lines)
+        self.assertTrue(any("android-body-spool-read.service started" in line for line in lines),
+                        lines)
 
     def test_record_writes_and_preserves_the_declared_unit(self) -> None:
         self.deploy("watch.py", "print('v1')\n")
