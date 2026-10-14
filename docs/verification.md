@@ -103,6 +103,8 @@ Extended 2026-10-11 with execution-context labels (`host`/`run-as`/`apk-uid`), e
 
 Executed on Note3 2026-10-12 (~08:18–08:28Z): 10 of 11 expected probes ok; `scratch-rerun` failed on adb argv rejoining (harness quoting, not device denial — a single-invocation control succeeded), and `adb shell` exit codes proved unreliable on this device (`adb shell false` → rc=0), so device-side rc must be captured explicitly. A 2026-10-11 identity probe (`dumpsys package`) reported `userId=10224 gids=[3002, 3003]`, `versionCode=2 targetSdk=36`, `versionName=0.2.0`; later probes show uid 10225 with supplementary groups including 3001, consistent with the deployed `BLUETOOTH_ADMIN` permission. run-as app uid 10225 (`untrusted_app`) is functional for id/status/selinux reads and in-context script exec; `run-as` exit0-with-failure ("corrupt installation") is detected and never recorded as success.
 
+Device liveness probes on the Note3 are themselves a hazard: `/system/bin/ps` is a toolbox binary (no toybox), so `ps -A` and `ps -e` print the header row only and exit 0 (61 B) — indistinguishable from "no process", and the source of a false "app process dead" record on 2026-10-14. Probe process liveness with bare `ps` or `ps -x`, or the service with `dumpsys activity services org.androidbody`; `pidof`, `head`, `tail` and `cut` do not exist on the device, so filters run host-side. Header-only output means UNKNOWN, not absent.
+
 ## Reproduce the host checks
 
 ```sh
