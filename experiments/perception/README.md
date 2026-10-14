@@ -67,16 +67,18 @@ surface, scanner and advertiser getter outcomes, and multi-advertisement support
 separate values, including unavailable/error states. Getter `returned` means only
 that the accessor returned an object; it does not prove scanner/advertiser operation,
 an over-air event, or RF reception. These are declarations/status, not proof of an
-operational scanner, advertiser, or over-air event. The Android source emits this
-candidate event, but the installed phone has not been shown to run it; deployed live
-BLE status therefore remains unknown.
+operational scanner, advertiser, or over-air event. The installed phone emits this
+read-only snapshot live (observed 2026-10-13T11:03Z and 2026-10-14T06:13Z on the
+BleStatus-wiring APK `a5cc750e`), reporting Note3 `api=21 adapter=enabled
+scanner_getter=returned advertiser_getter=null advertiser_supported=unsupported`.
 The `ble_sighting` and `ble_scan` projections render bounded BLE scan evidence:
 sighting name and RSSI (only when fresh-clock-conditional) and scan lifecycle
 subtype (`start`/`stop`/`error`/`unavailable`) with reason, beacon, window and gap.
 The sightings channel is explicitly not presence, occupancy or proximity proof;
 `sightings_in_history_window` is a bounded count, not a rate or duration. The
-installed phone has not been shown to emit these events; deployed live BLE
-sightings therefore remain unknown.
+installed phone emits scan lifecycle events live (observed `ble_scan start
+beacon=MISHE-BEACON`, 2026-10-13T09:34Z), but no allowlisted beacon has been
+sighted, so `ble_sighting` evidence and any RF conclusion remain unknown.
 The bounded state retains the latest 32 event kinds, last 32 observations and last
 16 action receipts. An unknown event is not treated as evidence of a known sensor.
 

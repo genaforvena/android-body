@@ -90,6 +90,8 @@ The read-only BLE capability snapshot uses `ble_status source=androidbody_blueto
 
 The read-only process identity probe uses `probe identity uid=<uid> groups=<space-separated gid list|none>`, read from `/proc/self/status` (bounded to 4096 bytes) within the hello `session`. It attributes session-scoped probes to the app UID; it executes nothing.
 
+The bounded BLE scan recorder emits `ble_scan start beacon=MISHE-BEACON window_ms=<n> gap_ms=<n>`, `ble_scan stop reason=session_end`, `ble_scan error reason=<cause>` (including `reason=scan_failed code=<n>`) and `ble_scan unavailable reason=<cause>`; a scanner-visible allowlisted beacon produces `ble_sighting name=MISHE-BEACON rssi=<dBm>`. These are scanner-visible observations, not presence, occupancy or proximity proof; the scanner runs bounded windows with idle gaps and never toggles Bluetooth. The hello session also carries `owner_checkboxes battery=<on|off> light=<on|off> acceleration=<on|off> vibration=<on|off>`, the phone's local owner-enablement state; remote text cannot change it.
+
 ## Delivery, collection and restart semantics
 
 The wire protocol is version 2: since app 0.2.0, light, acceleration and Wi-Fi link RSSI records carry `phone_elapsed_ms` (described above). The hello handshake still emits `protocol=1`; consumers detect version 2 by that field's presence, not by the hello number. App version 0.2 adds durable local collection and persistent ON without changing the HTTP endpoints.

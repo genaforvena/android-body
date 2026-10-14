@@ -103,7 +103,7 @@ Run the same signed APK against the same controlled bridge, and record APK hash,
 
 | Device | Required baseline | Status |
 | --- | --- | --- |
-| Old Samsung Note 3 | SM-N900, Android5/API21, firmware `LRX21V.N900XXSEBRH3`; charging, private USB-loopback HTTP; then-final 0.2.0 APK (`7eb54e9b`); current install BLE-fix build `1bb5029f` since 2026-10-13T04:03Z | BOUNDED SMOKE PASS: installation, native ON/OFF, actual sensor delivery, collect-only/backlog, process-loss restoration, 15s screen-off; APK update over ON installation verified 2026-10-12 (ON session restored, cursor advancing — see verification.md eval-route record; OFF-install update NOT RUN); full checklist incomplete |
+| Old Samsung Note 3 | SM-N900, Android5/API21, firmware `LRX21V.N900XXSEBRH3`; charging, private USB-loopback HTTP; then-final 0.2.0 APK (`7eb54e9b`); current install BleStatus-wiring build `a5cc750e` since 2026-10-13T09:34Z | BOUNDED SMOKE PASS: installation, native ON/OFF, actual sensor delivery, collect-only/backlog, process-loss restoration, 15s screen-off; APK update over ON installation verified 2026-10-12 (ON session restored, cursor advancing — see verification.md eval-route record; OFF-install update NOT RUN); full checklist incomplete |
 | Xiaomi | Exact model; MIUI/HyperOS and Android version | NOT RUN |
 | Current Android device | API 34+; preferably API 36; notification/type checks | NOT RUN |
 
