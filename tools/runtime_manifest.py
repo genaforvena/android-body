@@ -17,11 +17,13 @@ This tool makes the record checkable and the drift visible:
 
 * ``check`` compares the recorded sha256 against the bytes actually deployed,
   against the declared repository source, and reports any deployed ``*.py`` that
-  the record does not mention. For a file whose owning systemd unit is recorded,
-  it also compares the unit's start time with the file's write time, because a
-  process started before the bytes were written is running older code.
-  Exit 0 GREEN / 1 RED / 2 UNKNOWN. A record that cannot be read or interpreted
-  is UNKNOWN, never a pass.
+  the record does not mention. The source of record is the committed blob at
+  HEAD when the path is tracked, so a differing working-tree copy is a peer's
+  undeployed edit, reported as such, never as deployment drift. For a file whose
+  owning systemd unit is recorded, it also compares the unit's start time with
+  the file's write time, because a process started before the bytes were written
+  is running older code. Exit 0 GREEN / 1 RED / 2 UNKNOWN. A record that cannot
+  be read or interpreted is UNKNOWN, never a pass.
 * ``record`` rewrites the record from the deployed bytes (atomic replace,
   preserving unknown top-level and per-file keys). It refuses to record a file
   whose deployed bytes differ from its declared source unless
@@ -81,6 +83,25 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 16), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def committed_source_hash(repo: Path, source: str) -> str | None:
+    """sha256 of ``source`` as committed at HEAD, or None.
+
+    None when the path is not tracked at HEAD (a new, uncommitted source), HEAD
+    is unborn, or git cannot be read. The caller then falls back to the
+    working-tree file, the only copy that exists.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo), "show", f"HEAD:{source}"],
+            capture_output=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return hashlib.sha256(out.stdout).hexdigest()
 
 
 def is_bare_name(name: object) -> bool:
@@ -253,7 +274,21 @@ def check(site: Path, repo: Path, unit_entered_fn=None) -> tuple[int, list[str]]
                 note(RED, f"{name}: recorded source {source} is missing")
             else:
                 source_hash = sha256_file(source_path)
-                if source_hash == actual:
+                committed = committed_source_hash(repo, source)
+                if committed is not None and committed == actual:
+                    # The deployed bytes are the committed source. A differing
+                    # working-tree copy is a peer's undeployed edit, not
+                    # deployment drift: the shared checkout is routinely dirty
+                    # while a deployed module's source is being edited, and
+                    # calling that drift sends readers after a redeploy that is
+                    # not owed.
+                    if source_hash == committed:
+                        note(GREEN, f"{name}: deployed == source {source} (sha256 {actual[:16]})")
+                    else:
+                        note(GREEN, f"{name}: deployed == committed source {source} "
+                                   f"(sha256 {actual[:16]}); working tree has undeployed edits "
+                                   f"(HEAD {committed[:16]}, worktree {source_hash[:16]})")
+                elif source_hash == actual:
                     note(GREEN, f"{name}: deployed == source {source} (sha256 {actual[:16]})")
                 elif entry["divergence"]:
                     note(GREEN, f"{name}: deployed != source {source} "

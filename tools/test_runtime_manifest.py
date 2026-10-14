@@ -97,6 +97,44 @@ class ManifestCase(unittest.TestCase):
         self.assertEqual(1, code, lines)
         self.assertTrue(any("no recorded divergence" in line for line in lines), lines)
 
+    def test_green_when_worktree_source_has_undeployed_edits(self) -> None:
+        # The shared checkout is routinely dirty while a peer edits a deployed
+        # module's source. The deployed bytes still equal the committed source,
+        # so this is undeployed work, not deployment drift.
+        self.source(SOURCE_WATCH, "print('v1')\n")
+        self.deploy("watch.py", "print('v1')\n")
+        self.commit()
+        self.record_doc({"watch.py": {"sha256": runtime_manifest.sha256_file(self.runtime / "watch.py"),
+                                      "source": SOURCE_WATCH, "divergence": None}})
+        self.source(SOURCE_WATCH, "print('v2-uncommitted')\n")
+        code, lines = self.run_check()
+        self.assertEqual(0, code, lines)
+        self.assertTrue(any("undeployed edits" in line for line in lines), lines)
+
+    def test_green_when_deployed_bytes_are_an_uncommitted_edit(self) -> None:
+        # The deploy-then-commit window: the live bytes match the working tree but
+        # not yet HEAD. That stays GREEN, as it did before, rather than becoming
+        # a new RED.
+        self.source(SOURCE_WATCH, "print('v1')\n")
+        self.commit()
+        self.source(SOURCE_WATCH, "print('v2')\n")
+        self.deploy("watch.py", "print('v2')\n")
+        self.record_doc({"watch.py": {"sha256": runtime_manifest.sha256_file(self.runtime / "watch.py"),
+                                      "source": SOURCE_WATCH, "divergence": None}})
+        code, lines = self.run_check()
+        self.assertEqual(0, code, lines)
+
+    def test_red_when_deployed_matches_neither_head_nor_worktree(self) -> None:
+        self.source(SOURCE_WATCH, "print('v1')\n")
+        self.commit()
+        self.source(SOURCE_WATCH, "print('v2')\n")
+        self.deploy("watch.py", "print('v3-deployed')\n")
+        self.record_doc({"watch.py": {"sha256": runtime_manifest.sha256_file(self.runtime / "watch.py"),
+                                      "source": SOURCE_WATCH, "divergence": None}})
+        code, lines = self.run_check()
+        self.assertEqual(1, code, lines)
+        self.assertTrue(any("no recorded divergence" in line for line in lines), lines)
+
     def test_green_when_divergence_is_declared(self) -> None:
         self.source(SOURCE_WATCH, "print('source')\n")
         self.deploy("watch.py", "print('deployed, path line adjusted')\n")
