@@ -1,6 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: CC0-1.0
-# Bounded health check for android-body infrastructure.
+# Bounded health check for android-body infrastructure and the Note3 session.
+# Section 6 classifies the device session (tools/device_state.py); a node that
+# is not attached reads UNKNOWN and does not fail the host-infrastructure checks.
 # Exits 0 if all invariants hold, 1 otherwise.
 set -u
 cd "$(dirname "$0")/.."
@@ -78,6 +80,44 @@ for q in note3.observations.log note3.actions.log redmi10.observations.log redmi
     fail "queue $q MISSING"
   fi
 done
+
+# 6. Device session state (read-only). Classifies ON-sending / ON-collect-only /
+# OFF / app-absent so a silent producer is not misread as "OFF" or "app dead".
+# Collect-only issues no HTTP by design, so silence there is expected, not a fault.
+SERIAL=${NOTE3_SERIAL:-4d00553d61ab90b7}
+if command -v adb >/dev/null 2>&1 && [ -x "$PWD/tools/device_state.py" ]; then
+  DEV=$(python3 "$PWD/tools/device_state.py" --serial "$SERIAL" 2>/dev/null || true)
+  case "$DEV" in
+    "device-state note3: ON_SENDING"*)
+      MTIME=$(stat -c%Y "$SITE/body/queues/note3.observations.log" 2>/dev/null || echo "")
+      if [ -z "$MTIME" ]; then
+        fail "device note3 ON_SENDING but queue file unreadable"
+      else
+        AGE=$(( $(date +%s) - MTIME ))
+        if [ "$AGE" -gt 120 ]; then
+          fail "device note3 ON_SENDING but queue unchanged ${AGE}s (>120s)"
+        else
+          pass "device note3 ON_SENDING; queue written ${AGE}s ago"
+        fi
+      fi
+      ;;
+    "device-state note3: ON_COLLECT_ONLY"*)
+      echo "INFO   device note3 ON+collect-only — no HTTP by design; producer silence expected"
+      ;;
+    "device-state note3: OFF"*)
+      echo "INFO   device note3 OFF — no collection; producer silence expected"
+      ;;
+    "device-state note3: ON_NOT_RUNNING"*)
+      fail "device note3 durably enabled but app process absent (restore expected)"
+      ;;
+    *)
+      echo "UNKNOWN device note3 session state${DEV:+: $DEV}"
+      ;;
+  esac
+else
+  echo "UNKNOWN device note3 session state (adb or tools/device_state.py unavailable)"
+fi
+
 
 echo "---"
 if [ "$FAIL" -eq 0 ]; then

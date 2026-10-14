@@ -20,6 +20,7 @@ tools/test-spool.sh
 python3 -m unittest discover -s rendezvous/minimal-server
 python3 -m unittest discover -s experiments/light-vibrate
 python3 -m unittest discover -s experiments/minimal-substrate
+python3 -m unittest discover -s tools
 ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool
 ```
 
