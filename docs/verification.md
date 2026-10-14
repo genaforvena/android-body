@@ -499,8 +499,9 @@ This is consumer-view evidence; not server-side receipt, motor proof, or calibra
   monitor (rc=0) never re-armed.
 - Change: `light_cycle_monitor.py` now publishes an atomic heartbeat (`artifacts/light-cycle-monitor-state.json`:
   poll, interval, max_polls, threshold, last lux, prev_lux, armed, pid, started/timestamp); `watch.py` renders a
-  `Light-cycle resumption detector` section (full and compact views) reporting status, heartbeat age, armed state
-  and the last retained row verbatim, with a stale/absent heartbeat shown as `stale/detector-silent` or
+  `Light-cycle resumption detector` section in both the full and compact views reporting status, armed state and
+  the last retained row verbatim (the heartbeat age is in the full view only, so the compact view cached to
+  `events.txt` does not rewrite every poll), with a stale/absent heartbeat shown as `stale/detector-silent` or
   `unknown/no-monitor-heartbeat` — never calm.
 - Unit: `Restart=on-failure` -> `Restart=always` so a fired monitor re-arms instead of silently stopping.
 - Deterministic exercise of the deployed detector bytes (9/9 scenarios PASS, throwaway harness, synthetic
@@ -513,8 +514,12 @@ This is consumer-view evidence; not server-side receipt, motor proof, or calibra
 - Retained log carries one superseded-rule row (lux 2.505, prev_lux null, no threshold_lux, 2026-10-13T07:12Z):
   preserved as historical evidence and labelled in the pane as predating the 7.0-lux rule; inadmissible under
   every check of research-methods' pre-registered M5 rule. Zero admissible resumption rows on record.
+- Follow-up commit 57ec309 (independent review of ad5895e, reviewer agent): `_last_monitor_row` no longer returns
+  None on a partial final line, so a crash mid-append cannot make the pane claim "no resumption claimed" while
+  complete rows exist; and the compact view dropped its per-second `heartbeat_age` (it was rewriting `events.txt`
+  every poll). 115 tests OK.
 - Revert: `body/runtime/light_cycle_monitor.py.pre-deploy3-20261014-0852Z` (sha256 96abef81...),
-  `body/runtime/watch.py.pre-deploy-20261014-0852Z` (sha256 000bbeff...), unit copy
+  `body/runtime/watch.py.pre-deploy-20261014-{0852,0900,0912}Z` (0852Z = sha256 000bbeff...), unit copy
   `artifacts/senses-wake74767-light-detector-controlled-exercise/light-cycle-monitor.service.pre-change-20261014-0845Z`
   (sha256 8e97c28a...).
 - Scope: perception source + tests + deployed host-side monitor/consumer + user-unit restart policy + service
