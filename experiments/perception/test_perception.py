@@ -1434,7 +1434,7 @@ class PerceptionTests(unittest.TestCase):
                   for i in range(6)]
         self.page(state, lines, received=1000)
         text = watch.render(state, 1000, 30)
-        self.assertIn("Accel guard (retained window; offset-invariant, baseline-step-immune):", text)
+        self.assertIn("Accel guard (retained window; calibration-free, baseline-step-immune):", text)
         self.assertIn("status=ok samples=6 pinned_axes=null", text)
         self.assertNotIn("accel leg indeterminate", text)
 
@@ -2049,6 +2049,87 @@ class PerceptionTests(unittest.TestCase):
                  patch.object(watch, "MONITOR_LOG_FILE", log_file):
                 view = watch.light_resumption_view(1000, 30)
         self.assertIn("last_row=lux=67.0 prev_lux=0.2 threshold_lux=7.0 poll=59", view)
+
+
+    def test_node_state_document_is_not_parsed_as_a_perception_state(self):
+        # tools/node_state.py publishes node-state-<node>.json into the same
+        # directory; loading it as a perception state raised KeyError 'version'
+        # and crash-looped the follower on 2026-10-14.
+        state = self.state()
+        self.page(state, ["1000 light lux=12.5 accuracy=3 age_ms=21"])
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            watch.save(directory / "note3.json", state)
+            (directory / "node-state-note3.json").write_text(json.dumps({
+                "node": "note3", "mode": "ON_COLLECT_ONLY", "desired_on": True,
+                "collect_only": True, "observed_at_epoch_s": 1000.0,
+                "source": "tools/node_state.py", "reasons": []}))
+            view = watch.read_views(directory, 1000, 30)
+            space = watch.read_space(directory, 1000, 30)
+        self.assertIn("NODE note3", view)
+        self.assertIn("mode=ON_COLLECT_ONLY desired_on=true collect_only=true", view)
+        self.assertEqual([node["node"] for node in space["nodes"]], ["note3"])
+
+    def test_read_node_state_reports_published_mode_and_age(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            (directory / "node-state-note3.json").write_text(json.dumps({
+                "node": "note3", "mode": "OFF", "desired_on": False,
+                "collect_only": False, "observed_at_epoch_s": 1000.0,
+                "source": "tools/node_state.py", "reasons": ["marker absent"]}))
+            verdict = watch.read_node_state(directory, "note3", 1030.0)
+        self.assertEqual(verdict["status"], "ok")
+        self.assertEqual(verdict["mode"], "OFF")
+        self.assertFalse(verdict["desired_on"])
+        self.assertEqual(verdict["age_s"], 30.0)
+
+    def test_read_node_state_failures_and_staleness_are_unknown_never_off(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            absent = watch.read_node_state(directory, "note3", 1000.0)
+            self.assertEqual((absent["status"], absent["mode"]), ("absent", "UNKNOWN"))
+            other = watch.read_node_state(directory, "redmi10", 1000.0)
+            self.assertEqual((other["status"], other["mode"]), ("absent", "UNKNOWN"))
+            path = directory / "node-state-note3.json"
+            path.write_text("{not json")
+            invalid = watch.read_node_state(directory, "note3", 1000.0)
+            self.assertEqual((invalid["status"], invalid["mode"]), ("invalid", "UNKNOWN"))
+            path.write_text(json.dumps({
+                "node": "note3", "mode": "OFF", "desired_on": False,
+                "collect_only": False, "observed_at_epoch_s": 1000.0,
+                "source": "tools/node_state.py", "reasons": []}))
+            stale = watch.read_node_state(directory, "note3", 1000.0 + 3600)
+            self.assertEqual((stale["status"], stale["mode"]), ("stale", "UNKNOWN"))
+
+    def test_view_renders_absent_node_state_as_unknown_never_off(self):
+        state = self.state()
+        self.page(state, ["1000 light lux=12.5 accuracy=3 age_ms=21"])
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            watch.save(directory / "note3.json", state)
+            view = watch.read_views(directory, 1000, 30)
+        self.assertIn("mode=UNKNOWN status=absent reason=no-node-state-file", view)
+        self.assertNotIn("mode=OFF", view)
+
+    def test_class_b_record_carries_node_mode_provenance(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
+                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                      received=1000, log_dir=log_dir)
+            mode = {"status": "ok", "mode": "ON_COLLECT_ONLY"}
+            watch.detect_class_b_delivery_gap(state, log_dir, mode)
+            state["_class_b_last_cursor_advance_at"] = (
+                time.time() - watch.CLASS_B_FREEZE_SECONDS - 1)
+            detection = watch.detect_class_b_delivery_gap(state, log_dir, mode)
+            row = json.loads(
+                (log_dir / "class-b-delivery-gap-detectors.jsonl").read_text().strip().split("\n")[-1])
+        self.assertEqual(detection["node_mode"], "ON_COLLECT_ONLY")
+        self.assertEqual(detection["node_state_status"], "ok")
+        self.assertEqual(row["node_mode"], "ON_COLLECT_ONLY")
+        self.assertEqual(row["node_state_status"], "ok")
 
 if __name__ == "__main__":
     unittest.main()

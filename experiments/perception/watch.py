@@ -247,7 +247,7 @@ def excursion_window(state):
     is a separate cross-clock transport diagnostic, never folded into the
     phone window. The protocol v2.1 retention set (windowed standard
     deviations, oscillation/quantization and transient-revert evidence) and
-    the offset-invariant accel guard are computed over the same retained
+    the calibration-free accel guard are computed over the same retained
     window; see retention_set and accel_guard.
     """
     history = state.get("history", [])
@@ -358,16 +358,18 @@ def median(values):
 
 
 def accel_guard(history):
-    """Offset-invariant accel-channel guard over the retained window.
+    """Calibration-free accel-channel guard over the retained window.
 
     A pinned axis (bit-identical values across the window) or a stable
     magnitude far from Earth gravity makes the accel leg indeterminate: a
     pinned axis yields std ~ 0, which a stillness/change scorer reads as
     "still", and a stable 1.6 g for hours is not real acceleration. Both
     regimes were observed on Note3 (research-methods wake 75303/75378).
-    Every test is offset-invariant (magnitude ratio to g, per-axis range), so
-    the verdict survives the baseline steps documented above. No value is
-    substituted: an indeterminate verdict never authorizes a stillness or a
+    The pinned-axis test is offset-invariant (per-axis range); the magnitude
+    test compares |a| to the nominal g and needs no per-device calibration.
+    Both survive the baseline steps documented above: a shifted baseline is
+    itself flagged implausible-magnitude, and a pinned axis is caught by range.
+    No value is substituted: an indeterminate verdict never authorizes a stillness or a
     movement claim from the accel leg.
     """
     axes = {"x": [], "y": [], "z": []}
@@ -499,7 +501,7 @@ CLASS_B_DETECTOR_LINES = 128
 CLASS_B_FREEZE_SECONDS = 30.0
 
 
-def detect_class_b_delivery_gap(state, log_dir):
+def detect_class_b_delivery_gap(state, log_dir, node_state=None):
     """Detect class-B delivery gap: emission halt with null-lux reads across time.
 
     Fires on (session change with null-lux) OR (cursor freeze with null-lux).
@@ -512,6 +514,9 @@ def detect_class_b_delivery_gap(state, log_dir):
     line) advances the cursor without adding light evidence, so it can no
     longer re-arm a spurious second onset for one continuous gap. The cursor's
     observed state is recorded as provenance, never used as identity.
+    The host-side node mode (sending / collect-only / OFF) is recorded as
+    provenance so a gap names *why* the producer is silent, never as part of
+    the dedup identity.
     """
     if log_dir is None:
         return None
@@ -560,6 +565,8 @@ def detect_class_b_delivery_gap(state, log_dir):
         "light_sequence": last_light_sequence,
         "trigger": "session-change" if session_changed else "cursor-freeze",
         "null_lux_consecutive": max_consecutive,
+        "node_mode": (node_state or {}).get("mode", "UNKNOWN"),
+        "node_state_status": (node_state or {}).get("status", "unknown"),
     }
 
     path = log_dir / "class-b-delivery-gap-detectors.jsonl"
@@ -1363,11 +1370,14 @@ def describe(item, now, stale):
             f"consumer_receipt={stamp(item['received'])} delayed_at_receipt={str(delayed).lower()}")
 
 
-def render(state, now, stale):
+def render(state, now, stale, node_state=None):
     lines = [f"NODE {state['node']} source={state['source']} cursor={state['cursor']}",
              f"phone={state.get('node_status') or node_status(state, now, stale)} transport={transport(state, now, stale)} "
              f"backlog_page_pending={str(state['has_more']).lower()} last_poll={stamp(state['poll_at'])}",
              "capabilities: " + " ".join(f"{key}={state['capabilities'].get(key, 'unknown')}" for key in CAPABILITIES)]
+    state_line = node_state_line(node_state)
+    if state_line is not None:
+        lines.append(state_line)
     lines.append("owner checkboxes: " + " ".join(
         f"{key}={state['owner_checkboxes'].get(key, 'unknown')}" for key in OWNER_CHECKBOXES))
     lines.append("compact: caps=" +
@@ -1443,7 +1453,7 @@ def render(state, now, stale):
                    else f"{guard['magnitude_median']:.3f}")
     std_text = ("null" if guard["magnitude_std"] is None
                 else f"{guard['magnitude_std']:.3f}")
-    lines.append("Accel guard (retained window; offset-invariant, baseline-step-immune):")
+    lines.append("Accel guard (retained window; calibration-free, baseline-step-immune):")
     lines.append(f"  status={guard['status']} samples={guard['samples']} "
                  f"pinned_axes={','.join(guard['pinned_axes']) or 'null'} "
                  f"magnitude_median={median_text} m/s² magnitude_std={std_text} m/s² "
@@ -1469,7 +1479,7 @@ def render(state, now, stale):
     return "\n".join(lines)
 
 
-def render_events(state, now, stale):
+def render_events(state, now, stale, node_state=None):
     # Recompute this heading even if the follower died; never label cached data current.
     key = compact_key(state, now, stale)
     lines = [f"{state['node']} source={state['source']} phone={key[0]} "
@@ -1478,6 +1488,9 @@ def render_events(state, now, stale):
              " owner=" +
              ",".join(f"{name}:{state['owner_checkboxes'].get(name, 'unknown')}"
                       for name in OWNER_CHECKBOXES)]
+    state_line = node_state_line(node_state)
+    if state_line is not None:
+        lines.append("  " + state_line)
     rssi_status, rssi_dbm, rssi_reason, rssi_source = key[6]
     lines.append(f"  wifi_link_rssi {rssi_status} rssi_dbm={rssi_dbm} "
                  f"reason={rssi_reason or 'unspecified'} source={rssi_source or 'unknown'}")
@@ -1621,8 +1634,85 @@ def space_snapshot(states, now, stale):
             "nodes": nodes}
 
 
+NODE_STATE_PREFIX = "node-state-"
+NODE_STATE_MAX_AGE_SECONDS = 300.0
+NODE_MODES = ("ON_SENDING", "ON_COLLECT_ONLY", "ON_NOT_RUNNING", "OFF", "UNKNOWN")
+
+
+def state_paths(directory):
+    """Perception state files only.
+
+    The host-side node-state documents (tools/node_state.py) live in the same
+    directory by contract (chat 75665); they are not perception states and must
+    not be parsed as one.
+    """
+    if not directory.exists():
+        return []
+    return sorted(path for path in directory.glob("*.json")
+                  if not path.name.startswith(NODE_STATE_PREFIX))
+
+
+def read_node_state(directory, node, now, max_age=NODE_STATE_MAX_AGE_SECONDS):
+    """Read the bounded host-side node-state file for one node.
+
+    Returns mode "UNKNOWN" with status absent/stale/invalid when the file is
+    missing, unreadable, malformed, names another node, or is older than
+    ``max_age``. A failed or stale read is never OFF: only an explicit OFF the
+    publisher wrote is reported as OFF.
+    """
+    def unknown(status, reason):
+        return {"status": status, "mode": "UNKNOWN", "desired_on": None,
+                "collect_only": None, "observed_at_epoch_s": None,
+                "age_s": None, "reason": reason}
+
+    path = directory / f"{NODE_STATE_PREFIX}{node}.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return unknown("absent", "no-node-state-file")
+    except (OSError, ValueError):
+        return unknown("invalid", "node-state-unreadable")
+    if (not isinstance(document, dict) or document.get("node") != node
+            or document.get("mode") not in NODE_MODES):
+        return unknown("invalid", "node-state-invalid")
+    observed = document.get("observed_at_epoch_s")
+    if (not isinstance(observed, (int, float)) or isinstance(observed, bool)
+            or not math.isfinite(observed)):
+        return unknown("invalid", "node-state-invalid")
+    age = now - observed
+    if age > max_age:
+        return unknown("stale", "node-state-stale")
+    desired = document.get("desired_on")
+    collect = document.get("collect_only")
+    return {"status": "ok", "mode": document["mode"],
+            "desired_on": desired if isinstance(desired, bool) else None,
+            "collect_only": collect if isinstance(collect, bool) else None,
+            "observed_at_epoch_s": observed,
+            "age_s": round(max(age, 0.0), 1),
+            "reason": None}
+
+
+def node_state_line(node_state):
+    """One human-readable line for the node-state verdict, or None without one."""
+    if node_state is None:
+        return None
+    if node_state["status"] != "ok":
+        return (f"node state (host-side, tools/node_state.py): mode=UNKNOWN "
+                f"status={node_state['status']} reason={node_state['reason']} "
+                f"(unknown is never OFF)")
+
+    def flag(value):
+        return "unknown" if value is None else str(value).lower()
+
+    return (f"node state (host-side, tools/node_state.py): mode={node_state['mode']} "
+            f"desired_on={flag(node_state['desired_on'])} "
+            f"collect_only={flag(node_state['collect_only'])} "
+            f"observed={stamp(node_state['observed_at_epoch_s'])} "
+            f"age={node_state['age_s']}s status=ok")
+
+
 def read_space(directory, now, stale):
-    paths = sorted(directory.glob("*.json")) if directory.exists() else []
+    paths = state_paths(directory)
     if not paths:
         return {"schema_version": 1, "generated_at_utc": stamp(now),
                 "producer": {"name": "android-body-perception", "entry_point": "watch.py",
@@ -1672,11 +1762,15 @@ def poll(opener, state, secret, timeout, log_dir=None):
 
 
 def read_views(directory, now, stale, compact=False):
-    paths = sorted(directory.glob("*.json")) if directory.exists() else []
+    paths = state_paths(directory)
     if not paths:
         return "UNKNOWN: no perception state; follower has not received evidence\n"
     view = render_events if compact else render
-    parts = [view(load(path), now, stale) for path in paths]
+    parts = []
+    for path in paths:
+        state = load(path)
+        parts.append(view(state, now, stale,
+                          read_node_state(directory, state["node"], now)))
     parts.append(light_resumption_view(now, stale, compact))
     return "\n\n".join(parts) + "\n"
 
@@ -1735,7 +1829,8 @@ def follow(args, directory):
                 changed = update_events(state, now, args.stale_seconds)
                 state["node_status"] = node_status(state, now, args.stale_seconds)
                 save(path, state)
-                detection = detect_class_b_delivery_gap(state, directory)
+                detection = detect_class_b_delivery_gap(
+                    state, directory, read_node_state(directory, state["node"], now))
                 if detection:
                     print(f"class-b-delivery-gap: {detection}", flush=True)
                 detection_a = detect_class_a_freeze(state, directory)

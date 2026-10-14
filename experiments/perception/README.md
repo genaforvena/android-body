@@ -165,7 +165,7 @@ yielding `status=moving` on a stationary phone (observed repeatedly, e.g.
 light_std ≈ 0.6 lux with accel_std ≤ 0.13 m/s² and rssi_std = 0 dBm). Treat
 isolated light-term excursions as a known false-positive mode, not motion.
 
-**Accel baseline anomaly and offset-invariant guard (Note3):** On
+**Accel baseline anomaly and calibration-free guard (Note3):** On
 2026-10-11T03:14:41Z the Note3 accelerometer resting magnitude stepped from
 ~10.21 m/s² (near Earth gravity) to ~15.93 m/s² (1.6×g) in one 5-second
 interval. Two further regimes were measured over the retained queue
@@ -178,7 +178,7 @@ baseline-shift-immune: std of a constant stream is zero regardless of
 baseline. Absolute-magnitude thresholds (e.g. "still if |a| < 11") would be
 unsound on this device in its current state and are not deployed.
 
-`view` therefore renders an offset-invariant **accel guard** over the retained
+`view` therefore renders a calibration-free **accel guard** over the retained
 window, and the excursion log carries the same verdict. Statuses: `few-samples`
 (fewer than 5 accel samples), `pinned-axis` (any axis is bit-identical across
 the window — std ≈ 0, which a stillness/change scorer would misread as "still"),
@@ -186,8 +186,9 @@ the window — std ≈ 0, which a stillness/change scorer would misread as "stil
 pstdev(|a|) < 0.5 m/s² is not real acceleration), else `ok`. `ok` is the only
 status under which the accel leg supports a stillness or movement claim; an
 indeterminate verdict never substitutes a value and never authorizes a current
-sense. Every test is offset-invariant, so the verdict survives the baseline
-steps above.
+sense. The pinned-axis test is offset-invariant (per-axis range); the magnitude
+test compares |a| to the nominal g and needs no per-device calibration. Both
+survive the baseline steps above.
 
 ## Class-B delivery-gap detection
 
@@ -208,6 +209,29 @@ followed by a new halt adds a new light observation and is reported as a
 distinct gap. A freeze without null-lux reads is not class-B; the detector is
 armed for the next qualifying occurrence. Historical rows written before this
 dedup change keep `kind=class-b-stop` and carry no `light_sequence`.
+
+Each record also carries `node_mode` and `node_state_status` read from the
+host-side node-state file (below), so a gap names *why* the producer is silent
+(OFF, collect-only, not-running) rather than only that it is. These fields are
+provenance and never take part in the dedup identity.
+
+## Host-side node state
+
+`tools/node_state.py` (health) classifies the device from already-read adb text
+and publishes `SITE/body/perception/node-state-<node>.json` atomically:
+
+    {"node": "note3",
+     "mode": "ON_SENDING|ON_COLLECT_ONLY|ON_NOT_RUNNING|OFF|UNKNOWN",
+     "desired_on": true, "collect_only": false, "observed_at_epoch_s": 0.0,
+     "source": "tools/node_state.py", "reasons": ["..."]}
+
+`read_node_state` reads it with a bounded age (300 s) and the view renders one
+`node state (host-side, ...)` line per node. A missing, unreadable, malformed or
+stale document yields `mode=UNKNOWN`, never `OFF`: only an explicit `OFF` the
+publisher wrote is reported as OFF. The documents sit in the same directory as
+the perception state files but are a distinct family; `state_paths` excludes the
+`node-state-` prefix from the perception-state glob so they are never parsed as a
+node state (a `KeyError: 'version'` crash-loop on 2026-10-14 showed why).
 
 ## Freshness and honest limits
 
@@ -311,7 +335,7 @@ samples), `light_oscillation` (adjacent 0↔1 lux flip path such as `0->1->0`,
 `light_transient` (`revert` when the flip path returns to its starting level,
 `open` when it does not, `none` without a flip).
 
-The same line carries the offset-invariant accel guard: `accel_guard` (`ok`,
+The same line carries the calibration-free accel guard: `accel_guard` (`ok`,
 `few-samples`, `pinned-axis`, `implausible-magnitude`), `accel_samples`,
 `accel_pinned_axes` (`null` or the pinned axis names), `accel_magnitude_median`
 and `accel_magnitude_std`. An excursion whose accel guard is not `ok` is
