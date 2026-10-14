@@ -193,14 +193,14 @@ def _spool_size(argv, serial, spool_path, timeout):
 def _retention_window(argv, serial, spool_path, timeout):
     """Get the spool retention window from the oldest and newest row timestamps.
 
-    Each spool row begins with an ISO timestamp. We extract all timestamps
-    via ``grep -a -o`` with a bounded pattern, then compute min/max in
-    Python, avoiding a full dump. The retention window (~6.5h) bounds the
-    match count (~18K).
+    Each spool row begins with an epoch timestamp (Unix seconds). We extract
+    all timestamps via ``grep -a -o`` with a bounded pattern, then compute
+    min/max in Python, avoiding a full dump. The retention window (~6.5h)
+    bounds the match count (~18K).
 
     Returns ``(oldest_epoch_host, newest_epoch_host, window_seconds)`` or raises.
     """
-    ts_pattern = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    ts_pattern = r"[0-9]\{10\}"
     try:
         out = _run(argv, serial,
                    f"run-as org.androidbody grep -a -o '{ts_pattern}' {spool_path}",
@@ -208,7 +208,17 @@ def _retention_window(argv, serial, spool_path, timeout):
         lines = [line.strip() for line in out.splitlines() if line.strip()]
         if not lines:
             raise ValueError("could not extract spool timestamps")
-        epochs = [_phone_ts_to_epoch(line) for line in lines]
+        # Filter to reasonable epoch range (2024-2033) to exclude non-timestamp numbers
+        epochs = []
+        for line in lines:
+            try:
+                val = int(line)
+                if 1700000000 <= val <= 2000000000:
+                    epochs.append(val)
+            except ValueError:
+                continue
+        if not epochs:
+            raise ValueError("no valid epoch timestamps found")
         oldest_epoch = min(epochs)
         newest_epoch = max(epochs)
         window = newest_epoch - oldest_epoch
