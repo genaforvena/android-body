@@ -1,0 +1,11 @@
+[Unit]
+Description=Android Body Note3 spool-read publication timer
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=5min
+AccuracySec=1s
+Unit=android-body-spool-read.service
+
+[Install]
+WantedBy=timers.target

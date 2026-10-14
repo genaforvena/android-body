@@ -1434,7 +1434,7 @@ def describe(item, now, stale):
             f"consumer_receipt={stamp(item['received'])} delayed_at_receipt={str(delayed).lower()}")
 
 
-def render(state, now, stale, node_state=None, clock=None):
+def render(state, now, stale, node_state=None, clock=None, spool=None):
     lines = [f"NODE {state['node']} source={state['source']} cursor={state['cursor']}",
              f"phone={state.get('node_status') or node_status(state, now, stale)} transport={transport(state, now, stale)} "
              f"backlog_page_pending={str(state['has_more']).lower()} last_poll={stamp(state['poll_at'])}",
@@ -1456,6 +1456,9 @@ def render(state, now, stale, node_state=None, clock=None):
     alarm = clock_domain_line(clock)
     if alarm is not None:
         lines.append(alarm)
+    spool_line = spool_view_line(spool)
+    if spool_line is not None:
+        lines.append(spool_line)
     for kind in SENSORS:
         item = state["latest"].get(kind)
         lines.append(f"{kind} [{sensor_status(item, now, stale)}]: " +
@@ -1546,7 +1549,7 @@ def render(state, now, stale, node_state=None, clock=None):
     return "\n".join(lines)
 
 
-def render_events(state, now, stale, node_state=None, clock=None):
+def render_events(state, now, stale, node_state=None, clock=None, spool=None):
     # Recompute this heading even if the follower died; never label cached data current.
     key = compact_key(state, now, stale)
     lines = [f"{state['node']} source={state['source']} phone={key[0]} "
@@ -1561,6 +1564,9 @@ def render_events(state, now, stale, node_state=None, clock=None):
     alarm = clock_domain_line(clock)
     if alarm is not None:
         lines.append("  " + alarm)
+    spool_line = spool_view_line(spool)
+    if spool_line is not None:
+        lines.append("  " + spool_line)
     rssi_status, rssi_dbm, rssi_reason, rssi_source = key[6]
     lines.append(f"  wifi_link_rssi {rssi_status} rssi_dbm={rssi_dbm} "
                  f"reason={rssi_reason or 'unspecified'} source={rssi_source or 'unknown'}")
@@ -1748,6 +1754,8 @@ NODE_STATE_MAX_REASON_CHARS = 200
 #: there would be parsed as a state and crash the consumer.
 CLOCK_DOMAIN_PREFIX = "clock-domain-"
 CLOCK_DOMAIN_MAX_AGE_SECONDS = 3600.0
+SPOOL_SUMMARY_PREFIX = "spool-summary-"
+SPOOL_SUMMARY_MAX_AGE_SECONDS = 600.0
 
 
 def state_paths(directory):
@@ -1907,6 +1915,94 @@ def clock_domain_line(clock):
             f"retained span bounds and offset-derived freshness are not comparable "
             f"across the step; re-measure before relying on either")
 
+def read_spool_summary(directory, node, now, max_age=SPOOL_SUMMARY_MAX_AGE_SECONDS):
+    """Read the bounded app-spool summary for one node.
+
+    Published by tools/spool_read.py at ``body/spool-summary-<node>.json`` (one
+    directory above the perception states). A missing, unreadable, malformed,
+    foreign or expired document is reported with ``status`` absent/invalid/stale
+    and null data: the reader never invents a spool reading, and a stale reading
+    is not a current one. The document's own ``validity_seconds`` bounds the
+    reading, capped by ``max_age``.
+    """
+    def unknown(status, reason):
+        return {"status": status, "spool_bytes": None, "retention_window_s": None,
+                "oldest_row_epoch_s": None, "newest_row_epoch_s": None,
+                "counts": None, "light_buckets": None,
+                "observed_at_epoch_s": None, "age_s": None, "reason": reason}
+
+    path = directory.parent / f"{SPOOL_SUMMARY_PREFIX}{node}.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return unknown("absent", "no-spool-summary-file")
+    except (OSError, ValueError):
+        return unknown("invalid", "spool-summary-unreadable")
+    if (not isinstance(document, dict) or document.get("node") != node
+            or document.get("status") not in ("ok", "unavailable")):
+        return unknown("invalid", "spool-summary-invalid")
+
+    observed = document.get("observed_at_epoch_s")
+    if (not isinstance(observed, (int, float)) or isinstance(observed, bool)
+            or not math.isfinite(observed)):
+        return unknown("invalid", "spool-summary-invalid")
+    validity = document.get("validity_seconds")
+    if (not isinstance(validity, (int, float)) or isinstance(validity, bool)
+            or not math.isfinite(validity) or validity <= 0):
+        return unknown("invalid", "spool-summary-invalid")
+    age = now - observed
+    if age > min(validity, max_age):
+        return unknown("stale", "spool-summary-stale")
+
+    counts = document.get("counts")
+    light_buckets = document.get("light_buckets")
+    if document["status"] == "ok":
+        if (not isinstance(counts, dict) or not isinstance(light_buckets, dict)):
+            return unknown("invalid", "spool-summary-invalid")
+        return {"status": "ok",
+                "spool_bytes": document.get("spool_bytes"),
+                "retention_window_s": document.get("retention_window_s"),
+                "oldest_row_epoch_s": document.get("oldest_row_epoch_s"),
+                "newest_row_epoch_s": document.get("newest_row_epoch_s"),
+                "counts": counts, "light_buckets": light_buckets,
+                "observed_at_epoch_s": observed,
+                "age_s": round(max(age, 0.0), 1), "reason": None}
+    return {"status": "unavailable",
+            "spool_bytes": None, "retention_window_s": None,
+            "oldest_row_epoch_s": None, "newest_row_epoch_s": None,
+            "counts": None, "light_buckets": None,
+            "observed_at_epoch_s": observed,
+            "age_s": round(max(age, 0.0), 1),
+            "reason": document.get("reason") or "spool-read-failed"}
+
+
+def spool_view_line(spool):
+    """One human-readable collection-side spool evidence line, or None without one.
+
+    This line is ALWAYS labelled as collection-side, never as a delivered
+    observation. The host queue / space.json remain the delivery record.
+    """
+    if spool is None:
+        return None
+    if spool["status"] == "ok":
+        counts = spool["counts"]
+        total = sum(counts.values())
+        light = counts.get("light", 0)
+        buckets = spool["light_buckets"]
+        window_hours = spool["retention_window_s"] / 3600.0
+        return (f"collection-side spool evidence (NOT delivered; source=app-private-spool): "
+                f"status=ok spool={spool['spool_bytes']:,}B window={window_hours:.1f}h "
+                f"rows={total:,} light={light:,} "
+                f"(dark={buckets.get('dark_exact',0):,} dim={buckets.get('dim_0_9',0):,} "
+                f"moderate={buckets.get('moderate_10_99',0):,} "
+                f"bright={buckets.get('bright_100_999',0):,} "
+                f"vbright={buckets.get('very_bright_1000_plus',0):,}) "
+                f"age={spool['age_s']}s")
+    else:
+        return (f"collection-side spool evidence (NOT delivered; source=app-private-spool): "
+                f"status={spool['status']} reason={spool['reason']} "
+                f"(never calm; spool read is UNKNOWN)")
+
 
 def node_state_line(node_state):
     """One human-readable line for the node-state verdict, or None without one."""
@@ -2024,7 +2120,8 @@ def read_views(directory, now, stale, compact=False):
         state = load(path)
         parts.append(view(state, now, stale,
                           read_node_state(directory, state["node"], now),
-                          read_clock_domain(directory, state["node"], now)))
+                          read_clock_domain(directory, state["node"], now),
+                          read_spool_summary(directory, state["node"], now)))
     parts.append(light_resumption_view(now, stale, compact))
     return "\n\n".join(parts) + "\n"
 
