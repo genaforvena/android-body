@@ -113,6 +113,18 @@ A cursor ahead of the current head detects some resets, not every rollback: a
 replacement log that has already grown past a saved cursor cannot be distinguished
 without an epoch protocol, which this MVP deliberately does not have.
 
+
+## Write attribution
+
+Every accepted POST appends one JSON line to `writes.jsonl` in the data
+directory: `ts` (ISO 8601 UTC), authenticated `node`, queue `kind`
+(`observations` or `actions`), client `remote_addr`, request `byte_count` and
+`records` (lines accepted). It never records payload bytes, tokens or sensor
+contents. Rejected writes (`401`/`400`) and GET reads are not recorded. The
+journal is best-effort diagnostics beside the queue, which remains the system
+of record: a journal write failure never fails an accepted POST, and the
+journal then stops recording until restart. `log_message` stays disabled, so
+request paths and bodies appear in no other log.
 ## Persistence and delivery: explicit limits
 
 A successful POST is acknowledged only after the append and `fsync`. Startup
