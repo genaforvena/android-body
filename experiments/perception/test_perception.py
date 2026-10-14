@@ -1984,9 +1984,83 @@ class PerceptionTests(unittest.TestCase):
                  patch.object(watch, "MONITOR_LOG_FILE", log_file):
                 view = watch.light_resumption_view(1000, 30)
         self.assertIn("status=stale/detector-silent", view)
-        self.assertIn("armed=false", view)
-        self.assertIn("no fresh sub-threshold baseline", view)
+        self.assertIn("baseline=no-fresh-reading", view)
         self.assertIn("predates the 7.0-lux rule", view)
+
+    def _detector_view(self, heartbeat, row=None):
+        """Render the detector view against a written heartbeat (and optional last row)."""
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            state_file = folder / "light-cycle-monitor-state.json"
+            log_file = folder / "light-cycle-resumed.jsonl"
+            state_file.write_text(json.dumps(heartbeat))
+            if row is not None:
+                log_file.write_text(json.dumps(row) + "\n")
+            with patch.object(watch, "MONITOR_STATE_FILE", state_file), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                return (watch.light_resumption_view(1000, 30),
+                        watch.light_resumption_view(1000, 30, compact=True))
+
+    def test_light_resumption_view_names_a_frozen_source_as_no_fresh_reading(self):
+        # The live case: the phone is ON but collect-only, so the light channel delivers
+        # nothing fresh. armed=false is "a fresh baseline exists" being false, not "the
+        # fresh readings are all bright"; the view must name the source, not the threshold.
+        heartbeat = {"poll": 310, "interval_seconds": 30.0, "max_polls": 3300,
+                     "threshold_lux": 7.0, "lux": None, "prev_lux": None, "armed": False,
+                     "pid": 4242, "started_unix": 900.0, "timestamp_unix": 990.0}
+        view, compact = self._detector_view(heartbeat)
+        self.assertIn("baseline=no-fresh-reading", view)
+        self.assertIn("no fresh light reading has been observed this run", view)
+        self.assertNotIn("fresh baseline below the threshold", view)
+        self.assertIn("armed=False baseline=no-fresh-reading", compact)
+
+    def test_light_resumption_view_names_a_bright_baseline_as_not_resumable(self):
+        # armed=true does not mean "a sub-threshold baseline": a fresh, already-lit reading
+        # arms the detector with nothing dim to resume from.
+        heartbeat = {"poll": 5, "threshold_lux": 7.0, "lux": 12.4, "prev_lux": 12.4,
+                     "armed": True, "timestamp_unix": 990.0}
+        view, compact = self._detector_view(heartbeat)
+        self.assertIn("baseline=at-or-above-threshold", view)
+        self.assertIn("nothing dim to resume from", view)
+        self.assertNotIn("no fresh light reading", view)
+        self.assertIn("armed=True baseline=at-or-above-threshold", compact)
+
+    def test_light_resumption_view_names_a_stale_poll_with_a_retained_baseline(self):
+        # A baseline survives the source going stale: only fresh readings update it, so the
+        # current poll's silence must be reported separately from the baseline's existence.
+        heartbeat = {"poll": 9, "threshold_lux": 7.0, "lux": None, "prev_lux": 0.2,
+                     "armed": True, "timestamp_unix": 990.0}
+        view, compact = self._detector_view(heartbeat)
+        self.assertIn("baseline=baseline-without-current-reading", view)
+        self.assertIn("no transition can be evaluated this poll", view)
+        self.assertIn("armed=True baseline=baseline-without-current-reading", compact)
+
+    def test_light_resumption_view_names_a_sub_threshold_baseline(self):
+        heartbeat = {"poll": 4, "threshold_lux": 7.0, "lux": 0.4, "prev_lux": 0.2,
+                     "armed": True, "timestamp_unix": 990.0}
+        view, compact = self._detector_view(heartbeat)
+        self.assertIn("baseline=sub-threshold", view)
+        self.assertIn("armed=True baseline=sub-threshold", compact)
+
+    def test_monitor_baseline_reports_unknown_for_an_inconsistent_heartbeat(self):
+        # A heartbeat whose armed flag disagrees with its own fields is not calm.
+        for heartbeat in ({"armed": True, "lux": 0.4, "prev_lux": None, "threshold_lux": 7.0},
+                          {"armed": False, "lux": None, "prev_lux": 0.2, "threshold_lux": 7.0},
+                          {"armed": "yes", "lux": 0.4, "prev_lux": 0.2, "threshold_lux": 7.0},
+                          {"armed": True, "lux": 0.4, "prev_lux": 0.2},
+                          None):
+            self.assertEqual(watch.monitor_baseline(heartbeat), "unknown", heartbeat)
+        view, compact = self._detector_view({"poll": 1, "threshold_lux": 7.0, "lux": 0.4,
+                                             "prev_lux": None, "armed": True,
+                                             "timestamp_unix": 990.0})
+        self.assertIn("baseline=unknown", view)
+        self.assertIn("UNKNOWN, not calm", view)
+        self.assertIn("baseline=unknown", compact)
+
+    def test_monitor_baselines_cover_every_rendered_sentence(self):
+        for baseline in watch.MONITOR_BASELINES:
+            self.assertIn(baseline, watch.MONITOR_BASELINE_TEXT)
+        self.assertEqual(len(set(watch.MONITOR_BASELINES)), len(watch.MONITOR_BASELINES))
 
     def test_read_views_carries_the_detector_verdict_into_the_pane_text(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -215,6 +215,34 @@ host-side node-state file (below), so a gap names *why* the producer is silent
 (OFF, collect-only, not-running) rather than only that it is. These fields are
 provenance and never take part in the dedup identity.
 
+## Light-cycle resumption detector
+
+`light_cycle_monitor.py` is a separate bounded host-side process that polls the Note3 light
+channel, publishes a heartbeat to
+`SITE/body/runtime/artifacts/light-cycle-monitor-state.json`, and appends a row to
+`light-cycle-resumed.jsonl` only when a resumption is claimed. Both views render a
+`Light-cycle resumption detector` section: liveness (`status`, heartbeat age against the
+30 s stale bound), the heartbeat fields verbatim, and the last retained row verbatim. A
+missing or stale heartbeat is UNKNOWN/stale, never calm.
+
+The heartbeat's `armed` is only "a fresh baseline exists this run": it does not say the
+baseline is below the threshold, nor that the current poll read anything fresh. The view
+derives a `baseline` classification from the same fields and names it, so the detector's
+silence carries its own cause instead of one sentence that fits only the fresh-but-lit case:
+
+| `baseline` | meaning |
+|---|---|
+| `no-fresh-reading` | no fresh light reading this run (source stale/unreadable): no baseline |
+| `first-fresh-poll` | the first fresh reading arrived this poll; the baseline is set next poll |
+| `sub-threshold` | a fresh baseline below the threshold: a resumption fires on the next lit reading |
+| `at-or-above-threshold` | a fresh baseline already lit: nothing dim to resume from |
+| `baseline-without-current-reading` | a baseline survives from an earlier poll; this poll read nothing fresh |
+| `unknown` | fields missing or disagreeing with `armed`: the armed state is UNKNOWN, not calm |
+
+Rows are reported verbatim and never rescored here; a row without `threshold_lux` predates
+the 7.0-lux rule and is labelled inadmissible. Scoring stays research-methods'
+pre-registered milestone-5 rule.
+
 ## Host-side node state
 
 `tools/node_state.py` (health) classifies the device from already-read adb text

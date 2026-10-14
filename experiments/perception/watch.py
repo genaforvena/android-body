@@ -1037,12 +1037,76 @@ def _monitor_row_text(row):
             f"prev_observed_gap={gap}")
 
 
+#: Why the detector has no resumption to claim yet, derived from its own heartbeat.
+#: The heartbeat's ``armed`` is only "a fresh baseline exists this run": it never says the
+#: baseline is below the threshold, nor that the *current* poll read anything fresh. Those
+#: are separate facts, so one shared sentence ("no fresh sub-threshold baseline") misnames
+#: the frozen-source case (no fresh reading at all) as a fresh-but-lit one.
+MONITOR_BASELINES = (
+    "no-fresh-reading",                  # nothing fresh this run: no baseline at all
+    "first-fresh-poll",                  # first fresh reading this poll; baseline next poll
+    "sub-threshold",                     # fresh baseline below threshold: a resumption can fire
+    "at-or-above-threshold",             # fresh baseline already lit: nothing dim to resume from
+    "baseline-without-current-reading",  # baseline exists, but this poll read nothing fresh
+    "unknown",                           # fields missing or disagreeing with ``armed``
+)
+
+#: One sentence per baseline for the full view, so the detector's silence names its own cause.
+MONITOR_BASELINE_TEXT = {
+    "no-fresh-reading":
+        "no fresh light reading has been observed this run, so there is no baseline to "
+        "compare against and no resumption is claimable; the detector's own heartbeat is "
+        "live, the source is what is not (not a detector fault)",
+    "first-fresh-poll":
+        "the first fresh light reading of this run arrived this poll; the baseline is set "
+        "on the next poll, so no resumption is claimable yet",
+    "sub-threshold":
+        "a fresh baseline below the threshold exists; a resumption is claimed when a fresh "
+        "reading reaches the threshold",
+    "at-or-above-threshold":
+        "the fresh baseline is already at or above the threshold, so there is nothing dim "
+        "to resume from until a fresh sub-threshold reading resets it",
+    "baseline-without-current-reading":
+        "a baseline exists from an earlier poll, but this poll read nothing fresh (the "
+        "source is stale or unreadable), so no transition can be evaluated this poll",
+    "unknown":
+        "the heartbeat's fields are missing or disagree with its armed flag, so the armed "
+        "state is UNKNOWN, not calm",
+}
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def monitor_baseline(state):
+    """Classify the detector's baseline from its heartbeat (one of MONITOR_BASELINES)."""
+    if not isinstance(state, dict):
+        return "unknown"
+    armed, lux = state.get("armed"), state.get("lux")
+    prev_lux, threshold = state.get("prev_lux"), state.get("threshold_lux")
+    if not isinstance(armed, bool) or armed != (prev_lux is not None):
+        return "unknown"
+    if prev_lux is None:
+        if lux is None:
+            return "no-fresh-reading"
+        return "first-fresh-poll" if _is_number(lux) else "unknown"
+    if not _is_number(prev_lux) or not _is_number(threshold):
+        return "unknown"
+    if lux is None:
+        return "baseline-without-current-reading"
+    return "sub-threshold" if prev_lux < threshold else "at-or-above-threshold"
+
+
 def light_resumption_view(now, stale, compact=False):
     """Host-side light-resumption detector: liveness, armed state and last row.
 
     The detector is a separate bounded monitor; its heartbeat is the only signal that
     separates "armed, nothing observed yet" from "detector silent". A missing or stale
-    heartbeat is UNKNOWN/stale, never calm.
+    heartbeat is UNKNOWN/stale, never calm. The heartbeat's ``armed`` alone does not say
+    *why* no resumption is claimable, so both views carry the derived ``baseline``
+    classification (see MONITOR_BASELINES) instead of one sentence that fits only the
+    fresh-but-lit case.
     """
     state = _read_json_file(MONITOR_STATE_FILE)
     row = _last_monitor_row(MONITOR_LOG_FILE)
@@ -1055,11 +1119,13 @@ def light_resumption_view(now, stale, compact=False):
     else:
         age = None
         status = "unknown/no-monitor-heartbeat"
+    baseline = monitor_baseline(state) if have_heartbeat else "unknown"
     if compact:
         # No per-poll age here: the compact view caches to events.txt and must not churn
         # every poll the way view.txt does.
         return (f"light-resumption-detector status={status} "
                 f"armed={state.get('armed') if have_heartbeat else None} "
+                f"baseline={baseline} "
                 f"last_row={_monitor_row_text(row)}")
     lines = ["Light-cycle resumption detector (host-side bounded monitor over the Note3 "
              "light channel; no phone, transport or actuator effect):",
@@ -1073,9 +1139,7 @@ def light_resumption_view(now, stale, compact=False):
                      f"threshold_lux={state.get('threshold_lux')} pid={state.get('pid')} "
                      f"interval={state.get('interval_seconds')}s "
                      f"max_polls={state.get('max_polls')}")
-        if not state.get("armed"):
-            lines.append("  armed=false: no fresh sub-threshold baseline this run, so no "
-                         "resumption can be claimed yet (not a fault)")
+        lines.append(f"  baseline={baseline}: {MONITOR_BASELINE_TEXT[baseline]}")
     lines.append(f"  last_row={_monitor_row_text(row)}")
     if row is not None and "threshold_lux" not in row:
         lines.append("  last_row predates the 7.0-lux rule (no threshold_lux field); it is "
