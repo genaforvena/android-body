@@ -3,7 +3,8 @@
 # Bounded health check for android-body infrastructure and the Note3 session.
 # Section 6 classifies the device session (tools/device_state.py); a node that
 # is not attached reads UNKNOWN and does not fail the host-infrastructure checks.
-# Section 7 checks the published node-state file the perception consumer reads.
+# Section 7 checks the published node-state file the perception consumer reads,
+# and that the bytes which publish it are the committed ones.
 # Exits 0 if all invariants hold, 1 otherwise.
 set -u
 cd "$(dirname "$0")/.."
@@ -134,6 +135,21 @@ if [ -f "$NODE_STATE" ]; then
   fi
 else
   fail "node-state note3 MISSING"
+fi
+
+# 7b. android-body-node-state.timer executes tools/node_state.py (and its
+# device_state.py import) straight from this checkout, so the working tree --
+# not a frozen release -- is what publishes within 60s. Compare the live bytes
+# with HEAD: an uncommitted or half-applied edit is otherwise invisible until
+# the consumer misreads the document it produces.
+if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+  if git diff --quiet HEAD -- tools/node_state.py tools/device_state.py; then
+    pass "node-state publisher bytes match HEAD"
+  else
+    fail "node-state publisher bytes differ from HEAD (uncommitted edits go live within 60s)"
+  fi
+else
+  echo "UNKNOWN node-state publisher bytes (git unavailable)"
 fi
 
 
