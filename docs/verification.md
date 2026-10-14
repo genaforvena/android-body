@@ -459,3 +459,31 @@ This is consumer-view evidence; not server-side receipt, motor proof, or calibra
 - Redmi10: NOT_CONNECTED (unchanged, human-gated).
 - Scope: read-only diagnosis + APK hash verification. No source/APK/device/transport/actuator mutation.
 - Evidence: `.mishe-tauftauf/walls/health.md` (wake 73914).
+
+## Light-cycle monitor resumption threshold corrected — 2026-10-14T07:50Z
+
+- Trigger: senses wake 74526. The monitor's `DARK_PHASE_LUX_MAX = 0.5` lux threshold sat inside
+  the Note3's dim oscillation band (0.0 <-> ~1.24-1.35 lux), so it logged `light-cycle-resumed`
+  on routine dim oscillation and then exited (rc=0), stopping the detector.
+- Evidence: 751 unique `measured-light-bucket-transition` rows with both endpoints < 5 lux across
+  2026-10-07..13 (1803 unique rows total); lux by hour of day is dim (median ~2.9-3.0 lux, max
+  <=5.4) in hours 03-06/22 and lit (medians 6.7-16.2 lux) in hours 09-17. The monitor's
+  2026-10-13 05:44:24Z `lux=1.3224 prev_lux=0.0` entry is one flip inside that oscillation
+  (bucket rows 05:44:00/05:44:05/05:44:30), not a resumption — correcting the "genuine
+  transition" label in `discover-wake70077-light-detector-timeline.md`.
+- Fix: `DARK_PHASE_LUX_MAX = 0.5` -> `RESUME_LUX_MIN = 7.0` (`floor(log2(1+lux)) >= 3`, the
+  consumer's own coarse-bucket boundary), predicate `lux >= RESUME_LUX_MIN and prev_lux is not
+  None and prev_lux < RESUME_LUX_MIN`; the log record now carries `threshold_lux`.
+- Checks: `python3 -m unittest discover -s experiments/perception` -> 104 tests OK (101 baseline
+  + 3 added; 4 boundary tests updated). Replay of the archived `light-cycle-resumed.jsonl`
+  entries: the two entries the old rule fires on (1.3224/1.2758 with prev 0.0) no longer fire.
+- Deploy/activation: `body/runtime/light_cycle_monitor.py` sha256 `fbd2da9c…` (differs from
+  source `bcd0b87e…` only by the documented `SPACE_JSON` path line and deploy note); service
+  restarted 07:49:40Z, Main PID 799861, `--interval 30 --max-polls 3300` (runs past the 18:00Z
+  gate); log unchanged, no false event. Revert = `light_cycle_monitor.py.pre-deploy-20261014-0749Z`
+  + restart.
+- Known limitation: a resumption spanning a phone-silence gap, or a genuinely dim (2-6 lux)
+  resumption, is not claimed — it stays UNKNOWN rather than inferred.
+- Scope: perception source + test + deployed host-side monitor + service restart. No APK,
+  device, transport, actuator or cursor mutation.
+- Evidence: `.mishe-tauftauf/artifacts/senses-wake74526-light-resumption-threshold-fix.md`.

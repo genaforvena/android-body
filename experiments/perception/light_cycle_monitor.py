@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-"""Monitor Note3 light channel for cycle resumption (0 -> >0 lux transition).
+"""Monitor Note3 light channel for cycle resumption (dim/dark -> clearly lit).
 
 Bounded: polls space.json every 30s, logs to light-cycle-resumed.jsonl, exits
 on transition or after --max-polls. No physical actions, no phone mutation.
+
+The channel is not binary. In dim/dark conditions the Note3 light sensor
+oscillates between 0.0 and ~1.3 lux on a seconds timescale (751 sub-5-lux
+coarse-bucket transitions in the consumer's retained history, 2026-10-07..13).
+A "lux > 0" rule therefore fires on that oscillation, not on a light cycle.
+Resumption here means a fresh dim reading followed by a fresh clearly-lit
+reading (RESUME_LUX_MIN); a rise spanning a phone-silence gap is not claimed,
+matching the consumer's session/backlog boundary rule.
 """
 import argparse
 import json
@@ -12,7 +20,10 @@ from pathlib import Path
 SPACE_JSON = Path(__file__).resolve().parents[2] / ".mishe-tauftauf" / "body" / "space.json"
 LOG_FILE = Path(__file__).resolve().parent / "artifacts" / "light-cycle-resumed.jsonl"
 
-DARK_PHASE_LUX_MAX = 0.5
+# floor(log2(1 + lux)) >= 3  <=>  lux >= 7.0, the consumer's coarse-bucket
+# boundary: above every retained dim/dark observation (<=5.4 lux) and inside
+# the lit regime (10-16 lux medians).
+RESUME_LUX_MIN = 7.0
 
 
 def read_light_lux():
@@ -42,12 +53,13 @@ def main():
         lux = read_light_lux()
         now = time.time()
 
-        if (lux is not None and lux > DARK_PHASE_LUX_MAX and
-                prev_lux is not None and prev_lux <= DARK_PHASE_LUX_MAX):
+        if (lux is not None and lux >= RESUME_LUX_MIN and
+                prev_lux is not None and prev_lux < RESUME_LUX_MIN):
             record = {
                 "event": "light-cycle-resumed",
                 "lux": lux,
                 "prev_lux": prev_lux,
+                "threshold_lux": RESUME_LUX_MIN,
                 "poll": poll,
                 "timestamp_unix": now,
             }
