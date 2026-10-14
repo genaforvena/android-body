@@ -172,18 +172,10 @@ def main(argv=None):
     parser.add_argument("--adb", default="adb", help="adb command; may be multi-word (default: adb)")
     parser.add_argument("--timeout", type=float, default=10.0, help="per-command seconds")
     parser.add_argument("--output", help="explicit document path (default: site/body/perception/)")
-    parser.add_argument("--interval", type=float, default=60.0, help="seconds between publishes in --loop")
-    parser.add_argument("--loop", action="store_true", help="publish until interrupted")
     args = parser.parse_args(argv)
-
-    if not args.loop:
-        return run_once(args)
-    while True:
-        try:
-            run_once(args)
-        except (OSError, ValueError) as error:
-            print(f"node-state publish failed: {error}", file=sys.stderr, flush=True)
-        time.sleep(max(1.0, args.interval))
+    # One document per invocation: the 60s cadence is the systemd timer's job
+    # (android-body-node-state.timer), not a loop in this tool.
+    return run_once(args)
 
 
 if __name__ == "__main__":

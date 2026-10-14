@@ -49,6 +49,18 @@ class DocumentTests(unittest.TestCase):
         self.assertEqual(len(doc["reasons"]), 2)
         node_state.assert_bounded(doc)
 
+    def test_off_state_projects_false_booleans_not_null(self):
+        # The mirror of the no-fabricated-false invariant: a genuinely disarmed
+        # node must render as OFF/false, not as "unknown" via nulled booleans.
+        off = device_state.DeviceState(
+            device_state.OFF, False, False, False, False, False, False, ("desired_on=false",)
+        )
+        doc = node_state.document("note3", off, now=7)
+        self.assertEqual(doc["mode"], "OFF")
+        self.assertIs(doc["desired_on"], False)
+        self.assertIs(doc["collect_only"], False)
+        node_state.assert_bounded(doc)
+
     def test_unreadable_device_publishes_unknown_with_reason_not_false(self):
         doc = node_state.document("note3", None, error=RuntimeError("device not attached"), now=1)
         self.assertEqual(doc["mode"], "UNKNOWN")
@@ -71,11 +83,6 @@ class DocumentTests(unittest.TestCase):
             doc, state = node_state.observe("adb", "serial", "org.androidbody", 1.0, "note3", now=5)
         self.assertIs(state, STATE)
         self.assertEqual(doc["mode"], "ON_COLLECT_ONLY")
-
-    def test_unbounded_reason_is_rejected(self):
-        doc = node_state.document("note3", None, error="x" * 500, now=1)
-        with self.assertRaises(ValueError):
-            node_state.assert_bounded(doc)
 
 
 class PublishTests(unittest.TestCase):
@@ -117,6 +124,12 @@ class PublishTests(unittest.TestCase):
         output = node_state.default_output("/site", "note3")
         self.assertEqual(output, Path("/site/body/perception/node-state-note3.json"))
         self.assertTrue(output.name.startswith(node_state.NODE_STATE_PREFIX))
+
+    def test_unbounded_reason_is_rejected_before_any_write(self):
+        doc = node_state.document("note3", None, error="x" * 500, now=1)
+        with self.assertRaises(ValueError):
+            node_state.publish(self.output, doc)
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":
