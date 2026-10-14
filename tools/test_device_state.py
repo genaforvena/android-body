@@ -110,5 +110,21 @@ class ClassifyTests(unittest.TestCase):
         self.assertIn("ON_COLLECT_ONLY", line)
 
 
+class AdbArgvTests(unittest.TestCase):
+    def test_plain_command(self):
+        self.assertEqual(device_state.adb_argv("adb"), ["adb"])
+
+    def test_wrapped_command_splits_into_argv(self):
+        # The transport bridge and the node-state publisher run adb through the
+        # plant wrapper; the classifier must not hand it to subprocess as one word.
+        self.assertEqual(
+            device_state.adb_argv("rtk proxy adb"), ["rtk", "proxy", "adb"]
+        )
+
+    def test_blank_falls_back_to_adb(self):
+        self.assertEqual(device_state.adb_argv("   "), ["adb"])
+
+
+
 if __name__ == "__main__":
     unittest.main()

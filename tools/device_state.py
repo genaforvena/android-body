@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import subprocess
 import sys
 from typing import NamedTuple
@@ -136,15 +137,20 @@ def classify(
     return state(ON_SENDING, [match_note])
 
 
-def _adb(adb: str, args: list, timeout: float, allow_missing: bool = False) -> str:
+def adb_argv(adb: str) -> list:
+    """Split an adb command so a wrapper (e.g. ``rtk proxy adb``) is usable."""
+    return shlex.split(adb) or ["adb"]
+
+
+def _adb(argv: list, args: list, timeout: float, allow_missing: bool = False) -> str:
     result = subprocess.run(
-        [adb, *args], capture_output=True, text=True, timeout=timeout, check=False
+        [*argv, *args], capture_output=True, text=True, timeout=timeout, check=False
     )
     if result.returncode != 0:
         if allow_missing:
             # An absent file is meaningful: Settings.disarm() deletes the marker.
             return ""
-        raise RuntimeError(f"{adb} {' '.join(args)} rc={result.returncode}")
+        raise RuntimeError(f"{' '.join(argv)} {' '.join(args)} rc={result.returncode}")
     return result.stdout
 
 
@@ -155,7 +161,8 @@ def read_device(
     timeout: float,
 ) -> DeviceState:
     """Read the device over adb and classify. Raises RuntimeError when unreadable."""
-    devices = _adb(adb, ["devices"], timeout)
+    argv = adb_argv(adb)
+    devices = _adb(argv, ["devices"], timeout)
     attached = any(
         line.split()[:2] == [serial, "device"] for line in devices.splitlines()
     )
@@ -164,22 +171,22 @@ def read_device(
 
     base = f"/data/data/{package}"
     prefs_text = _adb(
-        adb,
+        argv,
         ["-s", serial, "shell", f"run-as {package} cat {base}/shared_prefs/body.xml"],
         timeout,
     )
     marker_text = _adb(
-        adb,
+        argv,
         ["-s", serial, "shell", f"run-as {package} cat {base}/files/run-enabled"],
         timeout,
         allow_missing=True,
     )
-    processes = _adb(adb, ["-s", serial, "shell", "ps"], timeout)
+    processes = _adb(argv, ["-s", serial, "shell", "ps"], timeout)
     process_present = any(
         row.split()[-1] == package for row in processes.splitlines()[1:] if row.split()
     )
     services = _adb(
-        adb,
+        argv,
         ["-s", serial, "shell", f"dumpsys activity services {package}"],
         timeout,
     )
@@ -194,7 +201,7 @@ def main(argv=None) -> int:
     parser.add_argument("--serial", required=True, help="adb serial of the node")
     parser.add_argument("--package", default="org.androidbody")
     parser.add_argument("--label", default="note3")
-    parser.add_argument("--adb", default="adb", help="adb executable (default: adb)")
+    parser.add_argument("--adb", default="adb", help="adb command; may be multi-word (default: adb)")
     parser.add_argument("--timeout", type=float, default=15.0, help="per-command seconds")
     args = parser.parse_args(argv)
 

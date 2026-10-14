@@ -3,6 +3,7 @@
 # Bounded health check for android-body infrastructure and the Note3 session.
 # Section 6 classifies the device session (tools/device_state.py); a node that
 # is not attached reads UNKNOWN and does not fail the host-infrastructure checks.
+# Section 7 checks the published node-state file the perception consumer reads.
 # Exits 0 if all invariants hold, 1 otherwise.
 set -u
 cd "$(dirname "$0")/.."
@@ -116,6 +117,23 @@ if command -v adb >/dev/null 2>&1 && [ -x "$PWD/tools/device_state.py" ]; then
   esac
 else
   echo "UNKNOWN device note3 session state (adb or tools/device_state.py unavailable)"
+fi
+
+# 7. Published node state (perception consumer's "why is the producer silent").
+# tools/node_state.py republishes every 60s from android-body-node-state.timer;
+# the consumer accepts the file for 300s (watch.py NODE_STATE_MAX_AGE_SECONDS),
+# so 120s is the tighter liveness bound for the publisher itself: past it the
+# consumer would already be rendering mode=unknown, and the publisher is RED.
+NODE_STATE="$SITE/body/perception/node-state-note3.json"
+if [ -f "$NODE_STATE" ]; then
+  NS_AGE=$(( $(date +%s) - $(stat -c%Y "$NODE_STATE") ))
+  if [ "$NS_AGE" -le 120 ]; then
+    pass "node-state note3 fresh (${NS_AGE}s)"
+  else
+    fail "node-state note3 stale ${NS_AGE}s (>120s)"
+  fi
+else
+  fail "node-state note3 MISSING"
 fi
 
 
