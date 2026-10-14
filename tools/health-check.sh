@@ -40,6 +40,26 @@ else
   fail "$DEAD dead pane(s)"
 fi
 
+# 2b. Renderer crash tripwire (wake 80473): a healthy `pain watch` loop is
+# stderr-silent; a stderr write in the last 2 min is a crash. Needed because
+# operator-view restores a crashed pane within ~2 min, so the presence/dead
+# checks above pass while a crash loop runs (the 2026-10-13 11:00 –
+# 2026-10-14 18:43 wcwidth loop ran 31h under a GREEN check; observed crash
+# cadence was every ~1-2 min, so a 2-min window catches active loops while
+# aging out single self-healed crashes).
+RECENT_CRASH=""
+for err in "$SITE"/logs/pain-watch-*.stderr; do
+  [ -e "$err" ] || continue
+  if [ -n "$(find "$err" -mmin -2 -print -quit 2>/dev/null)" ]; then
+    RECENT_CRASH="$RECENT_CRASH $(basename "$err")"
+  fi
+done
+if [ -z "$RECENT_CRASH" ]; then
+  pass "no renderer crash in last 2 min"
+else
+  fail "renderer stderr written in last 2 min:$RECENT_CRASH"
+fi
+
 # 3. Transport tunnel (404 unknown_route probe)
 TUNNEL=$(python3 -c "
 import urllib.request
