@@ -1637,6 +1637,8 @@ def space_snapshot(states, now, stale):
 NODE_STATE_PREFIX = "node-state-"
 NODE_STATE_MAX_AGE_SECONDS = 300.0
 NODE_MODES = ("ON_SENDING", "ON_COLLECT_ONLY", "ON_NOT_RUNNING", "OFF", "UNKNOWN")
+NODE_STATE_MAX_REASONS = 4
+NODE_STATE_MAX_REASON_CHARS = 200
 
 
 def state_paths(directory):
@@ -1652,6 +1654,36 @@ def state_paths(directory):
                   if not path.name.startswith(NODE_STATE_PREFIX))
 
 
+def _bounded_reasons(value):
+    """Reasons from the node-state document, bounded to one printable line.
+
+    The publisher (tools/node_state.py) already caps each reason, but the reader
+    must not trust a future or foreign publisher: non-strings and blanks are
+    dropped, whitespace is collapsed and non-printable characters (control,
+    format, surrogate) are removed so a reason can neither forge extra view
+    lines nor make the utf-8 state write raise, an over-long reason is
+    truncated, and the list is capped.
+    """
+    if not isinstance(value, list):
+        return []
+    reasons = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        printable = "".join(
+            " " if ch.isspace() else ch for ch in item
+            if ch.isspace() or ch.isprintable())
+        text = " ".join(printable.split())
+        if not text:
+            continue
+        if len(text) > NODE_STATE_MAX_REASON_CHARS:
+            text = text[:NODE_STATE_MAX_REASON_CHARS - 3] + "..."
+        reasons.append(text)
+        if len(reasons) >= NODE_STATE_MAX_REASONS:
+            break
+    return reasons
+
+
 def read_node_state(directory, node, now, max_age=NODE_STATE_MAX_AGE_SECONDS):
     """Read the bounded host-side node-state file for one node.
 
@@ -1663,7 +1695,7 @@ def read_node_state(directory, node, now, max_age=NODE_STATE_MAX_AGE_SECONDS):
     def unknown(status, reason):
         return {"status": status, "mode": "UNKNOWN", "desired_on": None,
                 "collect_only": None, "observed_at_epoch_s": None,
-                "age_s": None, "reason": reason}
+                "age_s": None, "reason": reason, "reasons": []}
 
     path = directory / f"{NODE_STATE_PREFIX}{node}.json"
     try:
@@ -1689,7 +1721,8 @@ def read_node_state(directory, node, now, max_age=NODE_STATE_MAX_AGE_SECONDS):
             "collect_only": collect if isinstance(collect, bool) else None,
             "observed_at_epoch_s": observed,
             "age_s": round(max(age, 0.0), 1),
-            "reason": None}
+            "reason": None,
+            "reasons": _bounded_reasons(document.get("reasons"))}
 
 
 def node_state_line(node_state):
@@ -1704,11 +1737,15 @@ def node_state_line(node_state):
     def flag(value):
         return "unknown" if value is None else str(value).lower()
 
-    return (f"node state (host-side, tools/node_state.py): mode={node_state['mode']} "
+    line = (f"node state (host-side, tools/node_state.py): mode={node_state['mode']} "
             f"desired_on={flag(node_state['desired_on'])} "
             f"collect_only={flag(node_state['collect_only'])} "
             f"observed={stamp(node_state['observed_at_epoch_s'])} "
             f"age={node_state['age_s']}s status=ok")
+    reasons = node_state.get("reasons") or []
+    if reasons:
+        line += " reasons=" + "; ".join(reasons)
+    return line
 
 
 def read_space(directory, now, stale):

@@ -226,12 +226,15 @@ and publishes `SITE/body/perception/node-state-<node>.json` atomically:
      "source": "tools/node_state.py", "reasons": ["..."]}
 
 `read_node_state` reads it with a bounded age (300 s) and the view renders one
-`node state (host-side, ...)` line per node. A missing, unreadable, malformed or
-stale document yields `mode=UNKNOWN`, never `OFF`: only an explicit `OFF` the
-publisher wrote is reported as OFF. The documents sit in the same directory as
-the perception state files but are a distinct family; `state_paths` excludes the
-`node-state-` prefix from the perception-state glob so they are never parsed as a
-node state (a `KeyError: 'version'` crash-loop on 2026-10-14 showed why).
+`node state (host-side, ...)` line per node. The line appends the document's
+`reasons` (the publisher's *why*), bounded and sanitized by the reader, so a
+silent node names the reason (`collect-only: no HTTP by design`) instead of only
+its mode. A missing, unreadable, malformed or stale document yields
+`mode=UNKNOWN`, never `OFF`: only an explicit `OFF` the publisher wrote is
+reported as OFF. The documents sit in the same directory as the perception state
+files but are a distinct family; `state_paths` excludes the `node-state-` prefix
+from the perception-state glob so they are never parsed as a node state (a
+`KeyError: 'version'` crash-loop on 2026-10-14 showed why).
 
 ## Freshness and honest limits
 

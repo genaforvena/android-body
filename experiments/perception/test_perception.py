@@ -2110,6 +2110,62 @@ class PerceptionTests(unittest.TestCase):
             view = watch.read_views(directory, 1000, 30)
         self.assertIn("mode=UNKNOWN status=absent reason=no-node-state-file", view)
         self.assertNotIn("mode=OFF", view)
+        self.assertNotIn("reasons=", view)
+
+    def test_read_node_state_bounds_and_sanitizes_reasons(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            (directory / "node-state-note3.json").write_text(json.dumps({
+                "node": "note3", "mode": "ON_COLLECT_ONLY", "desired_on": True,
+                "collect_only": True, "observed_at_epoch_s": 1000.0,
+                "source": "tools/node_state.py",
+                "reasons": ["ok reason", "", "   ", 7, "x" * 500,
+                            "r1", "r2", "r3", "r4", "r5"]}))
+            verdict = watch.read_node_state(directory, "note3", 1000.0)
+            absent = watch.read_node_state(directory, "redmi10", 1000.0)
+        self.assertEqual(verdict["reasons"][0], "ok reason")
+        self.assertEqual(len(verdict["reasons"]), watch.NODE_STATE_MAX_REASONS)
+        self.assertEqual(len(verdict["reasons"][1]), watch.NODE_STATE_MAX_REASON_CHARS)
+        self.assertTrue(verdict["reasons"][1].endswith("..."))
+        self.assertNotIn("x" * 500, verdict["reasons"])
+        self.assertEqual(absent["reasons"], [])
+
+    def test_view_renders_node_state_reasons(self):
+        state = self.state()
+        self.page(state, ["1000 light lux=12.5 accuracy=3 age_ms=21"])
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            watch.save(directory / "note3.json", state)
+            (directory / "node-state-note3.json").write_text(json.dumps({
+                "node": "note3", "mode": "ON_COLLECT_ONLY", "desired_on": True,
+                "collect_only": True, "observed_at_epoch_s": 1000.0,
+                "source": "tools/node_state.py",
+                "reasons": ["marker matches the recorded endpoint cursor",
+                            "collect-only: no HTTP by design"]}))
+            view = watch.read_views(directory, 1000, 30)
+        self.assertIn("status=ok reasons=marker matches the recorded endpoint cursor; "
+                      "collect-only: no HTTP by design", view)
+
+    def test_read_node_state_reasons_cannot_forge_lines_or_break_utf8(self):
+        state = self.state()
+        self.page(state, ["1000 light lux=12.5 accuracy=3 age_ms=21"])
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            watch.save(directory / "note3.json", state)
+            (directory / "node-state-note3.json").write_text(json.dumps({
+                "node": "note3", "mode": "ON_COLLECT_ONLY", "desired_on": True,
+                "collect_only": True, "observed_at_epoch_s": 1000.0,
+                "source": "tools/node_state.py",
+                "reasons": ["line one\nline two", "esc\x1b[31mred",
+                            "solo\ud800surrogate"]}))
+            verdict = watch.read_node_state(directory, "note3", 1000.0)
+            view = watch.read_views(directory, 1000, 30)
+            watch.atomic(directory / "view.txt", view)
+            written = (directory / "view.txt").read_text(encoding="utf-8")
+        self.assertEqual(verdict["reasons"],
+                         ["line one line two", "esc[31mred", "solosurrogate"])
+        self.assertEqual(written, view)
+        self.assertIn("reasons=line one line two; esc[31mred; solosurrogate", written)
 
     def test_class_b_record_carries_node_mode_provenance(self):
         state = self.state()
