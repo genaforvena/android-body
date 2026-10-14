@@ -124,7 +124,15 @@ RSSI acquisition age and its unavailable reason are explicit; no room-proximity
 claim is made. `last_light_transition` includes stable event ID and both endpoint
 readings as historical evidence. Additive `ble_sighting` and `ble_scan` snapshots
 mirror the `ble_status` convention: measured values only when fresh-clock-conditional,
-honest unknown when absent, values dropped when stale. Missing protocol v1 phone
+honest unknown when absent, values dropped when stale.
+Additive `node_state` carries the host-side verdict for the node
+(`tools/node_state.py`): status, mode, desired_on, collect_only,
+`observed_at_epoch_s`, reason and bounded reasons. It is what lets a consumer name
+a designed ON + collect-only silence, which sends no HTTP by design, instead of
+scoring it as a modality fault; a missing, stale or invalid verdict is mode
+UNKNOWN, never OFF. The reader's clock-derived `age_s` is deliberately not
+republished, so the snapshot stays byte-stable between two polls inside one second
+and the follower can skip the unchanged atomic write. Missing protocol v1 phone
 monotonic time, host
 monotonic/boot receipt, server receipt, and acquisition span are explicit nulls;
 consumers must not infer them. Use the CLI for current freshness; the published file
