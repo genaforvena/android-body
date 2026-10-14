@@ -1758,5 +1758,77 @@ class PerceptionTests(unittest.TestCase):
             self.assertIsNotNone(detection)
             self.assertIsNone(detection["host_stopped"])
 
+    def test_light_resumption_view_reports_missing_heartbeat_as_unknown_not_calm(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            with patch.object(watch, "MONITOR_STATE_FILE", folder / "absent-state.json"), \
+                 patch.object(watch, "MONITOR_LOG_FILE", folder / "absent-log.jsonl"):
+                view = watch.light_resumption_view(1000, 30)
+        self.assertIn("status=unknown/no-monitor-heartbeat", view)
+        self.assertIn("UNKNOWN, not calm", view)
+        self.assertIn("last_row=none", view)
+
+    def test_light_resumption_view_reports_fresh_armed_state_and_last_row(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            state_file = folder / "light-cycle-monitor-state.json"
+            log_file = folder / "light-cycle-resumed.jsonl"
+            state_file.write_text(json.dumps({
+                "poll": 7, "interval_seconds": 30.0, "max_polls": 3300,
+                "threshold_lux": 7.0, "lux": 11.4, "prev_lux": 0.2, "armed": True,
+                "pid": 4242, "started_unix": 900.0, "timestamp_unix": 990.0}))
+            log_file.write_text(json.dumps({
+                "event": "light-cycle-resumed", "lux": 11.4, "prev_lux": 0.2,
+                "prev_observed_unix": 960.0, "threshold_lux": 7.0, "poll": 7,
+                "timestamp_unix": 990.0}) + "\n")
+            with patch.object(watch, "MONITOR_STATE_FILE", state_file), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                view = watch.light_resumption_view(1000, 30)
+        self.assertIn("status=fresh-clock-conditional", view)
+        self.assertIn("heartbeat_age=10.0s (stale>30s)", view)
+        self.assertIn("armed=True", view)
+        self.assertIn("pid=4242", view)
+        self.assertIn("last_row=lux=11.4 prev_lux=0.2 threshold_lux=7.0 poll=7 "
+                      "prev_observed_gap=30s", view)
+        self.assertNotIn("predates the 7.0-lux rule", view)
+
+    def test_light_resumption_view_flags_silent_detector_and_retained_old_row(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            state_file = folder / "light-cycle-monitor-state.json"
+            log_file = folder / "light-cycle-resumed.jsonl"
+            state_file.write_text(json.dumps({
+                "poll": 3, "armed": False, "lux": None, "prev_lux": None,
+                "threshold_lux": 7.0, "timestamp_unix": 900.0}))
+            log_file.write_text(json.dumps({
+                "event": "light-cycle-resumed", "lux": 2.505, "poll": 0,
+                "prev_lux": None, "timestamp_unix": 899.0}) + "\n")
+            with patch.object(watch, "MONITOR_STATE_FILE", state_file), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                view = watch.light_resumption_view(1000, 30)
+        self.assertIn("status=stale/detector-silent", view)
+        self.assertIn("armed=false", view)
+        self.assertIn("no fresh sub-threshold baseline", view)
+        self.assertIn("predates the 7.0-lux rule", view)
+
+    def test_read_views_carries_the_detector_verdict_into_the_pane_text(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            watch.save(folder / "note3.json", self.state())
+            artifacts = folder / "runtime-artifacts"
+            artifacts.mkdir()
+            state_file = artifacts / "light-cycle-monitor-state.json"
+            state_file.write_text(json.dumps({
+                "poll": 1, "armed": False, "lux": None, "prev_lux": None,
+                "threshold_lux": 7.0, "timestamp_unix": 1000.0}))
+            with patch.object(watch, "MONITOR_STATE_FILE", state_file), \
+                 patch.object(watch, "MONITOR_LOG_FILE", artifacts / "no-log.jsonl"):
+                view = watch.read_views(folder, 1000, 30)
+                compact = watch.read_views(folder, 1000, 30, compact=True)
+        self.assertIn("NODE note3", view)
+        self.assertIn("Light-cycle resumption detector", view)
+        self.assertIn("status=fresh-clock-conditional", view)
+        self.assertIn("light-resumption-detector status=fresh-clock-conditional", compact)
+
 if __name__ == "__main__":
     unittest.main()

@@ -886,6 +886,97 @@ def stillness_snapshot(state, now, stale):
         "consumer": "space-perception programme (not human presence)",
     }
 
+MONITOR_ARTIFACTS = Path(__file__).resolve().parent / "artifacts"
+MONITOR_STATE_FILE = MONITOR_ARTIFACTS / "light-cycle-monitor-state.json"
+MONITOR_LOG_FILE = MONITOR_ARTIFACTS / "light-cycle-resumed.jsonl"
+MONITOR_LOG_TAIL_BYTES = 4096
+
+
+def _read_json_file(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
+def _last_monitor_row(path, limit=MONITOR_LOG_TAIL_BYTES):
+    """Last complete detector row, or None. Reads only a bounded tail."""
+    try:
+        with open(path, "rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - limit))
+            chunk = stream.read()
+    except OSError:
+        return None
+    for line in reversed(chunk.split(b"\n")):
+        if line.strip():
+            try:
+                row = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                return None
+            return row if isinstance(row, dict) else None
+    return None
+
+
+def _monitor_row_text(row):
+    if row is None:
+        return "none (no resumption claimed in the retained detector log)"
+    gap = "-"
+    if (isinstance(row.get("timestamp_unix"), (int, float)) and
+            isinstance(row.get("prev_observed_unix"), (int, float))):
+        gap = f"{row['timestamp_unix'] - row['prev_observed_unix']:.0f}s"
+    return (f"lux={row.get('lux')} prev_lux={row.get('prev_lux')} "
+            f"threshold_lux={row.get('threshold_lux')} poll={row.get('poll')} "
+            f"prev_observed_gap={gap}")
+
+
+def light_resumption_view(now, stale, compact=False):
+    """Host-side light-resumption detector: liveness, armed state and last row.
+
+    The detector is a separate bounded monitor; its heartbeat is the only signal that
+    separates "armed, nothing observed yet" from "detector silent". A missing or stale
+    heartbeat is UNKNOWN/stale, never calm.
+    """
+    state = _read_json_file(MONITOR_STATE_FILE)
+    row = _last_monitor_row(MONITOR_LOG_FILE)
+    have_heartbeat = (isinstance(state, dict) and
+                      isinstance(state.get("timestamp_unix"), (int, float)))
+    if have_heartbeat:
+        age = now - state["timestamp_unix"]
+        status = ("unknown-clock-future" if age < -5 else
+                  "fresh-clock-conditional" if age <= stale else "stale/detector-silent")
+    else:
+        age = None
+        status = "unknown/no-monitor-heartbeat"
+    if compact:
+        return (f"light-resumption-detector status={status} "
+                f"armed={state.get('armed') if have_heartbeat else None} "
+                f"heartbeat_age={'-' if age is None else format(age, '.0f') + 's'} "
+                f"last_row={_monitor_row_text(row)}")
+    lines = ["Light-cycle resumption detector (host-side bounded monitor over the Note3 "
+             "light channel; no phone, transport or actuator effect):",
+             f"  status={status}" +
+             ("" if age is None else f" heartbeat_age={age:.1f}s (stale>{stale:g}s)")]
+    if not have_heartbeat:
+        lines.append("  a missing heartbeat means detector liveness is UNKNOWN, not calm")
+    else:
+        lines.append(f"  armed={state.get('armed')} poll={state.get('poll')} "
+                     f"lux={state.get('lux')} prev_lux={state.get('prev_lux')} "
+                     f"threshold_lux={state.get('threshold_lux')} pid={state.get('pid')} "
+                     f"interval={state.get('interval_seconds')}s "
+                     f"max_polls={state.get('max_polls')}")
+        if not state.get("armed"):
+            lines.append("  armed=false: no fresh sub-threshold baseline this run, so no "
+                         "resumption can be claimed yet (not a fault)")
+    lines.append(f"  last_row={_monitor_row_text(row)}")
+    if row is not None and "threshold_lux" not in row:
+        lines.append("  last_row predates the 7.0-lux rule (no threshold_lux field); it is "
+                     "retained historical evidence, not an admissible resumption")
+    lines.append("  resumption rows are scored by research-methods' pre-registered milestone-5 "
+                 "rule; this view reports the fields verbatim and does not rescore them")
+    return "\n".join(lines)
+
+
 def ble_status_snapshot(item, now, stale):
     fields = item["fields"] if item else {}
     recognized = item is not None and fields.get("source") == "androidbody_bluetooth_api"
@@ -1470,7 +1561,9 @@ def read_views(directory, now, stale, compact=False):
     if not paths:
         return "UNKNOWN: no perception state; follower has not received evidence\n"
     view = render_events if compact else render
-    return "\n\n".join(view(load(path), now, stale) for path in paths) + "\n"
+    parts = [view(load(path), now, stale) for path in paths]
+    parts.append(light_resumption_view(now, stale, compact))
+    return "\n\n".join(parts) + "\n"
 
 
 def publish_space(directory, nodes, now, stale):

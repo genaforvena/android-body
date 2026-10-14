@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Monitor Note3 light channel for cycle resumption (dim/dark -> clearly lit).
 
-Bounded: polls space.json every 30s, logs to light-cycle-resumed.jsonl, exits
-on transition or after --max-polls. No physical actions, no phone mutation.
+Bounded: polls space.json every 30s, logs to light-cycle-resumed.jsonl, publishes a
+heartbeat to light-cycle-monitor-state.json, exits on transition or after --max-polls.
+No physical actions, no phone mutation.
 
 The channel is not binary. In dim/dark conditions the Note3 light sensor
 oscillates between 0.0 and ~1.3 lux on a seconds timescale (751 sub-5-lux
@@ -15,14 +16,20 @@ gap is not bounded: the record carries prev_observed_unix so the interval
 between the two observations is visible, and the transition is bounded by that
 interval rather than measured. A service restart clears the baseline, so a
 resumption whose dim reading was never observed is not claimed.
+
+The heartbeat is the detector's own liveness and armed state, published atomically so a
+consumer can distinguish "armed, nothing yet" from "detector silent"; a stale heartbeat is
+the only honest signal that the detector stopped.
 """
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
 SPACE_JSON = Path(__file__).resolve().parents[2] / ".mishe-tauftauf" / "body" / "space.json"
 LOG_FILE = Path(__file__).resolve().parent / "artifacts" / "light-cycle-resumed.jsonl"
+HEARTBEAT_FILE = LOG_FILE.parent / "light-cycle-monitor-state.json"
 
 # floor(log2(1 + lux)) >= 3  <=>  lux >= 7.0, the consumer's coarse-bucket
 # boundary: above every retained dim/dark observation (<=5.4 lux) and inside
@@ -44,6 +51,20 @@ def read_light_lux():
     return None
 
 
+def write_heartbeat(fields):
+    """Atomically publish this run's liveness/armed state for the consumer."""
+    content = json.dumps(dict(fields, pid=os.getpid()), sort_keys=True) + "\n"
+    pending = HEARTBEAT_FILE.with_name("." + HEARTBEAT_FILE.name + ".pending")
+    try:
+        with open(pending, "w") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(pending, HEARTBEAT_FILE)
+    except OSError:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--interval", type=float, default=30.0, help="Seconds between polls")
@@ -53,10 +74,22 @@ def main():
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     prev_lux = None
     prev_observed = None
+    started_unix = time.time()
 
     for poll in range(args.max_polls):
         lux = read_light_lux()
         now = time.time()
+        write_heartbeat({
+            "poll": poll,
+            "interval_seconds": args.interval,
+            "max_polls": args.max_polls,
+            "threshold_lux": RESUME_LUX_MIN,
+            "lux": lux,
+            "prev_lux": prev_lux,
+            "armed": prev_lux is not None,
+            "started_unix": started_unix,
+            "timestamp_unix": now,
+        })
 
         if (lux is not None and lux >= RESUME_LUX_MIN and
                 prev_lux is not None and prev_lux < RESUME_LUX_MIN):
