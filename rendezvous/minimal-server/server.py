@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import argparse
 from array import array
+from datetime import datetime, timezone
 import fcntl
 import hmac
 import ipaddress
+import json
 import os
 from pathlib import Path
 import re
@@ -67,6 +69,47 @@ def valid_secret(value: str) -> bool:
     return 32 <= len(value) <= 256 and TOKEN_RE.fullmatch(value) is not None
 
 
+
+class WriteJournal:
+    """One JSON line per accepted write: attribution without payload bytes.
+
+    ``writes.jsonl`` lives beside the queue logs and records only ``ts``,
+    ``node``, ``kind``, ``remote_addr``, ``byte_count`` and ``records`` — never
+    request bytes, tokens or sensor contents. Best-effort by design: the queue
+    is the system of record, so a journal failure never fails an accepted
+    POST; the journal then stops recording until restart.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.lock = threading.Lock()
+        self.failed = False
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+        self.file = os.fdopen(fd, "a", encoding="utf-8")
+
+    def record(self, node: str, kind: str, remote_addr: str | None,
+               byte_count: int, records: int) -> None:
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "node": node,
+            "kind": kind,
+            "remote_addr": remote_addr,
+            "byte_count": byte_count,
+            "records": records,
+        }
+        line = json.dumps(entry, separators=(",", ":")) + "\n"
+        with self.lock:
+            if self.failed:
+                return
+            try:
+                self.file.write(line)
+                self.file.flush()
+            except (OSError, ValueError):
+                self.failed = True
+
+    def close(self) -> None:
+        with self.lock:
+            self.file.close()
 class Queue:
     """One append-only text file. Only acknowledged appends are guaranteed durable.
 
@@ -178,6 +221,7 @@ class Store:
         self.secrets = {node: secret.encode("ascii") for node, secret in secrets.items()}
         self.queues: dict[tuple[str, str], Queue] = {}
         self.lockfile = None
+        self.journal = None
         try:
             fd = os.open(directory / ".lock", os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
             self.lockfile = os.fdopen(fd, "r+b")
@@ -188,6 +232,7 @@ class Store:
             for node in secrets:
                 for kind in ("actions", "observations"):
                     self.queues[(node, kind)] = Queue(directory / f"{node}.{kind}.log", max_queue_bytes)
+            self.journal = WriteJournal(directory / "writes.jsonl")
             # Persist newly created directory entries before accepting appends.
             dirfd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
             try:
@@ -209,6 +254,9 @@ class Store:
         for queue in self.queues.values():
             queue.close()
         self.queues.clear()
+        if self.journal is not None:
+            self.journal.close()
+            self.journal = None
         if self.lockfile is not None:
             self.lockfile.close()
             self.lockfile = None
@@ -319,6 +367,10 @@ class Handler(BaseHTTPRequestHandler):
                 if len(body) != size:
                     raise ProtocolError(400, "incomplete_body")
                 ids = self.server.store.queues[(node, kind)].append(parse_body(body))
+                self.server.store.journal.record(
+                    node, kind,
+                    self.client_address[0] if self.client_address else None,
+                    len(body), len(ids))
                 self.send_text(201, b"".join(f"{seq}\n".encode("ascii") for seq in ids))
             else:
                 if self.headers.get("Content-Length", "0") != "0":

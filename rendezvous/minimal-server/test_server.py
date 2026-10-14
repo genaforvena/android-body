@@ -2,6 +2,8 @@
 """Run with: python3 -m unittest discover -s rendezvous/minimal-server -v"""
 import concurrent.futures
 import http.client
+import json
+from datetime import datetime
 from pathlib import Path
 import socket
 import subprocess
@@ -163,6 +165,31 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(status, 501)
         self.assertEqual(body, b"error http_501\n")
         self.assertEqual(headers["Content-Type"], "text/plain; charset=utf-8")
+
+    def test_write_journal_records_accepted_post(self):
+        body = b"1712345679 light lux=82\n1712345680 battery level=0.73 charging=true\n"
+        self.assertEqual(self.request("POST", "/node/note3/observations", body)[:2], (201, b"1\n2\n"))
+        lines = (self.directory / "writes.jsonl").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 1)
+        entry = json.loads(lines[0])
+        self.assertEqual(entry["node"], "note3")
+        self.assertEqual(entry["kind"], "observations")
+        self.assertEqual(entry["remote_addr"], "127.0.0.1")
+        self.assertEqual(entry["byte_count"], len(body))
+        self.assertEqual(entry["records"], 2)
+        datetime.fromisoformat(entry["ts"])
+
+    def test_write_journal_skips_rejected_writes_and_reads(self):
+        self.assertEqual(self.request("POST", "/node/note3/actions", b"vibrate duration=200", secret="wrong")[0], 401)
+        self.assertEqual(self.request("POST", "/node/note3/actions", b"bad\x00")[0], 400)
+        self.request("GET", "/node/note3/actions?after=0")
+        self.assertEqual((self.directory / "writes.jsonl").read_text(encoding="utf-8"), "")
+
+    def test_write_journal_failure_does_not_fail_post(self):
+        self.assertEqual(self.request("POST", "/node/note3/actions", b"vibrate duration=200\n")[:2], (201, b"1\n"))
+        self.store.journal.file.close()
+        self.assertEqual(self.request("POST", "/node/note3/actions", b"vibrate duration=10\n")[:2], (201, b"2\n"))
+        self.assertTrue(self.store.journal.failed)
 
 
 class StoreTests(unittest.TestCase):
