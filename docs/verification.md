@@ -72,7 +72,7 @@ Neither `START_STICKY` nor the ON-only partial wake lock guarantees uptime or by
 
 ## Deployed Note3 APK — emitted channels and recorded device history
 
-The frozen deployed consumer (`body/runtime/watch.py`) has observed the installed Note3 APK's emissions across 2026-10-10..14; per-snapshot detail remains in Git history. Current deployed bytes == source `57ec309` (sha256 `bb9a71c85bdc09500edaeda77cf8bda60b91f10ae938c2a2d2e5087075a11293`, deployed 2026-10-14 09:12Z).
+The frozen deployed consumer (`body/runtime/watch.py`) has observed the installed Note3 APK's emissions across 2026-10-10..14; per-snapshot detail remains in Git history. Current deployed bytes == source `52bfcea` (sha256 `e941de39195af7c68ae7b5b90ab1b77bcb5dd005e6d2a7054bfcc4039677652a`, activated 2026-10-14 10:04Z: class-B/C delivery-gap rename live; detector history carried over by file rename, 128 rows intact).
 
 Emitted channels (consumer-view evidence of the installed APK's emissions, not server-side receipt, motor proof, calibration or clock synchronization):
 
@@ -87,7 +87,7 @@ Recorded freezes (user-gated stalls, all resolved; consumer-view evidence, not m
 
 Deployed software current state (deployment chains and per-run checks in Git history):
 
-- `watch.py` has carried, in order: the BLE evidence channel, Wi-Fi/BLE RF + node-status hysteresis, protocol-v2 clock fields (`phone_elapsed_ms` on every sensor event; pre-v2 spooled records render null with reasons, never interpolated), clock-skew bounds (`acquisition_span_stats`/`clock_agreement_reason`/`freshness_basis`), the per-session excursion log (bounded 128 lines/node; v2.1 retention fields live since 2026-10-11T19:54Z), the class-B stop detector (deployed and independently verified live 2026-10-12) and the light-resumption detector below. Each deployment exercised its backup/revert path and live activation under health-owned service restarts.
+- `watch.py` has carried, in order: the BLE evidence channel, Wi-Fi/BLE RF + node-status hysteresis, protocol-v2 clock fields (`phone_elapsed_ms` on every sensor event; pre-v2 spooled records render null with reasons, never interpolated), clock-skew bounds (`acquisition_span_stats`/`clock_agreement_reason`/`freshness_basis`), the per-session excursion log (bounded 128 lines/node; v2.1 retention fields live since 2026-10-11T19:54Z), the class-B delivery-gap detector (class-B stop detector renamed 2026-10-14; deployed and independently verified live 2026-10-12) and the light-resumption detector below. Each deployment exercised its backup/revert path and live activation under service restarts.
 - The view's clock note is the computed bounded reason (commit `ee7fd7a`); a hardcoded "UTC-aligned <0.2s" string was removed as a fabricated device pass, with regression test `test_view_clock_note_is_computed_not_hardcoded` keeping it computed.
 - `BoundedEvaluator.readBoundedBytes()` streams 1 KiB chunks capped at `maxBytes` (commit `b82dab0`), replacing API26+ `Files.readAllBytes` on the bounded path.
 - BLE scanning on Note3 no longer immediately fails after the `BLUETOOTH_ADMIN` permission fix (`efc78fd`); `onScanFailed` sets `stopped=true` (`b163324`) so a scan failure exits the loop within ~1s instead of sleeping 60s and retrying indefinitely — the next-failure exit remains a prediction until observed.
