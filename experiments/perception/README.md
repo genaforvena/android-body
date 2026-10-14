@@ -76,9 +76,10 @@ sighting name and RSSI (only when fresh-clock-conditional) and scan lifecycle
 subtype (`start`/`stop`/`error`/`unavailable`) with reason, beacon, window and gap.
 The sightings channel is explicitly not presence, occupancy or proximity proof;
 `sightings_in_history_window` is a bounded count, not a rate or duration. The
-installed phone emits scan lifecycle events live (observed `ble_scan start
-beacon=MISHE-BEACON`, 2026-10-13T09:34Z), but no allowlisted beacon has been
-sighted, so `ble_sighting` evidence and any RF conclusion remain unknown.
+installed phone emits scan lifecycle events live (retained evidence: `ble_scan
+start beacon=MISHE-BEACON`, 2026-10-13T09:34Z; other subtypes not yet
+retained-observed), but no allowlisted beacon has been sighted, so `ble_sighting`
+evidence and any RF conclusion remain unknown.
 The bounded state retains the latest 32 event kinds, last 32 observations and last
 16 action receipts. An unknown event is not treated as evidence of a known sensor.
 
