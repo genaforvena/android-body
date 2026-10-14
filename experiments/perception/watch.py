@@ -1610,7 +1610,13 @@ def clock_agreement_reason(span_stats):
             % (span_stats["min_ms"], span_stats["min_ms"],
                span_stats["max_ms"], span_stats["n"]))
 
-def space_snapshot(states, now, stale):
+def space_snapshot(states, now, stale, node_states=None):
+    """Project the observed states into the read-only space.json boundary.
+
+    ``node_states`` maps node name -> verdict from ``read_node_state``; a node
+    without one publishes mode UNKNOWN (never OFF) so a consumer can tell a
+    designed collect-only silence from a delivery failure.
+    """
     nodes = []
     for state in states:
         item = state["latest"].get("light")
@@ -1636,6 +1642,7 @@ def space_snapshot(states, now, stale):
             "transport": transport(state, now, stale), "last_error": state["error"],
             "last_poll_utc": stamp(state["poll_at"]),
             "backlog_page_pending": state["has_more"],
+            "node_state": node_state_snapshot((node_states or {}).get(state["node"])),
             "capabilities": {key: state["capabilities"].get(key, "unknown")
                              for key in CAPABILITIES},
             "owner_checkboxes": dict(state.get("owner_checkboxes") or {}),
@@ -1812,6 +1819,34 @@ def node_state_line(node_state):
     return line
 
 
+def node_state_snapshot(node_state):
+    """The host-side node-state verdict as one additive space.json node field.
+
+    The node's own status already says whether an *observation* is fresh; this
+    field says whether the producer is *sending*, durably ON with collect-only
+    selected (no HTTP by design), OFF, or unknown. Additive to schema_version 1:
+    the core consumer pins ``schema_version == 1`` (core discovery.py:4220) and
+    ignores node keys it does not read, so a version bump would break it.
+
+    ``age_s`` is deliberately *not* republished: the reader derives it from the
+    caller's clock, so two renders in the same wall-clock second would differ and
+    ``publish_space`` would rewrite space.json on every node of every poll cycle
+    instead of skipping the unchanged one. ``status`` plus the document's own
+    ``observed_at_epoch_s`` carry the same information without that write
+    amplification (independent review, wake 78865).
+    """
+    if node_state is None:
+        return {"status": "unknown", "mode": "UNKNOWN", "desired_on": None,
+                "collect_only": None, "observed_at_epoch_s": None,
+                "reason": "no-node-state", "reasons": []}
+    return {"status": node_state["status"], "mode": node_state["mode"],
+            "desired_on": node_state["desired_on"],
+            "collect_only": node_state["collect_only"],
+            "observed_at_epoch_s": node_state["observed_at_epoch_s"],
+            "reason": node_state["reason"],
+            "reasons": list(node_state.get("reasons") or [])}
+
+
 def read_space(directory, now, stale):
     paths = state_paths(directory)
     if not paths:
@@ -1819,7 +1854,10 @@ def read_space(directory, now, stale):
                 "producer": {"name": "android-body-perception", "entry_point": "watch.py",
                              "mode": "space", "contract": 1},
                 "nodes": [], "status": "unknown/no-perception-state"}
-    return space_snapshot([load(path) for path in paths], now, stale)
+    states = [load(path) for path in paths]
+    return space_snapshot(states, now, stale,
+                          {state["node"]: read_node_state(directory, state["node"], now)
+                           for state in states})
 
 
 def render_space(directory, now, stale):

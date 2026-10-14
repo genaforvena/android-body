@@ -332,6 +332,56 @@ class PerceptionTests(unittest.TestCase):
         stale = watch.space_snapshot([state], 1031, 30)["nodes"][0]
         self.assertEqual(stale["light"]["status"], "stale")
         self.assertIsNone(stale["light"]["lux"])
+
+    def test_space_snapshot_publishes_the_host_side_node_state_verdict(self):
+        """A designed collect-only silence must be nameable, not scored as a fault."""
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1000)
+        # No verdict read: unknown, never OFF.
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
+        self.assertEqual(node["node_state"],
+                         {"status": "unknown", "mode": "UNKNOWN", "desired_on": None,
+                          "collect_only": None, "observed_at_epoch_s": None,
+                          "reason": "no-node-state", "reasons": []})
+        verdict = {"status": "ok", "mode": "ON_COLLECT_ONLY", "desired_on": True,
+                   "collect_only": True, "observed_at_epoch_s": 999.0, "age_s": 1.0,
+                   "reason": None, "reasons": ["collect-only: no HTTP by design"]}
+        node = watch.space_snapshot([state], 1000, 30, {"note3": verdict})["nodes"][0]
+        # The reader's clock-derived age_s is not republished (see the churn test).
+        self.assertEqual(node["node_state"],
+                         {key: value for key, value in verdict.items() if key != "age_s"})
+        # read_space wires the directory document in without a schema bump:
+        # the core consumer rejects schema_version != 1.
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            watch.save(directory / "note3.json", state)
+            (directory / "node-state-note3.json").write_text(json.dumps(
+                {"node": "note3", "mode": "ON_COLLECT_ONLY", "desired_on": True,
+                 "collect_only": True, "observed_at_epoch_s": 999.0,
+                 "source": "tools/node_state.py", "reasons": []}), encoding="utf-8")
+            snapshot = watch.read_space(directory, 1000, 30)
+        self.assertEqual(snapshot["schema_version"], 1)
+        published = snapshot["nodes"][0]["node_state"]
+        self.assertEqual((published["status"], published["mode"],
+                          published["collect_only"]), ("ok", "ON_COLLECT_ONLY", True))
+
+    def test_space_render_is_stable_within_a_second_so_publish_can_skip_it(self):
+        """publish_space rewrites only on change; a clock-derived field would defeat that."""
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1000)
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            watch.save(directory / "note3.json", state)
+            (directory / "node-state-note3.json").write_text(json.dumps(
+                {"node": "note3", "mode": "ON_COLLECT_ONLY", "desired_on": True,
+                 "collect_only": True, "observed_at_epoch_s": 999.0,
+                 "source": "tools/node_state.py", "reasons": []}), encoding="utf-8")
+            first = watch.render_space(directory, 1000.0, 30)
+            later = watch.render_space(directory, 1000.3, 30)
+        self.assertEqual(first, later)
+        self.assertIn('"node_state"', first)
     def test_space_snapshot_light_reason_carries_measured_clock_bound(self):
         state = self.state()
         self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
