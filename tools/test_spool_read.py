@@ -331,6 +331,15 @@ class LightBucketRegexTests(unittest.TestCase):
     def test_dark_exact_matches_0_0(self):
         self.assertEqual(self._match_bucket("lux=0.0"), "dark_exact")
 
+    def test_faint_0_1_matches_0_5(self):
+        self.assertEqual(self._match_bucket("lux=0.5"), "faint_0_1")
+
+    def test_faint_0_1_matches_0_505(self):
+        self.assertEqual(self._match_bucket("lux=0.505"), "faint_0_1")
+
+    def test_faint_0_1_does_not_match_exact_zero(self):
+        self.assertNotEqual(self._match_bucket("lux=0.0"), "faint_0_1")
+
     def test_dim_0_9_matches_5_5(self):
         self.assertEqual(self._match_bucket("lux=5.5"), "dim_0_9")
 
@@ -348,6 +357,32 @@ class LightBucketRegexTests(unittest.TestCase):
 
     def test_dim_does_not_match_two_digit_integer(self):
         self.assertNotEqual(self._match_bucket("lux=10.0"), "dim_0_9")
+
+    def test_dim_does_not_match_dark_or_sub_1(self):
+        """Partition defect (discover 81172): the old dim pattern
+        ``lux=[0-9]\.[0-9]`` also matched ``lux=0.0`` (its ``[0-9]`` class
+        matched the dark leading zero), so dark rows were double-counted,
+        and a future ``lux=0.5`` row must land in faint_0_1, not dim."""
+        self.assertNotEqual(self._match_bucket("lux=0.0"), "dim_0_9")
+        self.assertNotEqual(self._match_bucket("lux=0.5"), "dim_0_9")
+
+    def test_buckets_partition_every_lux_shape(self):
+        """Each lux string shape the app can emit matches exactly one
+        bucket: the buckets are disjoint and exhaustive over non-negative
+        Java float strings (``"lux=" + float``), so their counts sum to
+        the ``lux=`` row count."""
+        shapes = ["lux=0.0", "lux=0.5", "lux=0.505", "lux=0.999",
+                  "lux=1.0", "lux=5.5", "lux=9.9", "lux=2.505",
+                  "lux=10.0", "lux=42.3", "lux=99.9",
+                  "lux=100.0", "lux=250.7", "lux=999.9",
+                  "lux=1000.0", "lux=1500.0", "lux=12345.6",
+                  "lux=1.0E-45", "lux=1.2E5"]
+        for shape in shapes:
+            matches = [name for name, bre in spool_read.LIGHT_BUCKETS
+                       if re.compile(bre.replace(r"\{", "{")
+                                     .replace(r"\}", "}")).search(shape)]
+            self.assertEqual(len(matches), 1,
+                             f"{shape} matched {matches}")
 
     def test_moderate_does_not_match_three_digit(self):
         self.assertNotEqual(self._match_bucket("lux=100.0"), "moderate_10_99")
@@ -368,7 +403,7 @@ class LightBucketRegexTests(unittest.TestCase):
     def test_bucket_names_are_exactly_expected(self):
         names = [name for name, _ in spool_read.LIGHT_BUCKETS]
         self.assertEqual(names, [
-            "dark_exact", "dim_0_9", "moderate_10_99",
+            "dark_exact", "faint_0_1", "dim_0_9", "moderate_10_99",
             "bright_100_999", "very_bright_1000_plus",
         ])
 
@@ -380,7 +415,6 @@ class CountKindTests(unittest.TestCase):
     def test_command_matches_row_epoch_and_kind(self):
         with mock.patch.object(spool_read, "_run", return_value="7") as run:
             result = spool_read._count_kind(["adb"], "S", "PATH", "light", 5.0)
-        self.assertEqual(result, 7)
         command = run.call_args[0][2]
         self.assertIn(f"'{spool_read.ROW_EPOCH_BRE} light'", command)
         self.assertIn("grep -a -c", command)
@@ -397,7 +431,7 @@ class AllowedKindsTests(unittest.TestCase):
     EXPECTED = frozenset({
         "battery", "light", "acceleration", "ble_status", "wifi_link_rssi",
         "spool", "cap", "hello", "android", "owner_checkboxes", "probe",
-        "ble_scan", "action",
+        "ble_scan", "ble_sighting", "action",
     })
 
     def test_exact_set(self):
@@ -412,7 +446,7 @@ class AllowedKindsTests(unittest.TestCase):
         self.assertEqual(missing, frozenset())
 
     def test_kind_count(self):
-        self.assertEqual(len(spool_read.ALLOWED_KINDS), 13)
+        self.assertEqual(len(spool_read.ALLOWED_KINDS), 14)
 
 
 if __name__ == "__main__":

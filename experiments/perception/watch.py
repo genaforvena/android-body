@@ -1757,6 +1757,32 @@ CLOCK_DOMAIN_MAX_AGE_SECONDS = 3600.0
 SPOOL_SUMMARY_PREFIX = "spool-summary-"
 SPOOL_SUMMARY_MAX_AGE_SECONDS = 600.0
 
+#: Kinds the app appends once per collection cycle (discover 81112 census:
+#: exactly co-counted on Note3 at 5.0 s cadence). A live collector keeps
+#: them equal within the sequential-grep skew; a kind that stops while the
+#: others continue is a per-channel failure, not collector silence.
+SPOOL_COVERAGE_KINDS = ("light", "acceleration", "ble_status", "battery",
+                        "wifi_link_rssi")
+SPOOL_COVERAGE_MAX_SKEW_ROWS = 5
+
+
+def spool_coverage_verdict(counts):
+    """Coverage verdict from the per-cycle co-counted spool kinds.
+
+    ``coverage=ok`` when the five kinds are co-counted within the skew bound;
+    ``coverage=divergent`` with each kind's count when they are not (a stopped
+    channel while the others continue); ``coverage=no-rows`` when the window
+    holds no per-cycle rows at all (a just-created spool, never calm). Absence
+    of rows is never rendered as absence of phenomenon.
+    """
+    values = [counts.get(kind, 0) for kind in SPOOL_COVERAGE_KINDS]
+    if not any(values):
+        return "coverage=no-rows"
+    if max(values) - min(values) <= SPOOL_COVERAGE_MAX_SKEW_ROWS:
+        return "coverage=ok"
+    return ("coverage=divergent " + " ".join(
+        f"{kind}={counts.get(kind, 0)}" for kind in SPOOL_COVERAGE_KINDS))
+
 
 def state_paths(directory):
     """Perception state files only.
@@ -1990,14 +2016,17 @@ def spool_view_line(spool):
         light = counts.get("light", 0)
         buckets = spool["light_buckets"]
         window_hours = spool["retention_window_s"] / 3600.0
+        coverage = spool_coverage_verdict(counts)
         return (f"collection-side spool evidence (NOT delivered; source=app-private-spool): "
                 f"status=ok spool={spool['spool_bytes']:,}B window={window_hours:.1f}h "
                 f"rows={total:,} light={light:,} "
-                f"(dark={buckets.get('dark_exact',0):,} dim={buckets.get('dim_0_9',0):,} "
+                f"(dark={buckets.get('dark_exact',0):,} "
+                f"faint={buckets.get('faint_0_1',0):,} "
+                f"dim={buckets.get('dim_0_9',0):,} "
                 f"moderate={buckets.get('moderate_10_99',0):,} "
                 f"bright={buckets.get('bright_100_999',0):,} "
                 f"vbright={buckets.get('very_bright_1000_plus',0):,}) "
-                f"age={spool['age_s']}s")
+                f"{coverage} age={spool['age_s']}s")
     else:
         return (f"collection-side spool evidence (NOT delivered; source=app-private-spool): "
                 f"status={spool['status']} reason={spool['reason']} "

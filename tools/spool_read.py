@@ -33,8 +33,9 @@ The document (exactly these keys, never the endpoint or the node secret):
      "oldest_row_epoch_s": 1791892800.0,
      "newest_row_epoch_s": 1791916200.0,
      "counts": {"light": 4964, "battery": 12, ...},
-     "light_buckets": {"dark_exact": 1386, "dim_0_9": 4982, "moderate_10_99": 549,
-                       "bright_100_999": 180, "very_bright_1000_plus": 0},
+     "light_buckets": {"dark_exact": 1386, "faint_0_1": 4, "dim_0_9": 4982,
+                       "moderate_10_99": 549, "bright_100_999": 180,
+                       "very_bright_1000_plus": 0},
      "reason": null}
 
 Written atomically (temp file + rename, 0600) to
@@ -65,22 +66,30 @@ MAX_REASON_CHARS = 200
 #: BRE matching a spool row's leading 10-digit epoch; sent to device grep as-is.
 ROW_EPOCH_BRE = r"[0-9]\{10\}"
 
-#: Allowlisted protocol record kinds (verified from spool snapshot 2026-10-14T13:10Z).
+#: Allowlisted protocol record kinds (verified from spool snapshot
+#: 2026-10-14T13:10Z and the protocol README; ``ble_sighting`` is emitted
+#: by BleScanEvents.sighting while a session is ON).
 ALLOWED_KINDS = frozenset({
     "battery", "light", "acceleration", "ble_status", "wifi_link_rssi",
     "spool", "cap", "hello", "android", "owner_checkboxes", "probe",
-    "ble_scan", "action",
+    "ble_scan", "ble_sighting", "action",
 })
 
 #: Kinds counted but not sensor-data (protocol/control kinds).
 NON_SENSOR_KINDS = frozenset({"cap", "hello", "android", "owner_checkboxes", "probe", "action"})
 
-#: Light magnitude buckets (lux ranges). Each pattern is the exact BRE string
-#: sent to the device's ``grep -a -c``: toybox grep is BRE by default, so
-#: intervals must be brace-escaped (``\{3,\}``), like the epoch pattern above.
+#: Light magnitude buckets (lux ranges), disjoint by construction: every
+#: non-negative Java float string the app can emit (``"lux=" + float``)
+#: matches exactly one bucket, so the bucket counts partition the light
+#: rows and their sum equals the ``lux=`` row count. Each pattern is the
+#: exact BRE string sent to the device's ``grep -a -c``: toybox grep is BRE
+#: by default, so intervals must be brace-escaped (``\{3,\}``), like the
+#: epoch pattern above. ``faint_0_1`` covers the open interval (0, 1) that
+#: the dim bucket's ``[1-9]`` leading digit excludes (discover 81172).
 LIGHT_BUCKETS = (
     ("dark_exact", r"lux=0\.0"),
-    ("dim_0_9", r"lux=[0-9]\.[0-9]"),
+    ("faint_0_1", r"lux=0\.[1-9]"),
+    ("dim_0_9", r"lux=[1-9]\.[0-9]"),
     ("moderate_10_99", r"lux=[1-9][0-9]\.[0-9]"),
     ("bright_100_999", r"lux=[1-9][0-9][0-9]\.[0-9]"),
     ("very_bright_1000_plus", r"lux=[1-9][0-9]\{3,\}"),

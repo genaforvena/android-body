@@ -2421,5 +2421,74 @@ class PerceptionTests(unittest.TestCase):
         self.assertIn("not comparable across the step", view)
         # The compact view accepts the same argument (a jump must not crash the cached render).
         self.assertIn("clock-domain alarm", watch.render_events(state, 1024, 30, None, stepped))
+
+
+class SpoolCoverageVerdictTests(unittest.TestCase):
+    """The co-count verdict separates collector silence from per-channel failure.
+
+    Discover 81112 measured the five per-cycle kinds exactly co-counted on
+    Note3 (one row each per ~5 s cycle). The verdict is derived consumer-side
+    from the spool summary's per-kind counts; no phone request is made.
+    """
+
+    def _counts(self, **overrides):
+        counts = {kind: 100 for kind in watch.SPOOL_COVERAGE_KINDS}
+        counts.update(overrides)
+        return counts
+
+    def test_co_counted_kinds_are_ok(self):
+        self.assertEqual(watch.spool_coverage_verdict(self._counts()),
+                         "coverage=ok")
+
+    def test_skew_within_bound_is_ok(self):
+        counts = self._counts()
+        counts["light"] = 96
+        counts["wifi_link_rssi"] = 101
+        self.assertEqual(watch.spool_coverage_verdict(counts), "coverage=ok")
+
+    def test_stopped_channel_is_divergent_with_each_count(self):
+        verdict = watch.spool_coverage_verdict(self._counts(light=0))
+        self.assertTrue(verdict.startswith("coverage=divergent "))
+        self.assertIn("light=0", verdict)
+        self.assertIn("ble_status=100", verdict)
+        self.assertIn("wifi_link_rssi=100", verdict)
+
+    def test_all_zero_window_is_no_rows_not_ok(self):
+        counts = {kind: 0 for kind in watch.SPOOL_COVERAGE_KINDS}
+        self.assertEqual(watch.spool_coverage_verdict(counts),
+                         "coverage=no-rows")
+
+    def test_missing_counts_are_no_rows(self):
+        self.assertEqual(watch.spool_coverage_verdict({}), "coverage=no-rows")
+
+    def test_sighting_kind_is_not_part_of_the_per_cycle_set(self):
+        # ble_sighting is emitted only while ON; under collect-only it stays 0
+        # while the collector is alive, so it must not trigger divergence.
+        self.assertNotIn("ble_sighting", watch.SPOOL_COVERAGE_KINDS)
+
+    def test_view_line_reports_faint_bucket_and_coverage(self):
+        spool = {"status": "ok", "spool_bytes": 2634665,
+                 "retention_window_s": 18180.0,
+                 "counts": self._counts(),
+                 "light_buckets": {"dark_exact": 87, "faint_0_1": 0,
+                                   "dim_0_9": 3500, "moderate_10_99": 0,
+                                   "bright_100_999": 0,
+                                   "very_bright_1000_plus": 0},
+                 "age_s": 12.3}
+        line = watch.spool_view_line(spool)
+        self.assertIn("coverage=ok", line)
+        self.assertIn("faint=0", line)
+        self.assertIn("dark=87", line)
+        self.assertIn("NOT delivered", line)
+
+    def test_view_line_without_spool_is_none(self):
+        self.assertIsNone(watch.spool_view_line(None))
+
+    def test_view_line_unavailable_stays_never_calm(self):
+        spool = {"status": "unavailable", "reason": "spool-read-failed"}
+        line = watch.spool_view_line(spool)
+        self.assertIn("status=unavailable", line)
+        self.assertIn("never calm", line)
+        self.assertNotIn("coverage", line)
 if __name__ == "__main__":
     unittest.main()
