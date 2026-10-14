@@ -51,3 +51,10 @@ tasks.register('testBleScanEvents', JavaExec) {
                       "$buildDir/intermediates/javac/debug/compileDebugJavaWithJavac/classes")
     mainClass = 'org.androidbody.BleScanEventsTest'
 }
+
+tasks.register('testEvalOutcome', JavaExec) {
+    dependsOn 'compileDebugUnitTestJavaWithJavac'
+    classpath = files("$buildDir/intermediates/javac/debugUnitTest/compileDebugUnitTestJavaWithJavac/classes",
+                      "$buildDir/intermediates/javac/debug/compileDebugJavaWithJavac/classes")
+    mainClass = 'org.androidbody.EvalOutcomeTest'
+}

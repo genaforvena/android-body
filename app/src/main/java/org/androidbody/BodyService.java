@@ -393,36 +393,20 @@ public final class BodyService extends Service {
         return result[0];
     }
     private String executeEval(final Session session, final String evalInput, final long actionId) {
-        String requested = Protocol.event("action " + actionId + " requested kind=eval");
-        BoundedEvaluator.Command command;
+        final BoundedEvaluator.Command command;
         try {
             command = BoundedEvaluator.parse(evalInput);
         } catch (IllegalArgumentException e) {
             String msg = e.getMessage();
             if (msg != null && msg.contains("not in allowlist")) {
-                String path = msg.substring(msg.lastIndexOf(": ") + 2);
-                return requested + Protocol.event("action " + actionId + " failed reason=read_denied path=" + path);
+                return EvalOutcome.denied(actionId, msg.substring(msg.lastIndexOf(": ") + 2));
             }
-            return requested + Protocol.event("action " + actionId + " failed reason=invalid_arguments");
+            return EvalOutcome.invalid(actionId);
         }
-        String identity = command.name + ":" + (command.argument != null ? command.argument : "");
-        String hash = Integer.toHexString(identity.hashCode());
-        String canonical = command.name + (command.argument != null ? " " + command.argument : "");
-        BoundedEvaluator.Result evalResult = session.evalSession.execute(command, new BoundedEvaluator.Clock() {
+        final BoundedEvaluator.Result result = session.evalSession.execute(command, new BoundedEvaluator.Clock() {
             @Override public long elapsedRealtime() { return SystemClock.elapsedRealtime(); }
         });
-        String output = evalResult.output;
-        if (output != null) {
-            output = output.replaceAll("[\\r\\n]+", " ").replaceAll("\\p{Cntrl}", "");
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append(requested);
-        if (evalResult.ok) {
-            sb.append(Protocol.event("action " + actionId + " succeeded kind=eval command=" + canonical + " identity=" + hash + " status=" + evalResult.status + " truncated=" + evalResult.truncated + " output=" + output));
-        } else {
-            sb.append(Protocol.event("action " + actionId + " failed kind=eval command=" + canonical + " identity=" + hash + " status=" + evalResult.status + " error=" + evalResult.error));
-        }
-        return sb.toString();
+        return result.ok ? EvalOutcome.succeeded(actionId, command, result) : EvalOutcome.failed(actionId, command, result);
     }
     private static final class StorageFailure extends IOException {
         StorageFailure(IOException cause) { super(cause); }
