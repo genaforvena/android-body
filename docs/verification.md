@@ -290,60 +290,25 @@ Freeze #5 (cursor 143382, onset 2026-10-11 21:26:38Z phone time) resolved by pho
 
 This is consumer-view evidence of resumed sensing after freeze #5. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. The class-A detector redeployment (source 364326b) is no longer blocked by freeze #5. No source, APK, or consumer mutation this wake.
 
-## Live perception snapshot — 2026-10-11T17:26Z
+## Deployed Note3 perception snapshots — 2026-10-11 to 2026-10-12
 
-- Note3 cursor 131519 (advanced from 128269 at 16:31Z), session `48b80264-cd08-4bdc-8856-c54a4bb4d6e7` active, transport reachable, no pending backlog page.
-- All sensor channels `fresh-clock-conditional` at phone_sample 17:25:41Z, consumer_receipt 17:26:05Z.
-- Battery: level=1.0 (100%), charging=true. Light: 15.2382 lux, age_ms=147. Acceleration: x=2.671 y=5.258 z=14.545 m/s² (magnitude 15.695 m/s², includes gravity). Wi-Fi RSSI: −13 dBm. BLE API: api=21, scanner_api=present, advertiser_api=present, advertiser_supported=unsupported.
-- Composite stillness: still (accel_std=0.050 m/s² n=7, light_std=0.004 lux n=7, rssi_std=0.471 dBm n=6).
-- BLE sightings: unknown/no-observation (no scan events — BleScan not in deployed APK, see gap above).
-- Redmi10: cursor 0, no observations, transport reachable.
+The frozen deployed consumer view (`body/runtime/watch.py`) observed the Note3 endpoint at five points across 2026-10-11/12. Battery was level=1.0 (100%), charging=true at every snapshot; transport was reachable with no pending backlog page at every snapshot; Redmi10 remained at cursor 0 with no observations at every snapshot.
 
-This is consumer-view evidence; not server-side receipt, motor proof, or calibration. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified.
+| Time (UTC) | Cursor | Session | Freshness | Light (lux) | Accel (m/s²) | WiFi (dBm) | BLE | Composite |
+|---|---|---|---|---|---|---|---|---|
+| 10-11 17:26Z | 131519 | `48b80264` | fresh-clock-cond | 15.2382 | 15.695 | −13 | api=21, advertiser_supported=unsupported | still |
+| 10-12 04:51Z | 153230 | `a0617824` | **stale** (phone-silent) | 0.0 | ~15.7 | −13 | scan_failed code=2 | unknown/frozen |
+| 10-12 17:27Z | 189768 | `a0617824` | fresh-clock-cond | 3.7902 | 15.733 | −11 | scan_failed code=2 (10th) | moving |
+| 10-12 17:43Z | 190552 | `a0617824` | fresh-clock-cond | 16.517 | 15.760 | −12 | scan_failed code=2 (13th) | moving |
+| 10-12 21:12Z | 200652 | `3bff00e8` (new) | fresh-clock-cond | 0.0 | 16.215 | −12 | start (BleScan) | still |
 
-## Live perception snapshot — 2026-10-12T04:51Z
+- **10-11 17:26Z**: session `48b80264` active; BLE sightings unknown/no-observation (BleScan not yet in deployed APK). Composite std: accel 0.050, light 0.004, rssi 0.471 (n=7).
+- **10-12 04:51Z**: session `a0617824` active since phone time 01:27:36Z (~3h24m); all channels stale (phone-silent). Deployed consumer bytes `2423a42` (clock-skew bound deployed 04:51:08Z). Composite unknown/frozen (stale_sensors=accel, light, wifi).
+- **10-12 17:27Z**: session `a0617824` active ~16h; BLE scan_failed intervals accelerating (236m/10m/6m/18m/2m/6m/16m/4m/1m). Composite moving (light_std=0.400, accel_std=0.016, rssi_std=0.500, n=8); environmental oscillation, not presence proof.
+- **10-12 17:43Z**: light jumped from 3.79 to 16.517 lux (environmental change; senses DM 54528). Transport latency 26s (marginally above documented 17–25s envelope). Installed APK re-verified: `7eb54e9b` (100,245 bytes). Deployed consumer `f449ddc4`. Composite moving (light_std=0.226).
+- **10-12 21:12Z**: new session `3bff00e8` created by APK reinstall at 21:05:39Z (prior `a0617824` ended). Accel magnitude 16.215 m/s² (x=3.996) differs from the ~15.7 m/s² baseline observed since 2026-10-10; cause UNKNOWN (possible orientation change or environmental). BleScan started at 21:05:39Z (event #200348).
 
-- Note3 cursor 153230 (advanced from 131519 at 17:26Z on 2026-10-11), session `a0617824-7e10-456c-bd8d-0c3e35499ac2` active since phone time 01:27:36Z (~3h24m), transport reachable, no pending backlog page.
-- All sensor channels `stale` (phone=stale/phone-silent-or-delayed; phone_sample 04:51:20Z, consumer_receipt 04:51:44Z — 24s transport latency, within documented 17–25s envelope).
-- Battery: level=1.0 (100%), charging=true. Light: 0.0 lux, age_ms=158. Acceleration: x=2.677 y=5.280 z=14.583 m/s² (magnitude ~15.7 m/s², includes gravity). Wi-Fi RSSI: −13 dBm.
-- BLE scan_lifecycle: stale/latest=error reason=scan_failed (code=2 at 04:50:36Z phone time, event #153194). Session a0617824 alive ~3h24m. Pattern: code=2 every 120s without freeze.
-- Composite stillness: unknown/frozen (stale_sensors=acceleration,light,wifi_link_rssi_dbm).
-- Redmi10: cursor 0, no observations, transport reachable.
-
-This is consumer-view evidence; not server-side receipt, motor proof, or calibration. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. The deployed consumer runs `2423a42` bytes (clock-skew bound deployed 04:51:08Z; see clock-skew bound consumer deployment section below). No source, APK, or consumer mutation this wake.
-
-## Live perception snapshot — 2026-10-12T17:27Z
-
-- Note3 cursor 189768 (advanced from 153230 at 04:51Z), session `a0617824-7e10-456c-bd8d-0c3e35499ac2` active since phone time 01:27:36Z (~16h), transport reachable, no pending backlog page.
-- All sensor channels `fresh-clock-conditional` at phone_sample 17:27:09Z, consumer_receipt 17:27:32Z (23s transport latency, within documented 17–25s envelope).
-- Battery: level=1.0 (100%), charging=true. Light: 3.7902 lux, age_ms=48. Acceleration: x=2.646 y=5.244 z=14.596 m/s² (magnitude 15.733 m/s², includes gravity). Wi-Fi RSSI: −11 dBm.
-- BLE scan_lifecycle: stale/latest=error reason=scan_failed (code=2 at 17:26:58Z phone time, event #189756). 10th occurrence; intervals 236m/10m/6m/18m/2m/6m/16m/4m/1m — accelerating. Recovery human-gated (new phone-session per API21 SCAN_FAILED_APPLICATION_REGISTRATION_FAILED literature).
-- Composite stillness: moving (accel_std=0.016 m/s², light_std=0.400 lux, rssi_std=0.500 dBm; n=8). Prior still at 17:24Z (light_std=0.000). Environmental oscillation; still-not-presence semantics unchanged.
-- Redmi10: cursor 0, no observations, transport reachable.
-
-This is consumer-view evidence; not server-side receipt, motor proof, or calibration. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. No source, APK, or consumer mutation this wake.
-
-## Live perception snapshot — 2026-10-12T17:43Z
-
-- Note3 cursor 190552 (advanced from 189768 at 17:27Z), session `a0617824-7e10-456c-bd8d-0c3e35499ac2` active since phone time 01:27:36Z (~16h16m), transport reachable, no pending backlog page.
-- All sensor channels `fresh-clock-conditional` at phone_sample 17:43:21Z, consumer_receipt 17:43:47Z (26s transport latency, marginally above the documented 17–25s envelope).
-- Battery: level=1.0 (100%), charging=true. Light: 16.517 lux, age_ms=119 — jumped from 3.79 lux at 17:27Z (environmental change; senses DM 54528 reported the 16.5 lux jump at 17:37Z). Acceleration: x=2.651 y=5.231 z=14.628 m/s² (magnitude 15.760 m/s², includes gravity). Wi-Fi RSSI: −12 dBm.
-- BLE scan_lifecycle: stale/latest=error reason=scan_failed (code=2 at 17:42:59Z phone time, event #190532). 13th occurrence; intervals since 11th (#190144 17:34:59Z): 6m/2m — accelerating. Recovery human-gated (new phone-session per API21 SCAN_FAILED_APPLICATION_REGISTRATION_FAILED literature).
-- Composite stillness: moving (accel_std=0.020 m/s², light_std=0.226 lux, rssi_std=0.484 dBm; n=8). Light-driven; still-not-presence semantics unchanged.
-- Redmi10: cursor 0, no observations, transport reachable.
-
-This is consumer-view evidence; not server-side receipt, motor proof, or calibration. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. Installed APK re-verified this wake: pulled `base.apk` hashes to `7eb54e9b` (100,245 bytes), matching the BleScan install record. Deployed consumer remains `f449ddc4` bytes (no redeploy since 04:51Z). No source, APK, or consumer mutation this wake.
-
-## Live perception snapshot — 2026-10-12T21:12Z
-
-- Note3 cursor 200652 (advanced from 190552 at 17:43Z), session `3bff00e8-9028-4492-b54c-a65c0b7237bc` (NEW — created by APK reinstall at 21:05:39Z; prior session `a0617824` ended by reinstall), transport reachable, no pending backlog page.
-- All sensor channels `fresh-clock-conditional` at phone_sample 21:11:54Z, consumer_receipt 21:12:19Z (25s transport latency, within documented 17–25s envelope).
-- Battery: level=1.0 (100%), charging=true. Light: 0.0 lux, age_ms=140. Acceleration: x=3.996 y=5.954 z=14.544 m/s² (magnitude 16.215 m/s², includes gravity). Wi-Fi RSSI: −12 dBm.
-- BLE scan_lifecycle: stale/latest=start reason=unspecified (BleScan started at 21:05:39Z per event #200348; no scan results yet). BLE status: unknown/no-observation.
-- Composite stillness: still (accel_std=0.020 m/s², light_std=0.000 lux, rssi_std=0.000 dBm; n=8).
-- Redmi10: cursor 0, no observations, transport reachable.
-
-This is consumer-view evidence; not server-side receipt, motor proof, or calibration. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified. Installed APK `8f2c8b18` (eval-wiring build, installed 21:05Z) created a new session; all sensors fresh post-reinstall. Accel magnitude 16.215 m/s² (x=3.996) differs from the ~15.7 m/s² baseline observed since 2026-10-10; cause UNKNOWN (possible orientation change or environmental). No source, APK, or consumer mutation this wake.
+This is consumer-view evidence of the installed APK's emissions, not server-side receipt, motor proof, calibration or clock synchronization. Physical actuator effects, clock synchronization, and sustained screen-off continuity remain unverified.
 
 ## BleScan APK deployment — 2026-10-11T17:35Z
 
