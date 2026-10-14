@@ -155,7 +155,8 @@ if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; th
   else
     echo "UNKNOWN node-state publisher bytes (git status failed)"
   fi
-  if NS_BITS=$(git ls-files -v -- tools/node_state.py tools/device_state.py 2>/dev/null | awk '$1 != "H"'); then
+  NS_BITS=$(git ls-files -v -- tools/node_state.py tools/device_state.py 2>/dev/null | awk '$1 != "H"')
+  if [ -n "$NS_BITS" ]; then
     fail "node-state publisher bytes carry an assume-unchanged/skip-worktree bit (invisible to git status)"
   fi
 else
