@@ -19,7 +19,7 @@ The request event carries normalized recognized arguments, not arbitrary untrust
 
 Read [delivery semantics](../protocol/README.md#delivery-collection-and-restart-semantics) before building retries. Resubmitting an action POST creates a new action ID and may run it again. Never automatically retry a physical command merely because its HTTP response or result was lost.
 
-Torch, speech, notification, sound, screen wake and camera are deliberately unimplemented. A validly numbered unsupported command returns failure and advances the cursor; malformed batches pause uploads/actions without executing anything in that response; local collection continues.
+Torch, speech, notification, sound, screen wake and camera are not implemented. A validly numbered unsupported command returns failure and advances the cursor; malformed batches pause uploads/actions without executing anything in that response; local collection continues.
 
 ## Bounded eval probes
 
