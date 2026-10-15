@@ -91,9 +91,17 @@ ALLOWED_KINDS = frozenset({
 })
 
 #: Tokens that begin a spool row: the kind written immediately after the
-#: epoch. Wi-Fi rows carry the kind ``wifi_link_rssi_dbm`` (device census
-#: 2026-10-15), so the counted name and the row token differ for that channel.
-ROW_KIND_TOKENS = ALLOWED_KINDS | {"wifi_link_rssi_dbm"}
+#: epoch. Three groups differ from the counted names. Wi-Fi rows carry the kind
+#: ``wifi_link_rssi_dbm`` (device census 2026-10-15), not the counted
+#: ``wifi_link_rssi``. ``owner``/``sensor``/``actuator`` begin the
+#: session-start rows the app writes when a checkbox is off, a sensor is
+#: absent or no actuator exists (Sensors.capabilities, BodyService: ``owner
+#: battery off``, ``sensor light absent``, ``actuator vibration absent``);
+#: they are not counted kinds, but they are row epochs, so excluding them
+#: would silently narrow the retention span.
+ROW_KIND_TOKENS = ALLOWED_KINDS | {
+    "wifi_link_rssi_dbm", "owner", "sensor", "actuator",
+}
 
 #: Kinds counted but not sensor-data (protocol/control kinds).
 NON_SENSOR_KINDS = frozenset({"cap", "hello", "android", "owner_checkboxes", "probe", "action"})

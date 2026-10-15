@@ -506,16 +506,43 @@ class RetentionWindowTests(unittest.TestCase):
 
 
 class RowKindTokensTests(unittest.TestCase):
-    """Row-leading tokens cover every counted kind, but no field key name."""
+    """Every token the app writes after a row epoch is a row token.
 
-    def test_every_counted_kind_is_a_row_token(self):
+    The damaging failure is a row epoch silently dropped from the retention
+    span, so the direction that matters is app row tokens -> ROW_KIND_TOKENS.
+    A field key can also satisfy the ``<10 digits> <token>`` shape: the
+    ``owner_checkboxes`` row carries ``battery=``/``light=``/``acceleration=``
+    keys and all three are row tokens, so the guard must rest on the value
+    shape -- those keys only ever carry ``on``/``off`` (BodyService.onOff), so
+    no 10-digit value precedes them.
+    """
+
+    #: Row-leading tokens the app writes, traced in app/src/main/java: hello
+    #: and android (BodyService session start), cap/owner/sensor
+    #: (Sensors.capabilities), actuator (BodyService vibrator line),
+    #: owner_checkboxes and probe, action, the BLE kinds, the sensor kinds,
+    #: the Wi-Fi row token, and the spool overflow notice.
+    APP_ROW_TOKENS = frozenset({
+        "hello", "android", "cap", "owner", "sensor", "actuator",
+        "owner_checkboxes", "probe", "action", "ble_scan", "ble_sighting",
+        "ble_status", "battery", "light", "acceleration",
+        "wifi_link_rssi_dbm", "spool",
+    })
+
+    def test_every_app_row_token_is_accepted(self):
         self.assertEqual(
-            spool_read.ALLOWED_KINDS - spool_read.ROW_KIND_TOKENS, frozenset())
+            self.APP_ROW_TOKENS - spool_read.ROW_KIND_TOKENS, frozenset())
 
-    def test_wifi_row_token_is_accepted(self):
-        self.assertIn("wifi_link_rssi_dbm", spool_read.ROW_KIND_TOKENS)
+    def test_shape_guard_accepts_a_row_token_used_as_a_key(self):
+        """The guard is the value shape, not key exclusion, so a 10-digit value
+        followed by ``battery``/``light``/``acceleration`` is accepted even
+        where they are keys. No producer emits a 10-digit value before those
+        keys (the ``owner_checkboxes`` row carries ``on``/``off``), so the
+        exposure is bounded and recorded here rather than denied."""
+        self.assertEqual(spool_read._row_epochs("1792028662 battery\r\n"),
+                         [1792028662])
 
-    def test_field_key_names_are_not_row_tokens(self):
+    def test_non_kind_field_keys_are_not_row_tokens(self):
         for key in ("phone_elapsed_ms", "observed_at", "sensor_time_ns",
                     "spool_bytes", "lux"):
             self.assertNotIn(key, spool_read.ROW_KIND_TOKENS)
