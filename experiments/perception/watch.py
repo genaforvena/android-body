@@ -1784,6 +1784,24 @@ def spool_coverage_verdict(counts):
         f"{kind}={counts.get(kind, 0)}" for kind in SPOOL_COVERAGE_KINDS))
 
 
+def spool_overflow_loss(overflow):
+    """The published cumulative eviction count, or None without a usable reading.
+
+    ``tools/spool_read.py`` reports ``overflow={"dropped": N, "notice_epoch_s":
+    E}`` from the app's last ``spool overflow dropped=`` notice; ``N`` is
+    cumulative (it survives acknowledgment), so it is a monotonic counter, not
+    a per-window rate. The field is optional: a publisher older than this
+    consumer does not carry it, and publisher and consumer are activated
+    separately, so absence renders as unknown rather than as "no loss".
+    """
+    if not isinstance(overflow, dict):
+        return None
+    dropped = overflow.get("dropped")
+    if not isinstance(dropped, int) or isinstance(dropped, bool) or dropped < 0:
+        return None
+    return dropped
+
+
 def state_paths(directory):
     """Perception state files only.
 
@@ -1954,7 +1972,7 @@ def read_spool_summary(directory, node, now, max_age=SPOOL_SUMMARY_MAX_AGE_SECON
     def unknown(status, reason):
         return {"status": status, "spool_bytes": None, "retention_window_s": None,
                 "oldest_row_epoch_s": None, "newest_row_epoch_s": None,
-                "counts": None, "light_buckets": None,
+                "counts": None, "light_buckets": None, "overflow": None,
                 "observed_at_epoch_s": None, "age_s": None, "reason": reason}
 
     path = directory.parent / f"{SPOOL_SUMMARY_PREFIX}{node}.json"
@@ -1991,12 +2009,13 @@ def read_spool_summary(directory, node, now, max_age=SPOOL_SUMMARY_MAX_AGE_SECON
                 "oldest_row_epoch_s": document.get("oldest_row_epoch_s"),
                 "newest_row_epoch_s": document.get("newest_row_epoch_s"),
                 "counts": counts, "light_buckets": light_buckets,
+                "overflow": document.get("overflow"),
                 "observed_at_epoch_s": observed,
                 "age_s": round(max(age, 0.0), 1), "reason": None}
     return {"status": "unavailable",
             "spool_bytes": None, "retention_window_s": None,
             "oldest_row_epoch_s": None, "newest_row_epoch_s": None,
-            "counts": None, "light_buckets": None,
+            "counts": None, "light_buckets": None, "overflow": None,
             "observed_at_epoch_s": observed,
             "age_s": round(max(age, 0.0), 1),
             "reason": document.get("reason") or "spool-read-failed"}
@@ -2007,6 +2026,10 @@ def spool_view_line(spool):
 
     This line is ALWAYS labelled as collection-side, never as a delivered
     observation. The host queue / space.json remain the delivery record.
+
+    Coverage says the collector is alive; the eviction count says what bounded
+    retention already discarded before delivery, so a live collector with a
+    stale consumer is not read as a lossless one.
     """
     if spool is None:
         return None
@@ -2017,6 +2040,9 @@ def spool_view_line(spool):
         buckets = spool["light_buckets"]
         window_hours = spool["retention_window_s"] / 3600.0
         coverage = spool_coverage_verdict(counts)
+        dropped = spool_overflow_loss(spool.get("overflow"))
+        loss = (f"overflow=cumulative-dropped={dropped:,}"
+                if dropped is not None else "overflow=unknown")
         return (f"collection-side spool evidence (NOT delivered; source=app-private-spool): "
                 f"status=ok spool={spool['spool_bytes']:,}B window={window_hours:.1f}h "
                 f"rows={total:,} light={light:,} "
@@ -2026,7 +2052,7 @@ def spool_view_line(spool):
                 f"moderate={buckets.get('moderate_10_99',0):,} "
                 f"bright={buckets.get('bright_100_999',0):,} "
                 f"vbright={buckets.get('very_bright_1000_plus',0):,}) "
-                f"{coverage} age={spool['age_s']}s")
+                f"{coverage} {loss} age={spool['age_s']}s")
     else:
         return (f"collection-side spool evidence (NOT delivered; source=app-private-spool): "
                 f"status={spool['status']} reason={spool['reason']} "

@@ -2490,5 +2490,65 @@ class SpoolCoverageVerdictTests(unittest.TestCase):
         self.assertIn("status=unavailable", line)
         self.assertIn("never calm", line)
         self.assertNotIn("coverage", line)
+
+    def test_view_line_reports_cumulative_eviction_loss(self):
+        """A live collector with a stale consumer is NOT lossless: bounded
+        retention already discarded the undelivered backlog, so the loss term
+        is rendered, not hidden by the coverage verdict (discover 81710)."""
+        spool = {"status": "ok", "spool_bytes": 3227302,
+                 "retention_window_s": 21292.0,
+                 "counts": self._counts(),
+                 "light_buckets": {"dark_exact": 3082, "faint_0_1": 0,
+                                   "dim_0_9": 1121, "moderate_10_99": 0,
+                                   "bright_100_999": 0,
+                                   "very_bright_1000_plus": 0},
+                 "overflow": {"dropped": 108040, "notice_epoch_s": 1792050926},
+                 "age_s": 212.6}
+        line = watch.spool_view_line(spool)
+        self.assertIn("overflow=cumulative-dropped=108,040", line)
+        self.assertIn("coverage=ok", line)
+
+    def test_view_line_shows_a_never_evicted_spool_as_a_truthful_zero(self):
+        spool = {"status": "ok", "spool_bytes": 2634665,
+                 "retention_window_s": 18180.0,
+                 "counts": self._counts(),
+                 "light_buckets": {"dark_exact": 87, "faint_0_1": 0,
+                                   "dim_0_9": 3500, "moderate_10_99": 0,
+                                   "bright_100_999": 0,
+                                   "very_bright_1000_plus": 0},
+                 "overflow": {"dropped": 0, "notice_epoch_s": None},
+                 "age_s": 12.3}
+        self.assertIn("overflow=cumulative-dropped=0",
+                      watch.spool_view_line(spool))
+
+    def test_view_line_marks_an_absent_loss_field_unknown_not_zero(self):
+        """Publisher and consumer are activated separately: a spool summary
+        published before this field existed carries no overflow key, and that
+        must not render as "nothing evicted"."""
+        spool = {"status": "ok", "spool_bytes": 2634665,
+                 "retention_window_s": 18180.0,
+                 "counts": self._counts(),
+                 "light_buckets": {"dark_exact": 87, "faint_0_1": 0,
+                                   "dim_0_9": 3500, "moderate_10_99": 0,
+                                   "bright_100_999": 0,
+                                   "very_bright_1000_plus": 0},
+                 "age_s": 12.3}
+        line = watch.spool_view_line(spool)
+        self.assertIn("overflow=unknown", line)
+        self.assertNotIn("cumulative-dropped", line)
+
+    def test_view_line_ignores_a_malformed_loss_field(self):
+        for bad in ({"dropped": "106097"}, {"dropped": -1}, {"dropped": None},
+                    {"dropped": 1.5}, "dropped", {}):
+            spool = {"status": "ok", "spool_bytes": 2634665,
+                     "retention_window_s": 18180.0,
+                     "counts": self._counts(),
+                     "light_buckets": {"dark_exact": 87, "faint_0_1": 0,
+                                       "dim_0_9": 3500, "moderate_10_99": 0,
+                                       "bright_100_999": 0,
+                                       "very_bright_1000_plus": 0},
+                     "overflow": bad, "age_s": 12.3}
+            self.assertIn("overflow=unknown", watch.spool_view_line(spool), bad)
+
 if __name__ == "__main__":
     unittest.main()

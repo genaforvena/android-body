@@ -18,6 +18,12 @@ Constraints (from the spool-channel ruling, artifacts/senses-wake79358-spool-cha
 - Never presented as a delivered observation: the document carries
   ``source=app-private-spool`` and the consumer renders it as collection-side.
 - Failure is UNKNOWN (status=unavailable), never calm or fabricated.
+- Collection loss is reported, not inferred: ``overflow.dropped`` is the app's
+  cumulative eviction count, read from the last ``spool overflow dropped=``
+  notice (never counted, never summed). A live collector with a stale consumer
+  is therefore not mistaken for a lossless one. ``dropped=0`` with a null
+  ``notice_epoch_s`` is a truthful zero (nothing evicted yet), not an absent
+  field.
 - Repeatable via this owned tool, not a per-wake ad-hoc command.
 
 The document (exactly these keys, never the endpoint or the node secret):
@@ -36,6 +42,7 @@ The document (exactly these keys, never the endpoint or the node secret):
      "light_buckets": {"dark_exact": 1386, "faint_0_1": 4, "dim_0_9": 4982,
                        "moderate_10_99": 549, "bright_100_999": 180,
                        "very_bright_1000_plus": 0},
+     "overflow": {"dropped": 108040, "notice_epoch_s": 1792050926},
      "reason": null}
 
 Written atomically (temp file + rename, 0600) to
@@ -80,6 +87,25 @@ ROW_EPOCH_TOKEN_BRE = r"[0-9]\{10\} [a-z_]\{1,\}"
 #: (protocol README: queue bounds); a larger span means the extraction picked
 #: up a field value, so report the read as failed rather than publish it.
 MAX_RETENTION_WINDOW_S = 30 * 86400
+
+#: BRE for the app's overflow notice row: ``<epoch> spool overflow dropped=N
+#: policy=oldest`` (ObservationSpool.overflowText). ``N`` is the *cumulative*
+#: count of ordinary rows evicted by bounded retention, and notices are never
+#: trimmed (ObservationSpool.trim skips them), so the file keeps every notice
+#: ever written -- 1,451 of them on Note3 2026-10-15 for one live count.
+#: Counting or summing notices therefore over-reports the loss by ~100x; the
+#: value that matters is the LAST match in append order.
+OVERFLOW_NOTICE_BRE = r"[0-9]\{10\} spool overflow dropped=[0-9]\{1,\}"
+
+#: Python parse of one device ``grep -o`` match (full match: the pattern above
+#: emits the row-leading epoch, so a bare ``dropped=`` field cannot pass).
+OVERFLOW_NOTICE_RE = re.compile(r"([0-9]{10}) spool overflow dropped=([0-9]+)")
+
+#: Marker appended after the overflow grep so the *device-side* status is
+#: visible in stdout. This workstation's adb returns 0 for a device-side
+#: ``exit 7``, so a host-side return code cannot tell "grep matched nothing"
+#: (device rc 1: a truthful zero) from a broken read. The probe can.
+OVERFLOW_PROBE_MARKER = "spool-overflow-probe rc="
 
 #: Allowlisted protocol record kinds (verified from spool snapshot
 #: 2026-10-14T13:10Z and the protocol README; ``ble_sighting`` is emitted
@@ -133,7 +159,7 @@ ALLOWED_KEYS = frozenset({
     "node", "source", "method", "status", "observed_at_epoch_s",
     "validity_seconds", "spool_bytes", "retention_window_s",
     "oldest_row_epoch_s", "newest_row_epoch_s", "counts",
-    "light_buckets", "reason",
+    "light_buckets", "overflow", "reason",
 })
 
 
@@ -293,6 +319,51 @@ def _retention_window(argv, serial, spool_path, timeout):
         raise RuntimeError(f"retention-window-failed: {e}") from e
 
 
+def _overflow_notice(argv, serial, spool_path, timeout):
+    """The app's cumulative eviction count and the notice row's epoch.
+
+    Returns ``(dropped, notice_epoch_s)``, or ``(0, None)`` when the spool has
+    never evicted. The notice is a row like any other, appended in order, so
+    the last match is the current value.
+
+    A read that is neither "matched" nor "matched nothing" raises, so a broken
+    channel stays UNKNOWN instead of publishing a calm zero. Two device facts
+    drive the shape of the command: this workstation's adb reports 0 for any
+    device-side status, so the status is echoed as an explicit probe line; and
+    a device-side failure (run-as denied, unreadable path) exits 1 -- the same
+    status as "no match" -- so stderr is merged into the channel and any
+    diagnostic line fails the read rather than reading as zero evictions.
+    """
+    try:
+        out = _run(argv, serial,
+                   f"run-as org.androidbody grep -a -o '{OVERFLOW_NOTICE_BRE}' "
+                   f"{spool_path} 2>&1; echo '{OVERFLOW_PROBE_MARKER}'$?",
+                   timeout)
+        lines = out.splitlines()
+        if not lines or not lines[-1].startswith(OVERFLOW_PROBE_MARKER):
+            raise ValueError(f"no overflow probe in output: {out[:60]!r}")
+        status = lines[-1][len(OVERFLOW_PROBE_MARKER):].strip()
+        reported = [line.strip() for line in lines[:-1] if line.strip()]
+        if status == "1":
+            if reported:
+                raise ValueError(
+                    f"overflow grep reported no match but said {reported[0][:60]!r}")
+            return 0, None
+        if status != "0":
+            raise ValueError(f"overflow grep status {status!r}")
+        dropped, notice_epoch = 0, None
+        for line in reported:
+            match = OVERFLOW_NOTICE_RE.fullmatch(line)
+            if not match:
+                raise ValueError(f"unparsable overflow line {line[:60]!r}")
+            notice_epoch, dropped = int(match.group(1)), int(match.group(2))
+        if notice_epoch is None:
+            raise ValueError("overflow grep matched nothing parsable")
+        return dropped, notice_epoch
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:
+        raise RuntimeError(f"overflow-notice-failed: {e}") from e
+
+
 def _phone_ts_to_epoch(phone_ts):
     """Convert a phone-local ISO timestamp to a naive epoch (seconds).
 
@@ -321,7 +392,7 @@ def spool_document(label, result, now, validity=300.0):
             "validity_seconds": float(validity),
             "spool_bytes": None, "retention_window_s": None,
             "oldest_row_epoch_s": None, "newest_row_epoch_s": None,
-            "counts": None, "light_buckets": None,
+            "counts": None, "light_buckets": None, "overflow": None,
             "reason": "spool read failed",
         }
     return {
@@ -334,6 +405,7 @@ def spool_document(label, result, now, validity=300.0):
         "newest_row_epoch_s": round(result["newest_row_epoch_s"], 1),
         "counts": result["counts"],
         "light_buckets": result["light_buckets"],
+        "overflow": result["overflow"],
         "reason": None,
     }
 
@@ -348,7 +420,7 @@ def assert_bounded(document):
     if document["status"] == "unavailable":
         if any(document[key] is not None for key in
                ("spool_bytes", "retention_window_s", "oldest_row_epoch_s",
-                "newest_row_epoch_s", "counts", "light_buckets")):
+                "newest_row_epoch_s", "counts", "light_buckets", "overflow")):
             raise ValueError("unavailable spool-summary document carries data")
     else:
         if not isinstance(document["spool_bytes"], int) or document["spool_bytes"] <= 0:
@@ -357,6 +429,19 @@ def assert_bounded(document):
             raise ValueError("ok spool-summary document is missing counts")
         if not isinstance(document["light_buckets"], dict):
             raise ValueError("ok spool-summary document is missing light_buckets")
+        overflow = document["overflow"]
+        dropped = overflow.get("dropped") if isinstance(overflow, dict) else None
+        notice = (overflow.get("notice_epoch_s")
+                  if isinstance(overflow, dict) else None)
+        if (not isinstance(overflow, dict)
+                or set(overflow) != {"dropped", "notice_epoch_s"}
+                or not isinstance(dropped, int) or isinstance(dropped, bool)
+                or dropped < 0
+                or not (notice is None
+                        or (isinstance(notice, int) and not isinstance(notice, bool)))):
+            raise ValueError("ok spool-summary document has a malformed overflow field")
+        if (dropped > 0) != (notice is not None):
+            raise ValueError("overflow dropped and notice_epoch_s disagree")
     if document["reason"] is not None and (
         not isinstance(document["reason"], str)
         or len(document["reason"]) > MAX_REASON_CHARS
@@ -407,6 +492,8 @@ def run_once(args):
         spool_bytes = _spool_size(argv, args.serial, spool_path, args.timeout)
         oldest, newest, window = _retention_window(
             argv, args.serial, spool_path, args.timeout)
+        dropped, notice_epoch = _overflow_notice(
+            argv, args.serial, spool_path, args.timeout)
         result = {
             "spool_bytes": spool_bytes,
             "retention_window_s": window,
@@ -414,6 +501,7 @@ def run_once(args):
             "newest_row_epoch_s": newest,
             "counts": counts,
             "light_buckets": light_buckets,
+            "overflow": {"dropped": dropped, "notice_epoch_s": notice_epoch},
         }
         reason = None
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as error:
@@ -429,8 +517,8 @@ def run_once(args):
         total_rows = sum(result["counts"].values())
         light_total = result["counts"].get("light", 0)
         print(f"spool-summary {args.label}: {total_rows} rows, light={light_total}, "
-              f"{result['spool_bytes']} B, window={result['retention_window_s']}s "
-              f"-> {output}")
+              f"{result['spool_bytes']} B, window={result['retention_window_s']}s, "
+              f"overflow dropped={result['overflow']['dropped']} -> {output}")
     return 0
 
 

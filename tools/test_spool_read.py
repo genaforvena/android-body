@@ -56,6 +56,7 @@ def make_result():
             "bright_100_999": 180,
             "very_bright_1000_plus": 0,
         },
+        "overflow": {"dropped": 108040, "notice_epoch_s": 1792050926},
     }
 
 
@@ -152,6 +153,36 @@ class AssertBoundedTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             spool_read.assert_bounded(doc)
 
+    def test_rejects_unavailable_carrying_overflow(self):
+        doc = spool_read.spool_document(LABEL, None, NOW)
+        doc["overflow"] = {"dropped": 5, "notice_epoch_s": 1792048648}
+        with self.assertRaises(ValueError):
+            spool_read.assert_bounded(doc)
+
+    def test_rejects_ok_missing_overflow(self):
+        doc = self._valid_doc()
+        doc["overflow"] = None
+        with self.assertRaises(ValueError):
+            spool_read.assert_bounded(doc)
+
+    def test_rejects_ok_negative_dropped(self):
+        doc = self._valid_doc()
+        doc["overflow"] = {"dropped": -1, "notice_epoch_s": None}
+        with self.assertRaises(ValueError):
+            spool_read.assert_bounded(doc)
+
+    def test_rejects_ok_dropped_without_a_notice_epoch(self):
+        doc = self._valid_doc()
+        doc["overflow"] = {"dropped": 5, "notice_epoch_s": None}
+        with self.assertRaises(ValueError):
+            spool_read.assert_bounded(doc)
+
+    def test_rejects_ok_notice_epoch_without_dropped(self):
+        doc = self._valid_doc()
+        doc["overflow"] = {"dropped": 0, "notice_epoch_s": 1792048648}
+        with self.assertRaises(ValueError):
+            spool_read.assert_bounded(doc)
+
     def test_rejects_reason_too_long(self):
         doc = self._valid_doc()
         doc["reason"] = "x" * (spool_read.MAX_REASON_CHARS + 1)
@@ -179,6 +210,7 @@ class SpoolDocumentNoneTests(unittest.TestCase):
         self.assertIsNone(doc["newest_row_epoch_s"])
         self.assertIsNone(doc["counts"])
         self.assertIsNone(doc["light_buckets"])
+        self.assertIsNone(doc["overflow"])
 
     def test_reason_is_populated(self):
         doc = spool_read.spool_document(LABEL, None, NOW)
@@ -214,6 +246,18 @@ class SpoolDocumentResultTests(unittest.TestCase):
         result = make_result()
         doc = spool_read.spool_document(LABEL, result, NOW)
         self.assertEqual(doc["light_buckets"], result["light_buckets"])
+
+    def test_overflow_matches_result(self):
+        result = make_result()
+        doc = spool_read.spool_document(LABEL, result, NOW)
+        self.assertEqual(doc["overflow"], result["overflow"])
+
+    def test_truthful_zero_overflow_is_published(self):
+        result = make_result()
+        result["overflow"] = {"dropped": 0, "notice_epoch_s": None}
+        doc = spool_read.spool_document(LABEL, result, NOW)
+        spool_read.assert_bounded(doc)  # a never-evicted spool is valid
+        self.assertEqual(doc["overflow"], {"dropped": 0, "notice_epoch_s": None})
 
     def test_spool_bytes_match_result(self):
         result = make_result()
@@ -546,6 +590,105 @@ class RowKindTokensTests(unittest.TestCase):
         for key in ("phone_elapsed_ms", "observed_at", "sensor_time_ns",
                     "spool_bytes", "lux"):
             self.assertNotIn(key, spool_read.ROW_KIND_TOKENS)
+
+
+class OverflowNoticeTests(unittest.TestCase):
+    """The eviction count is the LAST notice, never a count or a sum.
+
+    The app appends ``<epoch> spool overflow dropped=N policy=oldest`` per
+    eviction batch with ``N`` cumulative, and never trims notices
+    (ObservationSpool.overflowText/trim), so the file keeps every notice ever
+    written: 1,451 of them on Note3 2026-10-15 for the one live count. Summing
+    them reports ~100x the real loss, and counting them reports the number of
+    batches as if it were the number of lost rows.
+    """
+
+    #: Real ``grep -a -o`` output shape, CRLF included, oldest first.
+    NOTICES = ("1792048648 spool overflow dropped=106097\r\n"
+               "1792049129 spool overflow dropped=108030\r\n"
+               "1792050926 spool overflow dropped=108040\r\n")
+
+    def _probe(self, status):
+        return f"{spool_read.OVERFLOW_PROBE_MARKER}{status}\r\n"
+
+    def test_command_anchors_the_epoch_and_reads_the_device_status(self):
+        with mock.patch.object(spool_read, "_run",
+                               return_value=self._probe("1")) as run:
+            spool_read._overflow_notice(["adb"], "S", "PATH", 5.0)
+        command = run.call_args[0][2]
+        self.assertIn("grep -a -o", command)
+        self.assertIn(f"'{spool_read.OVERFLOW_NOTICE_BRE}'", command)
+        # The status must be expanded by the device shell, so ``$?`` sits
+        # outside the single quotes: inside them the probe echoes "$?" and
+        # every read fails as an unparsable status (found on-device).
+        self.assertIn(f"echo '{spool_read.OVERFLOW_PROBE_MARKER}'$?", command)
+        # stderr is merged so a device-side diagnostic is visible on the same
+        # channel as the matches.
+        self.assertIn("2>&1", command)
+
+    def test_last_notice_wins_over_sum_and_max(self):
+        with mock.patch.object(spool_read, "_run",
+                               return_value=self.NOTICES + self._probe("0")):
+            dropped, epoch = spool_read._overflow_notice(["adb"], "S", "PATH", 5.0)
+        self.assertEqual(dropped, 108040)
+        self.assertEqual(epoch, 1792050926)
+        self.assertNotEqual(dropped, 106097 + 108030 + 108040)
+
+    def test_no_notice_is_a_truthful_zero(self):
+        with mock.patch.object(spool_read, "_run",
+                               return_value=self._probe("1")):
+            self.assertEqual(
+                spool_read._overflow_notice(["adb"], "S", "PATH", 5.0), (0, None))
+
+    def test_a_broken_read_is_not_a_calm_zero(self):
+        # A channel that died before the shell reached the echo: no probe line
+        # at all. (A denied run-as is a different mode -- it exits 1 *with* the
+        # probe line, so it is caught by the merged-diagnostic check below, not
+        # here.) Publishing 0 on either would read as "nothing evicted".
+        with mock.patch.object(spool_read, "_run",
+                               return_value="run-as: permission denied\r\n"):
+            with self.assertRaises(RuntimeError):
+                spool_read._overflow_notice(["adb"], "S", "PATH", 5.0)
+
+    def test_a_device_diagnostic_with_no_match_status_is_not_a_zero(self):
+        """Measured on Note3 2026-10-15: a denied run-as or an unreadable path
+        exits 1 -- the same device status as "grep matched nothing" -- and
+        prints only a diagnostic. Reading that as zero would publish a calm
+        "nothing evicted" over a broken channel."""
+        for diagnostic in ("run-as: Package 'org.androidbody' is unknown",
+                           "grep: files/observations/x.spool: Permission denied"):
+            with mock.patch.object(spool_read, "_run",
+                                   return_value=diagnostic + "\r\n" + self._probe("1")):
+                with self.assertRaises(RuntimeError):
+                    spool_read._overflow_notice(["adb"], "S", "PATH", 5.0)
+
+    def test_a_diagnostic_after_a_match_fails_the_read(self):
+        with mock.patch.object(spool_read, "_run",
+                               return_value=self.NOTICES
+                               + "grep: write error\r\n" + self._probe("0")):
+            with self.assertRaises(RuntimeError):
+                spool_read._overflow_notice(["adb"], "S", "PATH", 5.0)
+
+    def test_an_unexpected_device_status_fails_the_read(self):
+        with mock.patch.object(spool_read, "_run",
+                               return_value=self._probe("127")):
+            with self.assertRaises(RuntimeError):
+                spool_read._overflow_notice(["adb"], "S", "PATH", 5.0)
+
+    def test_match_status_without_a_parsable_notice_fails_the_read(self):
+        with mock.patch.object(spool_read, "_run",
+                               return_value="108040 spool overflow dropped=108040\r\n"
+                                            + self._probe("0")):
+            with self.assertRaises(RuntimeError):
+                spool_read._overflow_notice(["adb"], "S", "PATH", 5.0)
+
+    def test_pattern_needs_the_row_leading_ten_digit_epoch(self):
+        # A bare ``dropped=`` field or a short number must not be read as a
+        # notice: the epoch anchor is what makes the value a row timestamp.
+        self.assertIsNone(spool_read.OVERFLOW_NOTICE_RE.fullmatch(
+            "108040 spool overflow dropped=108040"))
+        self.assertIsNone(spool_read.OVERFLOW_NOTICE_RE.fullmatch(
+            "spool overflow dropped=108040"))
 
 
 if __name__ == "__main__":
