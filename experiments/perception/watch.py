@@ -837,12 +837,24 @@ def _channel_delivery_verdict(state, now, stale):
     transport_status = transport(state, now, stale)
 
     channel_ages = {}
+    channel_event_ages = {}
     for kind in SENSORS:
         item = state["latest"].get(kind)
         if item and item.get("received") is not None:
             channel_ages[kind] = round(now - item["received"], 1)
+            # A row's age_ms is the phone-side age of the channel's last event at
+            # phone collection (valued sample() path and both stale branches), so
+            # the event's age at receipt is age_ms/1000 and its age now adds the
+            # receipt delay -- per channel, with no host/phone clock agreement
+            # needed (witness L2: shared receipt ages cannot localize a gap).
+            # Rows predating that emission carry no age_ms: None, never a
+            # fabricated receipt-age stand-in.
+            age_ms = number(item["fields"], "age_ms")
+            channel_event_ages[kind] = (round(age_ms / 1000 + (now - item["received"]), 1)
+                                        if age_ms is not None else None)
         else:
             channel_ages[kind] = None
+            channel_event_ages[kind] = None
 
     if transport_status != "reachable":
         status, reason = "fail", "transport-unreachable"
@@ -858,6 +870,7 @@ def _channel_delivery_verdict(state, now, stale):
         "cursor_age_seconds": round(cursor_age, 1),
         "transport": transport_status,
         "channel_ages_seconds": channel_ages,
+        "channel_event_ages_seconds": channel_event_ages,
         "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS,
     }
 
@@ -896,6 +909,7 @@ def detect_channel_delivery_gap(state, log_dir, stale):
         "transport": verdict["transport"],
         "reason": reason,
         "channel_ages_seconds": verdict["channel_ages_seconds"],
+        "channel_event_ages_seconds": verdict["channel_event_ages_seconds"],
         "session": session,
         "node": state["node"],
     }
@@ -1635,13 +1649,18 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
         "status": "unknown", "reason": None, "cursor_state": "unknown",
         "cursor_age_seconds": None, "transport": "unknown",
         "channel_ages_seconds": {k: None for k in SENSORS},
+        "channel_event_ages_seconds": {k: None for k in SENSORS},
         "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS}
     ages = " ".join(
         f"{k}={cd['channel_ages_seconds'].get(k)}s"
         for k in SENSORS)
+    event_ages = cd.get("channel_event_ages_seconds") or {}
+    silence = " ".join(
+        f"{k}=" + (f"{event_ages[k]}s" if event_ages.get(k) is not None else "none")
+        for k in SENSORS)
     lines.append(f"  channel-delivery [{cd['status']}]: cursor={cd['cursor_state']} "
                  f"transport={cd['transport']} interval={cd['interval_seconds']}s "
-                 f"{ages}")
+                 f"{ages} silence {silence}")
     rssi = state["latest"].get("wifi_link_rssi_dbm")
     lines.append("Wi-Fi link RSSI (connected-link API observation; not room proximity):")
     lines.append("  status=" + wifi_rssi_status(rssi, now, stale) +
@@ -1939,6 +1958,7 @@ def space_snapshot(states, now, stale, node_states=None, clocks=None):
                 "status": "unknown", "reason": None, "cursor_state": "unknown",
                 "cursor_age_seconds": None, "transport": "unknown",
                 "channel_ages_seconds": {k: None for k in SENSORS},
+                "channel_event_ages_seconds": {k: None for k in SENSORS},
                 "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS}
         })
     return {"schema_version": 1, "generated_at_utc": stamp(now),

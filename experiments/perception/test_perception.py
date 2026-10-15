@@ -2253,6 +2253,73 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(verdict["status"], "pass")
         self.assertEqual(verdict["cursor_state"], "advancing")
 
+    def test_channel_delivery_verdict_event_ages_localize_per_channel(self):
+        # age_ms is the phone-side age of the channel's last event at phone
+        # collection, so the event's age now is age_ms/1000 + receipt delay --
+        # per channel, with no host/phone clock agreement needed. This is the
+        # witness L2 fix: shared receipt ages cannot localize a channel gap.
+        state = self.state()
+        now = time.time()
+        state["latest"]["battery"] = {
+            "kind": "battery", "raw": "battery level=0.9 charging=true",
+            "fields": {"level": "0.9", "charging": "true"},
+            "received": now - 2.0, "collected": now - 2.0, "sequence": 100}
+        state["latest"]["light"] = {
+            "kind": "light",
+            "raw": "light unavailable reason=stale age_ms=120000",
+            "fields": {"reason": "stale", "age_ms": "120000"},
+            "received": now - 5.0, "collected": now - 5.0, "sequence": 100}
+        state["latest"]["acceleration"] = {
+            "kind": "acceleration",
+            "raw": "acceleration unavailable reason=stale age_ms=15000",
+            "fields": {"reason": "stale", "age_ms": "15000"},
+            "received": now - 10.0, "collected": now - 10.0, "sequence": 100}
+        state["cursor"] = 100
+        state["poll_at"] = now
+        state["error"] = None
+        watch._channel_delivery_verdict(state, now, 30.0)  # seed
+        state["cursor"] = 101
+        verdict = watch._channel_delivery_verdict(state, now, 30.0)
+        # Battery row carries no age_ms (not a sampled sensor): None, never a
+        # fabricated receipt-age stand-in.
+        self.assertIsNone(verdict["channel_event_ages_seconds"]["battery"])
+        # Stale light: 120 s of sensor silence + 5 s receipt delay.
+        self.assertEqual(verdict["channel_event_ages_seconds"]["light"], 125.0)
+        # Stale accel: 15 s + 10 s.
+        self.assertEqual(verdict["channel_event_ages_seconds"]["acceleration"], 25.0)
+        # The two stale channels differ -- the gap is now localized per channel.
+        self.assertNotEqual(verdict["channel_event_ages_seconds"]["light"],
+                            verdict["channel_event_ages_seconds"]["acceleration"])
+        # Receipt ages are unchanged: same envelope, still shared (the L2 limit
+        # on that older field stands; this field is the fix).
+        self.assertEqual(verdict["channel_ages_seconds"]["light"], 5.0)
+        self.assertEqual(verdict["channel_ages_seconds"]["acceleration"], 10.0)
+
+    def test_channel_delivery_detection_carries_event_ages(self):
+        # The JSONL emission exposes the per-channel event ages alongside the
+        # receipt ages, so a consumer of the log localizes the same gap.
+        state = self.state()
+        now = time.time()
+        state["latest"]["acceleration"] = {
+            "kind": "acceleration",
+            "raw": "acceleration unavailable reason=stale age_ms=45000",
+            "fields": {"reason": "stale", "age_ms": "45000"},
+            "received": now - 3.0, "collected": now - 3.0, "sequence": 100}
+        state["cursor"] = 100
+        state["poll_at"] = now
+        state["error"] = None
+        with tempfile.TemporaryDirectory() as tmp:
+            log_dir = Path(tmp)
+            watch.detect_channel_delivery_gap(state, log_dir, 30.0)  # seed
+            state["_channel_delivery_last_cursor_advance_at"] = (
+                now - watch.CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS - 1)
+            detection = watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            self.assertEqual(detection["channel_event_ages_seconds"]["acceleration"], 48.0)
+            lines = (log_dir / "channel-delivery-gap-detectors.jsonl").read_text(
+                encoding="utf-8").strip().split("\n")
+            logged = json.loads(lines[-1])
+            self.assertEqual(logged["channel_event_ages_seconds"]["acceleration"], 48.0)
+
     def test_host_stopped_state_true(self):
         mock_result = MagicMock()
         mock_result.returncode = 0
