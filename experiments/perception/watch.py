@@ -966,6 +966,24 @@ def sensor_status(item, now, stale):
     return status
 
 
+#: Why a phone-reported Wi-Fi disconnection is an API verdict, not link-state evidence.
+#: ``Sensors.wifiRssi`` derives ``reason=disconnected`` from ``WifiInfo.getNetworkId() < 0``,
+#: and AOSP documents that value as ambiguous: "The networkId may be ``-1`` if there is no
+#: currently connected network or if the caller has insufficient permissions to access the
+#: network ID" (``WifiInfo.getNetworkId``, android13-release). This app requests
+#: ACCESS_WIFI_STATE and no location permission, and ``getConnectionInfo()`` is deprecated
+#: from API 31 with WifiInfo retrieval moved to ConnectivityManager, so on API 31+ a reported
+#: disconnection does not establish that the link is down. Observed live 2026-10-15T23:1xZ:
+#: redmi10 (SDK 33) read ``reason=disconnected`` while its tailnet peer was active on a direct
+#: LAN endpoint (192.168.8.203:57197, tx/rx counters advancing) — a working local link.
+WIFI_LINK_BASIS = (
+    "link-state basis: reason=disconnected is the app's WifiInfo.getNetworkId() < 0 verdict; "
+    "AOSP documents -1 both when no network is connected and when the caller lacks permission "
+    "to read the network ID (this app requests ACCESS_WIFI_STATE, no location; "
+    "getConnectionInfo() is deprecated from API 31), so it is an API verdict, not evidence "
+    "that the link is down")
+
+
 def wifi_rssi_status(item, now, stale):
     if item is None:
         return "unknown/no-observation"
@@ -1667,6 +1685,8 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
                  ("; " + describe(rssi, now, stale) if rssi else
                   "; unknown; no observation"))
     lines.append("  observed_at is API read time; acquisition age=unknown")
+    if wifi_rssi_snapshot(rssi, now, stale)["unavailable_reason"] is not None:
+        lines.append("  " + WIFI_LINK_BASIS)
     ble = state["latest"].get("ble_status")
     ble_view = ble_status_snapshot(ble, now, stale)
     lines.append("Bluetooth LE status (scanner_api/advertiser_api are SDK API surface only; "
@@ -1780,6 +1800,8 @@ def render_events(state, now, stale, node_state=None, clock=None, spool=None):
     rssi_status, rssi_dbm, rssi_reason, rssi_source = key[6]
     lines.append(f"  wifi_link_rssi {rssi_status} rssi_dbm={rssi_dbm} "
                  f"reason={rssi_reason or 'unspecified'} source={rssi_source or 'unknown'}")
+    if rssi_reason is not None:
+        lines.append("  " + WIFI_LINK_BASIS)
     (ble_status, ble_source, ble_api, ble_surface, feature, adapter,
      scanner, advertiser, scanner_getter, advertiser_getter, supported, errors) = key[7]
     lines.append(

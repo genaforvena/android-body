@@ -664,6 +664,28 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(unavailable["unavailable_reason"], "disconnected")
         self.assertEqual(unavailable["sequence"], 2)
 
+    def test_wifi_disconnection_verdict_carries_its_api_basis_only_when_unavailable(self):
+        """A null link verdict is not link-state evidence; a measured RSSI needs no caveat."""
+        state = self.state()
+        self.page(state, ["1000 wifi_link_rssi_dbm=-57 source=androidbody_wifi_api "
+                          "observed_at=1700000000"], received=1002)
+        self.assertIn("wifi_link_rssi_dbm=-57", watch.render(state, 1003, 30))
+        self.assertNotIn(watch.WIFI_LINK_BASIS, watch.render(state, 1003, 30))
+        self.assertNotIn(watch.WIFI_LINK_BASIS, watch.render_events(state, 1003, 30))
+
+        self.page(state, ["1003 wifi_link_rssi_dbm unavailable reason=disconnected "
+                          "source=androidbody_wifi_api observed_at=1700000003"], received=1004)
+        rendered = watch.render(state, 1005, 30)
+        # The phone's own verdict stays verbatim; the basis names what it cannot establish.
+        self.assertIn("reason=disconnected source=androidbody_wifi_api", rendered)
+        self.assertIn(watch.WIFI_LINK_BASIS, rendered)
+        self.assertIn(watch.WIFI_LINK_BASIS, watch.render_events(state, 1005, 30))
+
+        # A stale measured sample is a freshness fact, not an API verdict: no basis line.
+        self.page(state, ["1040 wifi_link_rssi_dbm=-57 source=androidbody_wifi_api "
+                          "observed_at=1700000040"], received=1042)
+        self.assertNotIn(watch.WIFI_LINK_BASIS, watch.render(state, 1100, 30))
+
     def test_wifi_rssi_capability_is_session_scoped_and_new_session_clears_sample(self):
         state = self.state()
         self.page(state, [
