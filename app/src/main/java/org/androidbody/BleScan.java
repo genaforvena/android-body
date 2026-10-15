@@ -35,9 +35,8 @@ final class BleScan {
     }
 
     // API21-30 scanning requires both BLUETOOTH and BLUETOOTH_ADMIN (declared in
-    // the manifest). API31+ would require runtime BLUETOOTH_SCAN/BLUETOOTH_CONNECT,
-    // which this app does not request: a missing permission surfaces as a caught
-    // SecurityException and an honest error event, never a crash.
+    // the manifest). API31+ requires runtime BLUETOOTH_SCAN, which the app
+    // requests before starting the session.
     @android.annotation.TargetApi(21)
     @android.annotation.SuppressLint("MissingPermission")
     private final class Callback extends ScanCallback {

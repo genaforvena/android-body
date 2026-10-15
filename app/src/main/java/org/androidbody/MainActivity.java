@@ -126,6 +126,9 @@ public final class MainActivity extends Activity {
             if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, 10); return;
             }
+            if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[] { Manifest.permission.BLUETOOTH_SCAN }, 11); return;
+            }
             if (!BodyService.notificationsVisible(this)) { show("Enable Body notifications and its ‘Body is ON’ channel in Android Settings, then try again."); return; }
             if (!Settings.preferences(this).edit().putString("endpoint", url).putString("secret", token)
                     .putBoolean("allow_http", allowHttp.isChecked()).putBoolean("collect_only", collectOnly.isChecked())
@@ -145,6 +148,9 @@ public final class MainActivity extends Activity {
         if (request == 10) {
             if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) startBody();
             else show("Body remains OFF. Notifications are required here so operation stays visible.");
+        } else if (request == 11) {
+            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) startBody();
+            else show("Body remains OFF. Bluetooth scan permission is required to record beacon sightings.");
         }
     }
     private boolean enabled() { return BodyService.running || Settings.desiredOn(this); }
