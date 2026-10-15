@@ -60,24 +60,50 @@ else
   fail "renderer stderr written in last 2 min:$RECENT_CRASH"
 fi
 
-# 3. Transport tunnel (404 unknown_route probe)
+# 3. Transport. Two independent facts: the rendezvous server answers the
+# loopback URL the phone uses, and the `adb reverse` mapping that carries the
+# phone's requests to it is in place. The loopback probe alone cannot see the
+# second: on 2026-10-15T11:16Z a replaced adb server dropped the mapping and the
+# probe stayed GREEN. A mapping lives in the adb server process, and its
+# transport_id restarts at 1, so a generation check cannot see the loss either.
+# The mapping is observed on the device's socket table because `adb reverse
+# --list` is forbidden on this Note3 (it correlated with repeated transport loss).
+SERIAL=${NOTE3_SERIAL:-4d00553d61ab90b7}
+PORT_HEX=$(printf '%04X' 8765)
 TUNNEL=$(python3 -c "
-import urllib.request
+import urllib.request, urllib.error
 try:
     urllib.request.urlopen('http://127.0.0.1:8765/node/note3', timeout=5)
     print('unexpected-200')
 except urllib.error.HTTPError as e:
-    if 'unknown_route' in e.read().decode():
-        print('alive')
-    else:
-        print('unexpected-404')
+    print('alive' if 'unknown_route' in e.read().decode() else 'unexpected-404')
 except Exception:
     print('dead')
 " 2>/dev/null)
 if [ "$TUNNEL" = "alive" ]; then
-  pass "transport tunnel alive (404 unknown_route)"
+  pass "rendezvous answers the phone's loopback URL (404 unknown_route)"
 else
-  fail "transport tunnel $TUNNEL"
+  fail "rendezvous loopback probe $TUNNEL"
+fi
+
+if command -v adb >/dev/null 2>&1; then
+  ATTACHED=$(adb devices 2>/dev/null | awk -v s="$SERIAL" '$1==s && $2=="device"{print "yes"}')
+  MAPPING=$(adb -s "$SERIAL" shell cat /proc/net/tcp 2>/dev/null \
+    | awk -v p=":$PORT_HEX" '$4=="0A" && $2 ~ (p "$"){print "present"}')
+  if [ "$MAPPING" != "present" ] && [ "$ATTACHED" = "yes" ]; then
+    sleep 6  # android-body-usb.service re-establishes a lost mapping within ~5s
+    MAPPING=$(adb -s "$SERIAL" shell cat /proc/net/tcp 2>/dev/null \
+      | awk -v p=":$PORT_HEX" '$4=="0A" && $2 ~ (p "$"){print "present"}')
+  fi
+  if [ "$MAPPING" = "present" ]; then
+    pass "adb reverse in place (device listens on 8765)"
+  elif [ "$ATTACHED" = "yes" ]; then
+    fail "adb reverse mapping absent while note3 is attached (tunnel dead)"
+  else
+    echo "UNKNOWN adb reverse mapping: note3 not attached"
+  fi
+else
+  echo "UNKNOWN adb reverse mapping (adb unavailable)"
 fi
 
 # 4. Journal warnings (last hour)
@@ -106,7 +132,7 @@ done
 # 6. Device session state (read-only). Classifies ON-sending / ON-collect-only /
 # OFF / app-absent so a silent producer is not misread as "OFF" or "app dead".
 # Collect-only issues no HTTP by design, so silence there is expected, not a fault.
-SERIAL=${NOTE3_SERIAL:-4d00553d61ab90b7}
+
 if command -v adb >/dev/null 2>&1 && [ -x "$PWD/tools/device_state.py" ]; then
   DEV=$(python3 "$PWD/tools/device_state.py" --serial "$SERIAL" 2>/dev/null || true)
   case "$DEV" in
