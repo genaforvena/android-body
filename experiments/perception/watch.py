@@ -2103,6 +2103,10 @@ def spool_scan_state_segment(present, scan_state):
     ``none-retained`` means a current document that held no such row (e.g. an
     APK that predates the producer) -- never a fabricated zero. ``invalid``
     flags a malformed document field rather than hiding it.
+
+    The rendered row carries the six pre-registered scorer inputs (windows,
+    phase, last_error, sightings, window_ms, gap_ms -- discover 85355), so the
+    control state is scorable from the pane without a manual spool extraction.
     """
     if not present:
         return " scan_state=unknown/field-absent"
@@ -2112,14 +2116,24 @@ def spool_scan_state_segment(present, scan_state):
             or scan_state.get("phase") not in ("none", "window", "gap")
             or not isinstance(scan_state.get("windows"), int)
             or isinstance(scan_state.get("windows"), bool)
+            or scan_state.get("windows") < 0
             or not isinstance(scan_state.get("sightings"), int)
             or isinstance(scan_state.get("sightings"), bool)
+            or scan_state.get("sightings") < 0
+            or not isinstance(scan_state.get("window_ms"), int)
+            or isinstance(scan_state.get("window_ms"), bool)
+            or scan_state.get("window_ms") < 0
+            or not isinstance(scan_state.get("gap_ms"), int)
+            or isinstance(scan_state.get("gap_ms"), bool)
+            or scan_state.get("gap_ms") < 0
             or not isinstance(scan_state.get("last_error"), str)):
         return " scan_state=invalid"
     return (f" scan_state(windows={scan_state['windows']} "
             f"phase={scan_state['phase']} "
             f"last_error={scan_state['last_error']} "
-            f"sightings={scan_state['sightings']})")
+            f"sightings={scan_state['sightings']} "
+            f"window_ms={scan_state['window_ms']} "
+            f"gap_ms={scan_state['gap_ms']})")
 
 
 def spool_view_line(spool):

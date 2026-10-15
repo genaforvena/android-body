@@ -2664,6 +2664,8 @@ class SpoolScanStateTests(unittest.TestCase):
         self.assertIn("phase=gap", segment)
         self.assertIn("last_error=none", segment)
         self.assertIn("sightings=0", segment)
+        self.assertIn("window_ms=60000", segment)
+        self.assertIn("gap_ms=60000", segment)
 
     def test_segment_renders_a_spaced_failure_reason(self):
         row = dict(self.ROW, windows=28, phase="none",
@@ -2679,6 +2681,16 @@ class SpoolScanStateTests(unittest.TestCase):
                     {"phase": "gap", "windows": True, "sightings": 0,
                      "last_error": "none"},
                     {"phase": "gap", "windows": 1, "sightings": 0},
+                    {"phase": "gap", "windows": 1, "sightings": 0,
+                     "last_error": "none", "window_ms": "60000",
+                     "gap_ms": 60000},
+                    {"phase": "gap", "windows": 1, "sightings": 0,
+                     "last_error": "none", "window_ms": -1, "gap_ms": 60000},
+                    {"phase": "gap", "windows": 1, "sightings": 0,
+                     "last_error": "none", "window_ms": True,
+                     "gap_ms": 60000},
+                    {"phase": "gap", "windows": 1, "sightings": 0,
+                     "last_error": "none", "window_ms": 60000},
                     "windows=1"):
             self.assertEqual(watch.spool_scan_state_segment(True, bad),
                              " scan_state=invalid", bad)
@@ -2695,8 +2707,8 @@ class SpoolScanStateTests(unittest.TestCase):
                  "scan_state": self.ROW, "scan_state_present": True, "age_s": 5.0}
         line = watch.spool_view_line(spool)
         self.assertIn("NOT delivered", line)
-        self.assertIn("scan_state(windows=23 phase=gap last_error=none sightings=0)",
-                      line)
+        self.assertIn("scan_state(windows=23 phase=gap last_error=none sightings=0 "
+                      "window_ms=60000 gap_ms=60000)", line)
 
     def test_view_line_with_a_present_null_row_says_none_retained(self):
         spool = {"status": "ok", "spool_bytes": 3130966,
