@@ -2396,7 +2396,7 @@ class PerceptionTests(unittest.TestCase):
                 view = watch.light_resumption_view(1000, 30)
         self.assertIn("status=stale/detector-silent", view)
         self.assertIn("baseline=no-fresh-reading", view)
-        self.assertIn("predates the 7.0-lux rule", view)
+        self.assertIn("predates the current rule", view)
 
     def _detector_view(self, heartbeat, row=None):
         """Render the detector view against a written heartbeat (and optional last row)."""
@@ -2452,6 +2452,72 @@ class PerceptionTests(unittest.TestCase):
         view, compact = self._detector_view(heartbeat)
         self.assertIn("baseline=sub-threshold", view)
         self.assertIn("armed=True baseline=sub-threshold", compact)
+
+    def test_light_resumption_view_names_a_dwell_arming_state(self):
+        # dark-dwell rule: fresh dark readings exist but the required consecutive dark
+        # samples have not been seen, so the detector is arming rather than armed.
+        heartbeat = {"poll": 2, "rule": "dark-dwell", "threshold_lux": 10.0,
+                     "rule_constants": {"arm_lux_max": 6.0, "resume_lux_min": 10.0,
+                                        "dark_dwell_samples": 3},
+                     "lux": 2.0, "prev_lux": 1.0, "armed": False, "dark_run": 1,
+                     "timestamp_unix": 990.0}
+        view, compact = self._detector_view(heartbeat)
+        self.assertIn("baseline=dwell-arming", view)
+        self.assertIn("fewer consecutive dark samples", view)
+        self.assertNotIn("no fresh light reading", view)
+        self.assertIn("armed=False baseline=dwell-arming", compact)
+
+    def test_light_resumption_view_names_an_armed_dark_dwell(self):
+        heartbeat = {"poll": 4, "rule": "dark-dwell", "threshold_lux": 10.0,
+                     "rule_constants": {"arm_lux_max": 6.0, "resume_lux_min": 10.0,
+                                        "dark_dwell_samples": 3},
+                     "lux": 1.0, "prev_lux": 0.5, "armed": True, "dark_run": 3,
+                     "timestamp_unix": 990.0}
+        view, compact = self._detector_view(heartbeat)
+        self.assertIn("baseline=sub-threshold", view)
+        self.assertIn("armed=True baseline=sub-threshold", compact)
+
+    def test_light_resumption_view_names_a_lit_dark_dwell_baseline(self):
+        # Not armed, but the reason is a lit reading, not an incomplete dwell.
+        heartbeat = {"poll": 6, "rule": "dark-dwell", "threshold_lux": 10.0,
+                     "rule_constants": {"arm_lux_max": 6.0, "resume_lux_min": 10.0,
+                                        "dark_dwell_samples": 3},
+                     "lux": 64.0, "prev_lux": 58.0, "armed": False, "dark_run": 0,
+                     "timestamp_unix": 990.0}
+        view, compact = self._detector_view(heartbeat)
+        self.assertIn("baseline=at-or-above-threshold", view)
+        self.assertIn("nothing dim to resume from", view)
+        self.assertIn("armed=False baseline=at-or-above-threshold", compact)
+
+    def test_light_resumption_view_names_a_stale_dark_dwell_source(self):
+        heartbeat = {"poll": 8, "rule": "dark-dwell", "threshold_lux": 10.0,
+                     "rule_constants": {"arm_lux_max": 6.0, "resume_lux_min": 10.0,
+                                        "dark_dwell_samples": 3},
+                     "lux": None, "prev_lux": 1.0, "armed": True, "dark_run": 3,
+                     "timestamp_unix": 990.0}
+        view, compact = self._detector_view(heartbeat)
+        self.assertIn("baseline=baseline-without-current-reading", view)
+        self.assertIn("armed=True baseline=baseline-without-current-reading", compact)
+
+    def test_light_resumption_view_shows_the_monitored_node_and_rule(self):
+        heartbeat = {"node": "redmi10", "poll": 2, "rule": "dark-dwell",
+                     "rule_constants": {"arm_lux_max": 6.0, "resume_lux_min": 10.0,
+                                        "dark_dwell_samples": 3},
+                     "threshold_lux": 10.0, "lux": 2.0, "prev_lux": 1.0, "armed": False,
+                     "dark_run": 2, "timestamp_unix": 990.0}
+        view, _ = self._detector_view(heartbeat)
+        self.assertIn("over the redmi10 light channel", view)
+        self.assertIn("rule=dark-dwell", view)
+        self.assertIn("dark_run=2", view)
+
+    def test_monitor_baseline_rejects_a_dark_dwell_heartbeat_without_numbers(self):
+        for heartbeat in ({"rule": "dark-dwell", "armed": True, "lux": 1.0,
+                           "prev_lux": "dark", "threshold_lux": 10.0},
+                          {"rule": "dark-dwell", "armed": True, "lux": 1.0,
+                           "prev_lux": 0.5, "threshold_lux": None},
+                          {"rule": "dark-dwell", "armed": "yes", "lux": 1.0,
+                           "prev_lux": 0.5, "threshold_lux": 10.0}):
+            self.assertEqual(watch.monitor_baseline(heartbeat), "unknown", heartbeat)
 
     def test_monitor_baseline_reports_unknown_for_an_inconsistent_heartbeat(self):
         # A heartbeat whose armed flag disagrees with its own fields is not calm.

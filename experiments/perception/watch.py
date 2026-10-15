@@ -1141,14 +1141,16 @@ def _monitor_row_text(row):
 
 
 #: Why the detector has no resumption to claim yet, derived from its own heartbeat.
-#: The heartbeat's ``armed`` is only "a fresh baseline exists this run": it never says the
-#: baseline is below the threshold, nor that the *current* poll read anything fresh. Those
-#: are separate facts, so one shared sentence ("no fresh sub-threshold baseline") misnames
-#: the frozen-source case (no fresh reading at all) as a fresh-but-lit one.
+#: The heartbeat's ``armed`` is rule-specific -- "a fresh baseline exists this run" for the
+#: single-sample rule, "the required consecutive dark samples have been seen" for the
+#: dark-dwell rule -- and it never says the *current* poll read anything fresh. Those are
+#: separate facts, so one shared sentence ("no fresh sub-threshold baseline") misnames the
+#: frozen-source case (no fresh reading at all) as a fresh-but-lit one.
 MONITOR_BASELINES = (
     "no-fresh-reading",                  # nothing fresh this run: no baseline at all
     "first-fresh-poll",                  # first fresh reading this poll; baseline next poll
     "sub-threshold",                     # fresh baseline below threshold: a resumption can fire
+    "dwell-arming",                      # dark-dwell rule: fresh dark readings, dwell not met
     "at-or-above-threshold",             # fresh baseline already lit: nothing dim to resume from
     "baseline-without-current-reading",  # baseline exists, but this poll read nothing fresh
     "unknown",                           # fields missing or disagreeing with ``armed``
@@ -1166,6 +1168,9 @@ MONITOR_BASELINE_TEXT = {
     "sub-threshold":
         "a fresh baseline below the threshold exists; a resumption is claimed when a fresh "
         "reading reaches the threshold",
+    "dwell-arming":
+        "fresh readings are below the arm ceiling, but fewer consecutive dark samples than "
+        "the rule requires have been seen, so a resumption cannot fire yet",
     "at-or-above-threshold":
         "the fresh baseline is already at or above the threshold, so there is nothing dim "
         "to resume from until a fresh sub-threshold reading resets it",
@@ -1188,7 +1193,20 @@ def monitor_baseline(state):
         return "unknown"
     armed, lux = state.get("armed"), state.get("lux")
     prev_lux, threshold = state.get("prev_lux"), state.get("threshold_lux")
-    if not isinstance(armed, bool) or armed != (prev_lux is not None):
+    if not isinstance(armed, bool):
+        return "unknown"
+    if state.get("rule") == "dark-dwell":
+        # Here ``armed`` is the dark dwell being satisfied, not "a baseline exists": a
+        # fresh sub-threshold reading that has not yet met the dwell is still arming, and a
+        # fresh lit reading means there is nothing dim to resume from.
+        if lux is None:
+            return "no-fresh-reading" if prev_lux is None else "baseline-without-current-reading"
+        if not _is_number(prev_lux) or not _is_number(threshold):
+            return "unknown"
+        if lux >= threshold:
+            return "at-or-above-threshold"
+        return "sub-threshold" if armed else "dwell-arming"
+    if armed != (prev_lux is not None):
         return "unknown"
     if prev_lux is None:
         if lux is None:
@@ -1230,8 +1248,9 @@ def light_resumption_view(now, stale, compact=False):
                 f"armed={state.get('armed') if have_heartbeat else None} "
                 f"baseline={baseline} "
                 f"last_row={_monitor_row_text(row)}")
-    lines = ["Light-cycle resumption detector (host-side bounded monitor over the Note3 "
-             "light channel; no phone, transport or actuator effect):",
+    node = state.get("node") if have_heartbeat else None
+    lines = [f"Light-cycle resumption detector (host-side bounded monitor over the "
+             f"{node or 'unknown'} light channel; no phone, transport or actuator effect):",
              f"  status={status}" +
              ("" if age is None else f" heartbeat_age={age:.1f}s (stale>{stale:g}s)")]
     if not have_heartbeat:
@@ -1242,10 +1261,14 @@ def light_resumption_view(now, stale, compact=False):
                      f"threshold_lux={state.get('threshold_lux')} pid={state.get('pid')} "
                      f"interval={state.get('interval_seconds')}s "
                      f"max_polls={state.get('max_polls')}")
+        if state.get("rule"):
+            lines.append(f"  rule={state.get('rule')} "
+                         f"rule_constants={state.get('rule_constants')} "
+                         f"dark_run={state.get('dark_run')}")
         lines.append(f"  baseline={baseline}: {MONITOR_BASELINE_TEXT[baseline]}")
     lines.append(f"  last_row={_monitor_row_text(row)}")
     if row is not None and "threshold_lux" not in row:
-        lines.append("  last_row predates the 7.0-lux rule (no threshold_lux field); it is "
+        lines.append("  last_row predates the current rule (no threshold_lux field); it is "
                      "retained historical evidence, not an admissible resumption")
     lines.append("  resumption rows are scored by research-methods' pre-registered milestone-5 "
                  "rule; this view reports the fields verbatim and does not rescore them")
