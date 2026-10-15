@@ -32,7 +32,7 @@ A read-only `dumpsys sensorservice` survey of the installed Note3 lists physical
 
 ## Not implemented
 
-Proximity and gyroscope hardware is present on the Note3 (inventory above); emitting them remains a proposed, human-gated change. Location, microphone amplitude, camera capture, orientation inference and raw audio/images remain future work. No permissions for those sources are requested. Add a new boundary only with real-device tests, privacy review and explicit unavailable/error semantics.
+Proximity and gyroscope hardware is present on the Note3 (inventory above); they are not emitted. Location, microphone amplitude, camera capture, orientation inference and raw audio/images are not implemented and no permissions for them are requested; the 2026-10-07 node-cards mandate makes their expansion a requested programme — capability by capability, local owner checkboxes, human-readable text; remote text cannot enable. Add a new boundary only with real-device tests, privacy review and explicit unavailable/error semantics.
 
 ## Saved observations and later upload
 
