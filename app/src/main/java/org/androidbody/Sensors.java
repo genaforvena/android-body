@@ -115,12 +115,12 @@ final class Sensors implements SensorEventListener {
         if (!ownerLight) body.append(Protocol.event("light unavailable reason=owner_off"));
         else if (light == null) body.append(Protocol.event("light unavailable reason=absent"));
         else if (lightError != null) body.append(Protocol.event("light unavailable reason=" + lightError));
-        else if (now < lightTime || now - lightTime > 60000) body.append(Protocol.event("light unavailable reason=stale"));
+        else if (now < lightTime || now - lightTime > 60000) body.append(Protocol.event("light unavailable reason=stale age_ms=" + (now - lightTime)));
         else body.append(sample(lightTime, lightSensorTimeNs, now, "light lux=" + lux + " accuracy=" + lightAccuracy));
         if (!ownerAcceleration) body.append(Protocol.event("acceleration unavailable reason=owner_off"));
         else if (acceleration == null) body.append(Protocol.event("acceleration unavailable reason=absent"));
         else if (accelerationError != null) body.append(Protocol.event("acceleration unavailable reason=" + accelerationError));
-        else if (now < accelerationTime || now - accelerationTime > 15000) body.append(Protocol.event("acceleration unavailable reason=stale"));
+        else if (now < accelerationTime || now - accelerationTime > 15000) body.append(Protocol.event("acceleration unavailable reason=stale age_ms=" + (now - accelerationTime)));
         else body.append(sample(accelerationTime, accelerationSensorTimeNs, now, "acceleration x=" + x + " y=" + y + " z=" + z + " accuracy=" + accelerationAccuracy));
         body.append(Protocol.event(bleStatus()));
         return body.toString();

@@ -807,6 +807,39 @@ class PerceptionTests(unittest.TestCase):
                       "rssi_dbm=None reason=permission_denied",
                       state["events"][-1])
 
+    def test_stale_rows_carry_age_ms_that_localizes_the_sensor_silence(self):
+        """A stale row's age_ms is the phone-side age of its last real event.
+
+        Body-research wake 51003: the retained stale row carried only
+        reason=stale, so now - received measured poll/receipt latency (~20 s),
+        not the sensor silence (observed 2 h 47 m). age_ms makes the silence
+        measurable consumer-side: last-event epoch = collected - age_ms/1000.
+        """
+        state = self.state()
+        self.page(state, [
+            "1000 hello node=note3 protocol=1 session=s1",
+            "1000 acceleration unavailable reason=stale age_ms=101234",
+            "1000 light unavailable reason=stale age_ms=55000",
+        ], received=1000)
+        accel = state["latest"]["acceleration"]
+        light = state["latest"]["light"]
+        self.assertEqual(accel["fields"].get("age_ms"), "101234")
+        self.assertEqual(light["fields"].get("age_ms"), "55000")
+        # The extra token must not change the unavailable status or its
+        # receipt-based freshness: the feed keeps advancing while stale.
+        self.assertEqual(
+            watch.sensor_status(accel, 1030, 30),
+            "unavailable/fresh-clock-conditional")
+        self.assertEqual(
+            watch.sensor_status(light, 1030, 30),
+            "unavailable/fresh-clock-conditional")
+        # The silence is now derivable: accel last event ~101 s before
+        # collection, light ~55 s — two distinct per-channel gaps.
+        self.assertEqual(accel["collected"] - 101234 // 1000, 899)
+        self.assertEqual(light["collected"] - 55000 // 1000, 945)
+        view = watch.space_snapshot([state], 1030, 30)["nodes"][0]
+        self.assertEqual(view["light"]["age_ms_at_phone_collection"], 55000)
+
     def test_ble_compact_events_track_status_errors_freshness_not_timestamps(self):
         state = self.state()
         self.page(state, [
