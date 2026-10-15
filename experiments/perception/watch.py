@@ -1498,7 +1498,7 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
     alarm = clock_domain_line(clock)
     if alarm is not None:
         lines.append(alarm)
-    spool_line = spool_view_line(spool)
+    spool_line = spool_view_line(spool, now, clock)
     if spool_line is not None:
         lines.append(spool_line)
     for kind in SENSORS:
@@ -1618,7 +1618,7 @@ def render_events(state, now, stale, node_state=None, clock=None, spool=None):
     alarm = clock_domain_line(clock)
     if alarm is not None:
         lines.append("  " + alarm)
-    spool_line = spool_view_line(spool)
+    spool_line = spool_view_line(spool, now, clock)
     if spool_line is not None:
         lines.append("  " + spool_line)
     rssi_status, rssi_dbm, rssi_reason, rssi_source = key[6]
@@ -2088,7 +2088,58 @@ def read_spool_summary(directory, node, now, max_age=SPOOL_SUMMARY_MAX_AGE_SECON
             "reason": document.get("reason") or "spool-read-failed"}
 
 
-def spool_scan_state_segment(present, scan_state):
+def spool_scan_state_row_age(scan_state, now, clock):
+    """Host-domain age of the latest collection-side scan-state row, or a reason.
+
+    ``scan_state['epoch_s']`` is the PHONE's wall clock (the app stamps the row
+    from the device), so ``now - epoch_s`` overstates the age by the phone/host
+    offset -- measured at ~+26 s behind this host (tools/clock_offset.py). A
+    reader that gates on "phase=window younger than 60 s" against that raw
+    difference rejects live windows; the offset has to be resolved, not ignored.
+
+    The published clock-domain reading resolves it only while that offset still
+    applies to the rows being aged. A measured wall-clock step (``jump``) makes
+    retained rows incomparable with the current offset -- the pane's own
+    clock-domain alarm says so -- and a stale offset ages a stopped scan loop as
+    if it were live, so a jumped reading yields unknown, never a number. A row
+    stamped marginally after the host is likewise not an anomaly: the published
+    nominal offset is a median of one-sided upper bounds, so it overstates the
+    true offset by up to ``offset_nominal_s - offset_min_s``; ages inside that
+    band clamp to zero rather than reading as future.
+    """
+    def finite_number(value):
+        # ``math.isfinite`` raises OverflowError on an int too large to convert
+        # to float, and ``epoch_s`` arrives from the summary document unvalidated.
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        if abs(value) > 1e308 or not math.isfinite(value):
+            return None
+        return float(value)
+
+    if not isinstance(scan_state, dict):
+        return None, "no-scan-state-row"
+    epoch = finite_number(scan_state.get("epoch_s"))
+    if epoch is None:
+        return None, "no-row-epoch"
+    now = finite_number(now)
+    if now is None:
+        return None, "no-reference-time"
+    if not clock or clock.get("status") != "ok":
+        return None, "clock-domain-unresolved"
+    if clock.get("jump"):
+        return None, "clock-domain-jump"
+    offset = finite_number(clock.get("offset_nominal_s"))
+    low = finite_number(clock.get("offset_min_s"))
+    high = finite_number(clock.get("offset_max_s"))
+    if offset is None or low is None or high is None or high < low:
+        return None, "clock-domain-invalid"
+    age = now - (epoch + offset)
+    if age < -max(offset - low, 0.0):
+        return None, "row-epoch-in-future"
+    return max(age, 0.0), None
+
+
+def spool_scan_state_segment(present, scan_state, now=None, clock=None):
     """The latest collection-side ``ble_scan_state`` row as one labelled segment.
 
     The row is the app's own per-cycle scan-loop state, read from the spool
@@ -2107,6 +2158,12 @@ def spool_scan_state_segment(present, scan_state):
     The rendered row carries the six pre-registered scorer inputs (windows,
     phase, last_error, sightings, window_ms, gap_ms -- discover 85355), so the
     control state is scorable from the pane without a manual spool extraction.
+
+    The segment also carries ``row_age``: the age of that row in the HOST clock
+    domain, resolved through the published clock-domain offset. The enclosing
+    ``age=`` on the collection-side line is the summary document's own age (one
+    spool-read cycle, up to ``SPOOL_SUMMARY_MAX_AGE_SECONDS``), so it measures
+    the reader cadence, not how old the phone's row is.
     """
     if not present:
         return " scan_state=unknown/field-absent"
@@ -2128,15 +2185,18 @@ def spool_scan_state_segment(present, scan_state):
             or scan_state.get("gap_ms") < 0
             or not isinstance(scan_state.get("last_error"), str)):
         return " scan_state=invalid"
+    age, reason = spool_scan_state_row_age(scan_state, now, clock)
+    row_age = (f" row_age={age:.0f}s" if age is not None
+               else f" row_age=unknown({reason})")
     return (f" scan_state(windows={scan_state['windows']} "
             f"phase={scan_state['phase']} "
             f"last_error={scan_state['last_error']} "
             f"sightings={scan_state['sightings']} "
             f"window_ms={scan_state['window_ms']} "
-            f"gap_ms={scan_state['gap_ms']})")
+            f"gap_ms={scan_state['gap_ms']}){row_age}")
 
 
-def spool_view_line(spool):
+def spool_view_line(spool, now=None, clock=None):
     """One human-readable collection-side spool evidence line, or None without one.
 
     This line is ALWAYS labelled as collection-side, never as a delivered
@@ -2159,7 +2219,7 @@ def spool_view_line(spool):
         loss = (f"overflow=cumulative-dropped={dropped:,}"
                 if dropped is not None else "overflow=unknown")
         scan_segment = spool_scan_state_segment(spool.get("scan_state_present"),
-                                               spool.get("scan_state"))
+                                               spool.get("scan_state"), now, clock)
         return (f"collection-side spool evidence (NOT delivered; source=app-private-spool): "
                 f"status=ok spool={spool['spool_bytes']:,}B window={window_hours:.1f}h "
                 f"rows={total:,} light={light:,} "

@@ -2648,6 +2648,81 @@ class SpoolScanStateTests(unittest.TestCase):
            "last_error": "none", "sightings": 0,
            "window_ms": 60000, "gap_ms": 60000}
 
+    # Bounds deliberately distinct from the nominal: a regression that reads
+    # offset_min_s/offset_max_s instead of offset_nominal_s must change the age.
+    CLOCK = {"status": "ok", "offset_min_s": 24.0, "offset_max_s": 25.0,
+             "offset_nominal_s": 25.6, "observed_at_epoch_s": 1792061900.0,
+             "age_s": 7.5, "samples": 3, "jump": None, "reason": None}
+
+    def test_row_age_is_host_domain_not_the_bare_phone_epoch_difference(self):
+        # 1792061943 is a PHONE stamp and the host is 25.6 s ahead of the phone, so
+        # a row written 4 s ago must read 4 s -- not the 29.6 s that a bare
+        # ``now - epoch_s`` gives and that made live windows look stale.
+        now = 1792061943 + 25.6 + 4.0
+        self.assertIn("row_age=4s",
+                      watch.spool_scan_state_segment(True, self.ROW, now, self.CLOCK))
+
+    def test_row_age_is_unknown_without_a_resolved_clock_domain(self):
+        self.assertIn("row_age=unknown(no-reference-time)",
+                      watch.spool_scan_state_segment(True, self.ROW))
+        self.assertIn("row_age=unknown(clock-domain-unresolved)",
+                      watch.spool_scan_state_segment(True, self.ROW, 1792062000.0, None))
+        for clock, reason in (
+                ({"status": "stale"}, "clock-domain-unresolved"),
+                ({"status": "absent"}, "clock-domain-unresolved"),
+                ({"status": "invalid"}, "clock-domain-unresolved"),
+                (dict(self.CLOCK, jump={"delta_s": 5.0}), "clock-domain-jump"),
+                ({"status": "ok", "offset_nominal_s": None,
+                  "offset_min_s": 24.0, "offset_max_s": 25.0}, "clock-domain-invalid"),
+                ({"status": "ok", "offset_nominal_s": True,
+                  "offset_min_s": 24.0, "offset_max_s": 25.0}, "clock-domain-invalid"),
+                ({"status": "ok", "offset_nominal_s": 25.6,
+                  "offset_min_s": 26.0, "offset_max_s": 25.0}, "clock-domain-invalid")):
+            self.assertIn(f"row_age=unknown({reason})",
+                          watch.spool_scan_state_segment(True, self.ROW, 1792062000.0, clock),
+                          reason)
+
+    def test_row_age_clamps_a_marginally_early_stamp_instead_of_accusing_it(self):
+        # offset_nominal_s is a median of one-sided upper bounds and overstates the
+        # true offset by up to offset_nominal_s - offset_min_s (1.6 s here), so a
+        # row stamped inside that band is fresh, not future.
+        now = 1792061943 + 25.6 - 0.5
+        self.assertIn("row_age=0s",
+                      watch.spool_scan_state_segment(True, self.ROW, now, self.CLOCK))
+
+    def test_row_age_survives_an_unvalidated_epoch_from_the_summary(self):
+        # epoch_s is passed through from the summary document unvalidated, and
+        # math.isfinite raises OverflowError on an int too large for a float.
+        for epoch in (10 ** 400, float("nan"), float("inf"), "1792061943", True):
+            self.assertIn("row_age=unknown(no-row-epoch)",
+                          watch.spool_scan_state_segment(
+                              True, dict(self.ROW, epoch_s=epoch), 1792062000.0, self.CLOCK),
+                          epoch)
+
+    def test_row_age_is_unknown_without_a_row_epoch(self):
+        row = {key: value for key, value in self.ROW.items() if key != "epoch_s"}
+        self.assertIn("row_age=unknown(no-row-epoch)",
+                      watch.spool_scan_state_segment(True, row, 1792062000.0, self.CLOCK))
+
+    def test_row_age_flags_a_row_stamped_far_after_the_host(self):
+        now = 1792061943 + 25.6 - 5.0
+        self.assertIn("row_age=unknown(row-epoch-in-future)",
+                      watch.spool_scan_state_segment(True, self.ROW, now, self.CLOCK))
+
+    def test_view_line_keeps_the_summary_age_and_the_row_age_distinct(self):
+        spool = {"status": "ok", "spool_bytes": 3130966,
+                 "retention_window_s": 20431.0,
+                 "counts": {kind: 100 for kind in watch.SPOOL_COVERAGE_KINDS},
+                 "light_buckets": {"dark_exact": 1, "faint_0_1": 0,
+                                   "dim_0_9": 1, "moderate_10_99": 0,
+                                   "bright_100_999": 0,
+                                   "very_bright_1000_plus": 0},
+                 "overflow": {"dropped": 0, "notice_epoch_s": None},
+                 "scan_state": self.ROW, "scan_state_present": True, "age_s": 5.0}
+        line = watch.spool_view_line(spool, 1792061943 + 25.6 + 4.0, self.CLOCK)
+        self.assertIn("age=5.0s", line)
+        self.assertIn("row_age=4s", line)
+
     def test_segment_absent_row_is_none_retained(self):
         self.assertEqual(watch.spool_scan_state_segment(True, None),
                          " scan_state=none-retained")
