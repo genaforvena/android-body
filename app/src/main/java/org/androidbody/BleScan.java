@@ -4,6 +4,7 @@ package org.androidbody;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanFilter;
+import android.bluetooth.le.ScanRecord;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.os.Build;
@@ -26,8 +27,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * evidence, not presence proof. The adapter is never enabled or disabled here;
  * if it is off or absent, the scanner reports unavailable once and stops for
  * the session. On API 31+ a missing BLUETOOTH_SCAN runtime permission surfaces
- * as an error event, not a crash. Every stop path stops the scan and quits the
- * worker thread; a terminal start failure is reported and also ends the loop.
+ * as an error event from the scanner call, not a crash. Every stop path stops
+ * the scan and quits the worker thread; a terminal start failure is reported
+ * and also ends the loop.
  */
 final class BleScan {
     interface Sink {
@@ -36,14 +38,19 @@ final class BleScan {
 
     // API21-30 scanning requires both BLUETOOTH and BLUETOOTH_ADMIN (declared in
     // the manifest). API31+ requires runtime BLUETOOTH_SCAN, which the app
-    // requests before starting the session.
+    // requests before starting the session. The sighting name is the scan
+    // record's advertised local name -- the same advertisement field the scan
+    // filter matches on. BluetoothDevice.getName() would instead need
+    // BLUETOOTH_CONNECT for an app targeting S+, and the SecurityException it
+    // throws inside this callback would kill the process rather than end the
+    // scan, so the app requests no connect-level permission.
     @android.annotation.TargetApi(21)
-    @android.annotation.SuppressLint("MissingPermission")
     private final class Callback extends ScanCallback {
         private android.bluetooth.le.BluetoothLeScanner scanner;
 
         @Override public void onScanResult(int callbackType, ScanResult result) {
-            record(result.getDevice().getName(), result.getRssi());
+            ScanRecord scanRecord = result.getScanRecord();
+            record(scanRecord == null ? null : scanRecord.getDeviceName(), result.getRssi());
         }
         @Override public void onScanFailed(int errorCode) {
             fail("scan_failed code=" + errorCode);
