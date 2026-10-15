@@ -66,6 +66,21 @@ MAX_REASON_CHARS = 200
 #: BRE matching a spool row's leading 10-digit epoch; sent to device grep as-is.
 ROW_EPOCH_BRE = r"[0-9]\{10\}"
 
+#: BRE matching a row's leading epoch plus the kind token that follows it.
+#: The spool is binary-framed (ObservationSpool.writeRecord: an 8-byte record
+#: id and a 4-byte text length precede the ``<epoch> <kind> ...\n`` payload),
+#: so a row's epoch never starts a text line and a ``^`` anchor cannot reach
+#: it. A bare ``[0-9]\{10\}`` instead matches any 10-digit substring --
+#: including ``sensor_time_ns=<10 digits>`` on a freshly booted phone and the
+#: epoch-valued ``observed_at`` of Wi-Fi rows -- which published a 6.4-year
+#: retention window where the rows span ~5.7 h (senses, 2026-10-15).
+ROW_EPOCH_TOKEN_BRE = r"[0-9]\{10\} [a-z_]\{1,\}"
+
+#: Ceiling for a plausible row span. The app's documented retention is ~10 h
+#: (protocol README: queue bounds); a larger span means the extraction picked
+#: up a field value, so report the read as failed rather than publish it.
+MAX_RETENTION_WINDOW_S = 30 * 86400
+
 #: Allowlisted protocol record kinds (verified from spool snapshot
 #: 2026-10-14T13:10Z and the protocol README; ``ble_sighting`` is emitted
 #: by BleScanEvents.sighting while a session is ON).
@@ -74,6 +89,11 @@ ALLOWED_KINDS = frozenset({
     "spool", "cap", "hello", "android", "owner_checkboxes", "probe",
     "ble_scan", "ble_sighting", "action",
 })
+
+#: Tokens that begin a spool row: the kind written immediately after the
+#: epoch. Wi-Fi rows carry the kind ``wifi_link_rssi_dbm`` (device census
+#: 2026-10-15), so the counted name and the row token differ for that channel.
+ROW_KIND_TOKENS = ALLOWED_KINDS | {"wifi_link_rssi_dbm"}
 
 #: Kinds counted but not sensor-data (protocol/control kinds).
 NON_SENSOR_KINDS = frozenset({"cap", "hello", "android", "owner_checkboxes", "probe", "action"})
@@ -213,40 +233,53 @@ def _spool_size(argv, serial, spool_path, timeout):
         raise RuntimeError(f"spool-size-failed: {e}") from e
 
 
+def _row_epochs(match_output):
+    """Row epochs from ``grep -a -o '<epoch> <token>'`` output.
+
+    Only candidates whose token is a known row kind survive. The same
+    10-digit shape appears in field values followed by a key name
+    (``sensor_time_ns=<n> phone_elapsed_ms=``, ``observed_at=<n>
+    phone_elapsed_ms=``); those are not row timestamps and would otherwise
+    set the window to years. The epoch range drops values that cannot be a
+    phone wall clock (2023-11 .. 2033-05) as a second guard.
+    """
+    epochs = []
+    for line in match_output.splitlines():
+        parts = line.split()
+        if len(parts) != 2 or parts[1] not in ROW_KIND_TOKENS:
+            continue
+        try:
+            value = int(parts[0])
+        except ValueError:
+            continue
+        if 1700000000 <= value <= 2000000000:
+            epochs.append(value)
+    return epochs
+
+
 def _retention_window(argv, serial, spool_path, timeout):
     """Get the spool retention window from the oldest and newest row timestamps.
 
-    Each spool row begins with an epoch timestamp (Unix seconds). We extract
-    all timestamps via ``grep -a -o`` with a bounded pattern, then compute
-    min/max in Python, avoiding a full dump. The retention window (~6.5h)
-    bounds the match count (~18K).
+    Each spool row's payload begins with its epoch timestamp (Unix seconds).
+    We extract epoch candidates with ``grep -a -o`` (one per row plus the
+    field values that share the 10-digit shape), keep the ones whose trailing
+    token is a row kind, then compute min/max in Python, avoiding a full dump.
+    The retention window (~6.5h) bounds the match count (~20K).
 
     Returns ``(oldest_epoch_host, newest_epoch_host, window_seconds)`` or raises.
     """
-    ts_pattern = ROW_EPOCH_BRE
     try:
         out = _run(argv, serial,
-                   f"run-as org.androidbody grep -a -o '{ts_pattern}' {spool_path}",
+                   f"run-as org.androidbody grep -a -o '{ROW_EPOCH_TOKEN_BRE}' {spool_path}",
                    timeout)
-        lines = [line.strip() for line in out.splitlines() if line.strip()]
-        if not lines:
-            raise ValueError("could not extract spool timestamps")
-        # Filter to reasonable epoch range (2024-2033) to exclude non-timestamp numbers
-        epochs = []
-        for line in lines:
-            try:
-                val = int(line)
-                if 1700000000 <= val <= 2000000000:
-                    epochs.append(val)
-            except ValueError:
-                continue
+        epochs = _row_epochs(out)
         if not epochs:
-            raise ValueError("no valid epoch timestamps found")
+            raise ValueError("no row epoch matched the kind anchor")
         oldest_epoch = min(epochs)
         newest_epoch = max(epochs)
         window = newest_epoch - oldest_epoch
-        if window < 0:
-            raise ValueError(f"negative retention window: {window}")
+        if window > MAX_RETENTION_WINDOW_S:
+            raise ValueError(f"implausible retention window: {window}s")
         return oldest_epoch, newest_epoch, window
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:
         raise RuntimeError(f"retention-window-failed: {e}") from e

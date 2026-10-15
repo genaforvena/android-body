@@ -449,5 +449,77 @@ class AllowedKindsTests(unittest.TestCase):
         self.assertEqual(len(spool_read.ALLOWED_KINDS), 14)
 
 
+class RetentionWindowTests(unittest.TestCase):
+    """_retention_window reads row epochs, not same-shaped field values.
+
+    Defect (senses, 2026-10-15): a bare ``[0-9]\\{10\\}`` match took the leading
+    ten digits of any field value. On a freshly booted phone
+    ``sensor_time_ns=<10 digits>`` landed inside the accepted epoch range and
+    published a 6.4-year window (56,254.1 h) where the rows span ~5.7 h.
+    """
+
+    #: Real ``grep -a -o`` output shape, CRLF included: one candidate per row
+    #: plus field values that a key name follows.
+    MATCHES = (
+        "1792028662 light\r\n"
+        "1792028662 phone_elapsed_ms\r\n"
+        "1791958404 wifi_link_rssi_dbm\r\n"
+        "1994543295 phone_elapsed_ms\r\n"
+        "0000646651 phone_elapsed_ms\r\n"
+        "1792049063 spool\r\n"
+    )
+
+    def test_command_uses_the_epoch_token_pattern(self):
+        with mock.patch.object(spool_read, "_run", return_value="") as run:
+            with self.assertRaises(RuntimeError):
+                spool_read._retention_window(["adb"], "S", "PATH", 5.0)
+        command = run.call_args[0][2]
+        self.assertIn(f"'{spool_read.ROW_EPOCH_TOKEN_BRE}'", command)
+        self.assertIn("grep -a -o", command)
+
+    def test_field_values_do_not_set_the_window(self):
+        with mock.patch.object(spool_read, "_run", return_value=self.MATCHES):
+            oldest, newest, window = spool_read._retention_window(
+                ["adb"], "S", "PATH", 5.0)
+        self.assertEqual(oldest, 1791958404)
+        self.assertEqual(newest, 1792049063)
+        self.assertEqual(window, 90659)
+
+    def test_field_values_alone_are_unavailable(self):
+        matches = "1994543295 phone_elapsed_ms\r\n0000646651 phone_elapsed_ms\r\n"
+        with mock.patch.object(spool_read, "_run", return_value=matches):
+            with self.assertRaises(RuntimeError) as caught:
+                spool_read._retention_window(["adb"], "S", "PATH", 5.0)
+        self.assertIn("no row epoch matched the kind anchor", str(caught.exception))
+
+    def test_implausible_window_is_unavailable(self):
+        matches = "1792028662 light\r\n1794707062 light\r\n"
+        with mock.patch.object(spool_read, "_run", return_value=matches):
+            with self.assertRaises(RuntimeError) as caught:
+                spool_read._retention_window(["adb"], "S", "PATH", 5.0)
+        self.assertIn("implausible retention window", str(caught.exception))
+
+    def test_row_epochs_keeps_only_kind_tokens_in_epoch_range(self):
+        text = ("1792028662 light\r\n1792028662 phone_elapsed_ms\r\n"
+                "9999894006 light\r\n123 light\r\nnotanumber light\r\n")
+        self.assertEqual(spool_read._row_epochs(text), [1792028662])
+
+
+class RowKindTokensTests(unittest.TestCase):
+    """Row-leading tokens cover every counted kind, but no field key name."""
+
+    def test_every_counted_kind_is_a_row_token(self):
+        self.assertEqual(
+            spool_read.ALLOWED_KINDS - spool_read.ROW_KIND_TOKENS, frozenset())
+
+    def test_wifi_row_token_is_accepted(self):
+        self.assertIn("wifi_link_rssi_dbm", spool_read.ROW_KIND_TOKENS)
+
+    def test_field_key_names_are_not_row_tokens(self):
+        for key in ("phone_elapsed_ms", "observed_at", "sensor_time_ns",
+                    "spool_bytes", "lux"):
+            self.assertNotIn(key, spool_read.ROW_KIND_TOKENS)
+
+
 if __name__ == "__main__":
     unittest.main()
