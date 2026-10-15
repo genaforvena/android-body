@@ -2099,7 +2099,8 @@ def spool_scan_state_row_age(scan_state, now, clock):
 
     ``scan_state['epoch_s']`` is the PHONE's wall clock (the app stamps the row
     from the device), so ``now - epoch_s`` overstates the age by the phone/host
-    offset -- measured at ~+26 s behind this host (tools/clock_offset.py). A
+    offset -- measured at ~+24.9 s behind this host (bounds +24.4..+25.4 s,
+    tools/clock_offset.py). A
     reader that gates on "phase=window younger than 60 s" against that raw
     difference rejects live windows; the offset has to be resolved, not ignored.
 
@@ -2109,9 +2110,9 @@ def spool_scan_state_row_age(scan_state, now, clock):
     clock-domain alarm says so -- and a stale offset ages a stopped scan loop as
     if it were live, so a jumped reading yields unknown, never a number. A row
     stamped marginally after the host is likewise not an anomaly: the published
-    nominal offset is a median of one-sided upper bounds, so it overstates the
-    true offset by up to ``offset_nominal_s - offset_min_s``; ages inside that
-    band clamp to zero rather than reading as future.
+    nominal offset is the interval midpoint, so it can overstate the true
+    offset by up to ``offset_nominal_s - offset_min_s`` (0.5 s); ages inside
+    that band clamp to zero rather than reading as future.
     """
     def finite_number(value):
         # ``math.isfinite`` raises OverflowError on an int too large to convert

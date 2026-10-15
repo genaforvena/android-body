@@ -2732,8 +2732,8 @@ class SpoolScanStateTests(unittest.TestCase):
                           reason)
 
     def test_row_age_clamps_a_marginally_early_stamp_instead_of_accusing_it(self):
-        # offset_nominal_s is a median of one-sided upper bounds and overstates the
-        # true offset by up to offset_nominal_s - offset_min_s (1.6 s here), so a
+        # offset_nominal_s is the interval midpoint and can overstate the true
+        # offset by up to offset_nominal_s - offset_min_s (1.6 s here), so a
         # row stamped inside that band is fresh, not future.
         now = 1792061943 + 25.6 - 0.5
         self.assertIn("row_age=0s",
