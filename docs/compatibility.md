@@ -33,9 +33,9 @@ On API 33+, request `POST_NOTIFICATIONS` in context. **The app requires notifica
 
 The notification must distinguish collecting locally, sending/uploading, waiting/retrying, and failure rather than reporting every ON state as a successful upload. Request `FOREGROUND_SERVICE_IMMEDIATE` on API31+ to avoid the platform's initial notification deferral. Android14+ lets users dismiss ordinary ongoing notifications while the phone is unlocked; `setOngoing(true)` does not make this app's notice impossible to hide. The app wires user dismissal to the same OFF/disarm action as the notification button. Permission/channel checks test permission to display, not that the user currently sees the notification. Updates coalesce to at most once every two seconds. Test notification dismissal separately from its Stop action, and do not claim an unhideable notification. [Immediate foreground notification](https://developer.android.com/reference/android/app/Notification.Builder#setForegroundServiceBehavior(int)), [Android14 notification dismissal](https://developer.android.com/about/versions/14/behavior-changes-all#non-dismissable-notifications)
 
-On API 34+, the manifest needs `foregroundServiceType="specialUse"`, `FOREGROUND_SERVICE_SPECIAL_USE`, and a service-level `android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE`. The subtype should explain the actual work, for example:
+On API 34+, the manifest needs `foregroundServiceType="specialUse"`, `FOREGROUND_SERVICE_SPECIAL_USE`, and a service-level `android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE`. The subtype should explain the actual work; the shipped value is:
 
-> User-started, user-stoppable remote device bridge that continuously observes battery, ambient light and accelerometer state and receives bounded vibration commands during an explicitly enabled session, with an ongoing notification.
+> User-enabled continuous physical sensor bridge: light, acceleration, battery and bounded vibration over outbound HTTP; visible until explicitly stopped.
 
 This is an engineering justification for an immediate, ongoing device-interaction session that does not cleanly fit the standard service types. It is not a Google Play approval or an exemption from system power management. Android documents `specialUse` for valid FGS work outside the other types and requires an informative subtype; Play reviews the declaration. Do not relabel the session as location, health, media playback, or data sync merely to obtain background execution. [Official service-type requirements](https://developer.android.com/develop/background-work/services/fgs/service-types#special-use)
 
@@ -103,7 +103,7 @@ Run the same signed APK against the same controlled bridge, and record APK hash,
 
 | Device | Required baseline | Status |
 | --- | --- | --- |
-| Old Samsung Note 3 | SM-N900, Android5/API21, firmware `LRX21V.N900XXSEBRH3`; charging, private USB-loopback HTTP; then-final 0.2.0 APK (`7eb54e9b`); current install BleStatus-wiring build `a5cc750e` since 2026-10-13T09:34Z | BOUNDED SMOKE PASS: installation, native ON/OFF, actual sensor delivery, collect-only/backlog, process-loss restoration, 15s screen-off; APK update over ON installation verified 2026-10-12 (ON session restored, cursor advancing — see verification.md eval-route record; OFF-install update NOT RUN); full checklist incomplete |
+| Old Samsung Note 3 | SM-N900, Android5/API21, firmware `LRX21V.N900XXSEBRH3`; charging, private USB-loopback HTTP; then-final 0.2.0 APK (`7eb54e9b`); current install the exec-probe build `c3dbdc3a` since 2026-10-15T12:14Z (supersedes `a5cc750e`) | BOUNDED SMOKE PASS: installation, native ON/OFF, actual sensor delivery, collect-only/backlog, process-loss restoration, 15s screen-off; APK update over ON installation verified 2026-10-12 (ON session restored, cursor advancing — see verification.md eval-route record; OFF-install update NOT RUN); full checklist incomplete |
 | Xiaomi | Exact model; MIUI/HyperOS and Android version | NOT RUN |
 | Current Android device | API 34+; preferably API 36; notification/type checks | NOT RUN |
 
