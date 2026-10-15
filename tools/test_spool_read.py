@@ -57,6 +57,11 @@ def make_result():
             "very_bright_1000_plus": 0,
         },
         "overflow": {"dropped": 108040, "notice_epoch_s": 1792050926},
+        "scan_state": {
+            "epoch_s": 1792061943, "windows": 23, "phase": "gap",
+            "last_error": "none", "sightings": 0,
+            "window_ms": 60000, "gap_ms": 60000,
+        },
     }
 
 
@@ -194,6 +199,61 @@ class AssertBoundedTests(unittest.TestCase):
         doc["reason"] = "x" * spool_read.MAX_REASON_CHARS
         spool_read.assert_bounded(doc)  # must not raise
 
+    def test_accepts_null_scan_state(self):
+        doc = self._valid_doc()
+        doc["scan_state"] = None
+        spool_read.assert_bounded(doc)  # no retained scan-state row is valid
+
+    def test_accepts_scan_state_with_a_spaced_failure_reason(self):
+        doc = self._valid_doc()
+        doc["scan_state"]["last_error"] = "scan_failed code=2"
+        doc["scan_state"]["phase"] = "none"
+        spool_read.assert_bounded(doc)  # must not raise
+
+    def test_rejects_scan_state_with_an_unknown_phase(self):
+        doc = self._valid_doc()
+        doc["scan_state"]["phase"] = "scanning"
+        with self.assertRaises(ValueError):
+            spool_read.assert_bounded(doc)
+
+    def test_rejects_scan_state_with_an_extra_field(self):
+        doc = self._valid_doc()
+        doc["scan_state"]["beacon"] = "MISHE-BEACON"
+        with self.assertRaises(ValueError):
+            spool_read.assert_bounded(doc)
+
+    def test_rejects_scan_state_with_a_negative_counter(self):
+        doc = self._valid_doc()
+        doc["scan_state"]["sightings"] = -1
+        with self.assertRaises(ValueError):
+            spool_read.assert_bounded(doc)
+
+    def test_rejects_scan_state_with_a_boolean_counter(self):
+        doc = self._valid_doc()
+        doc["scan_state"]["windows"] = True
+        with self.assertRaises(ValueError):
+            spool_read.assert_bounded(doc)
+
+    def test_rejects_scan_state_with_an_implausible_epoch(self):
+        doc = self._valid_doc()
+        doc["scan_state"]["epoch_s"] = 42
+        with self.assertRaises(ValueError):
+            spool_read.assert_bounded(doc)
+
+    def test_rejects_scan_state_with_an_overlong_last_error(self):
+        doc = self._valid_doc()
+        doc["scan_state"]["last_error"] = "x" * (spool_read.MAX_LAST_ERROR_CHARS + 1)
+        with self.assertRaises(ValueError):
+            spool_read.assert_bounded(doc)
+
+    def test_rejects_unavailable_carrying_scan_state(self):
+        doc = spool_read.spool_document(LABEL, None, NOW)
+        doc["scan_state"] = {"epoch_s": 1792061943, "windows": 1, "phase": "gap",
+                             "last_error": "none", "sightings": 0,
+                             "window_ms": 60000, "gap_ms": 60000}
+        with self.assertRaises(ValueError):
+            spool_read.assert_bounded(doc)
+
 
 class SpoolDocumentNoneTests(unittest.TestCase):
     """spool_document with None result produces unavailable with null fields."""
@@ -211,6 +271,7 @@ class SpoolDocumentNoneTests(unittest.TestCase):
         self.assertIsNone(doc["counts"])
         self.assertIsNone(doc["light_buckets"])
         self.assertIsNone(doc["overflow"])
+        self.assertIsNone(doc["scan_state"])
 
     def test_reason_is_populated(self):
         doc = spool_read.spool_document(LABEL, None, NOW)
@@ -251,6 +312,18 @@ class SpoolDocumentResultTests(unittest.TestCase):
         result = make_result()
         doc = spool_read.spool_document(LABEL, result, NOW)
         self.assertEqual(doc["overflow"], result["overflow"])
+
+    def test_scan_state_matches_result(self):
+        result = make_result()
+        doc = spool_read.spool_document(LABEL, result, NOW)
+        self.assertEqual(doc["scan_state"], result["scan_state"])
+
+    def test_no_retained_scan_state_row_is_published_as_null(self):
+        result = make_result()
+        result["scan_state"] = None
+        doc = spool_read.spool_document(LABEL, result, NOW)
+        spool_read.assert_bounded(doc)  # must not raise
+        self.assertIsNone(doc["scan_state"])
 
     def test_truthful_zero_overflow_is_published(self):
         result = make_result()
@@ -451,6 +524,93 @@ class LightBucketRegexTests(unittest.TestCase):
             "bright_100_999", "very_bright_1000_plus",
         ])
 
+
+
+
+class ScanStateRowTests(unittest.TestCase):
+    """_scan_state_row extracts the latest ble_scan_state row's bounded fields."""
+
+    ROW = ("1792061943 ble_scan_state windows=23 phase=gap last_error=none "
+           "sightings=0 window_ms=60000 gap_ms=60000")
+
+    def _run_output(self, rows, status="0"):
+        body = "".join(row + "\n" for row in rows)
+        return body + f"{spool_read.SCAN_STATE_PROBE_MARKER}{status}\n"
+
+    def test_command_uses_bounded_grep_and_probe(self):
+        with mock.patch.object(
+                spool_read, "_run",
+                return_value=self._run_output([self.ROW])) as run:
+            spool_read._scan_state_row(["adb"], "S", "PATH", 5.0)
+        command = run.call_args[0][2]
+        self.assertIn("grep -a -o", command)
+        self.assertIn(spool_read.SCAN_STATE_ROW_BRE, command)
+        self.assertIn(spool_read.SCAN_STATE_PROBE_MARKER, command)
+        self.assertIn("2>&1", command)
+
+    def test_parses_last_row_as_current_state(self):
+        rows = [
+            "1792061000 ble_scan_state windows=1 phase=window last_error=none "
+            "sightings=0 window_ms=60000 gap_ms=60000",
+            "1792061943 ble_scan_state windows=23 phase=gap last_error=none "
+            "sightings=4 window_ms=60000 gap_ms=60000",
+        ]
+        with mock.patch.object(spool_read, "_run",
+                               return_value=self._run_output(rows)):
+            row = spool_read._scan_state_row(["adb"], "S", "PATH", 5.0)
+        self.assertEqual(row, {
+            "epoch_s": 1792061943, "windows": 23, "phase": "gap",
+            "last_error": "none", "sightings": 4,
+            "window_ms": 60000, "gap_ms": 60000,
+        })
+
+    def test_parses_spaced_failure_reason(self):
+        rows = ["1792061943 ble_scan_state windows=28 phase=none "
+                "last_error=scan_failed code=2 sightings=0 "
+                "window_ms=60000 gap_ms=60000"]
+        with mock.patch.object(spool_read, "_run",
+                               return_value=self._run_output(rows)):
+            row = spool_read._scan_state_row(["adb"], "S", "PATH", 5.0)
+        self.assertEqual(row["last_error"], "scan_failed code=2")
+        self.assertEqual(row["windows"], 28)
+
+    def test_no_match_is_none_not_zero(self):
+        with mock.patch.object(spool_read, "_run",
+                               return_value=self._run_output([], status="1")):
+            self.assertIsNone(spool_read._scan_state_row(["adb"], "S", "PATH", 5.0))
+
+    def test_no_match_with_output_is_a_broken_read(self):
+        with mock.patch.object(
+                spool_read, "_run",
+                return_value=self._run_output([self.ROW], status="1")):
+            with self.assertRaises(RuntimeError):
+                spool_read._scan_state_row(["adb"], "S", "PATH", 5.0)
+
+    def test_device_diagnostic_fails_the_read(self):
+        out = ("run-as: package not debuggable\n"
+               + f"{spool_read.SCAN_STATE_PROBE_MARKER}0\n")
+        with mock.patch.object(spool_read, "_run", return_value=out):
+            with self.assertRaises(RuntimeError):
+                spool_read._scan_state_row(["adb"], "S", "PATH", 5.0)
+
+    def test_nonzero_non_match_status_fails_the_read(self):
+        with mock.patch.object(spool_read, "_run",
+                               return_value=self._run_output([], status="2")):
+            with self.assertRaises(RuntimeError):
+                spool_read._scan_state_row(["adb"], "S", "PATH", 5.0)
+
+    def test_missing_probe_line_fails_the_read(self):
+        with mock.patch.object(spool_read, "_run", return_value="garbage\n"):
+            with self.assertRaises(RuntimeError):
+                spool_read._scan_state_row(["adb"], "S", "PATH", 5.0)
+
+    def test_parse_failure_is_a_broken_read(self):
+        out = ("1792061943 ble_scan_state windows=x phase=gap last_error=none "
+               "sightings=0 window_ms=60000 gap_ms=60000\n"
+               + f"{spool_read.SCAN_STATE_PROBE_MARKER}0\n")
+        with mock.patch.object(spool_read, "_run", return_value=out):
+            with self.assertRaises(RuntimeError):
+                spool_read._scan_state_row(["adb"], "S", "PATH", 5.0)
 
 
 class CountKindTests(unittest.TestCase):

@@ -2035,6 +2035,7 @@ def read_spool_summary(directory, node, now, max_age=SPOOL_SUMMARY_MAX_AGE_SECON
         return {"status": status, "spool_bytes": None, "retention_window_s": None,
                 "oldest_row_epoch_s": None, "newest_row_epoch_s": None,
                 "counts": None, "light_buckets": None, "overflow": None,
+                "scan_state": None,
                 "observed_at_epoch_s": None, "age_s": None, "reason": reason}
 
     path = directory.parent / f"{SPOOL_SUMMARY_PREFIX}{node}.json"
@@ -2072,15 +2073,53 @@ def read_spool_summary(directory, node, now, max_age=SPOOL_SUMMARY_MAX_AGE_SECON
                 "newest_row_epoch_s": document.get("newest_row_epoch_s"),
                 "counts": counts, "light_buckets": light_buckets,
                 "overflow": document.get("overflow"),
+                "scan_state": document.get("scan_state"),
+                "scan_state_present": "scan_state" in document,
                 "observed_at_epoch_s": observed,
                 "age_s": round(max(age, 0.0), 1), "reason": None}
     return {"status": "unavailable",
             "spool_bytes": None, "retention_window_s": None,
             "oldest_row_epoch_s": None, "newest_row_epoch_s": None,
             "counts": None, "light_buckets": None, "overflow": None,
+            "scan_state": None,
+            "scan_state_present": False,
             "observed_at_epoch_s": observed,
             "age_s": round(max(age, 0.0), 1),
             "reason": document.get("reason") or "spool-read-failed"}
+
+
+def spool_scan_state_segment(present, scan_state):
+    """The latest collection-side ``ble_scan_state`` row as one labelled segment.
+
+    The row is the app's own per-cycle scan-loop state, read from the spool
+    (spool-channel ruling 79358): it is collection-side production state, never
+    a delivered observation, so this segment is only ever appended inside the
+    ``collection-side spool evidence`` line.
+
+    ``present`` says whether the published document carried the field at all.
+    Publisher and consumer activate separately, so a document written before
+    this field existed must render as ``unknown/field-absent`` -- not as
+    ``none-retained`` (the same hazard the overflow term guards against).
+    ``none-retained`` means a current document that held no such row (e.g. an
+    APK that predates the producer) -- never a fabricated zero. ``invalid``
+    flags a malformed document field rather than hiding it.
+    """
+    if not present:
+        return " scan_state=unknown/field-absent"
+    if scan_state is None:
+        return " scan_state=none-retained"
+    if (not isinstance(scan_state, dict)
+            or scan_state.get("phase") not in ("none", "window", "gap")
+            or not isinstance(scan_state.get("windows"), int)
+            or isinstance(scan_state.get("windows"), bool)
+            or not isinstance(scan_state.get("sightings"), int)
+            or isinstance(scan_state.get("sightings"), bool)
+            or not isinstance(scan_state.get("last_error"), str)):
+        return " scan_state=invalid"
+    return (f" scan_state(windows={scan_state['windows']} "
+            f"phase={scan_state['phase']} "
+            f"last_error={scan_state['last_error']} "
+            f"sightings={scan_state['sightings']})")
 
 
 def spool_view_line(spool):
@@ -2105,6 +2144,8 @@ def spool_view_line(spool):
         dropped = spool_overflow_loss(spool.get("overflow"))
         loss = (f"overflow=cumulative-dropped={dropped:,}"
                 if dropped is not None else "overflow=unknown")
+        scan_segment = spool_scan_state_segment(spool.get("scan_state_present"),
+                                               spool.get("scan_state"))
         return (f"collection-side spool evidence (NOT delivered; source=app-private-spool): "
                 f"status=ok spool={spool['spool_bytes']:,}B window={window_hours:.1f}h "
                 f"rows={total:,} light={light:,} "
@@ -2114,7 +2155,7 @@ def spool_view_line(spool):
                 f"moderate={buckets.get('moderate_10_99',0):,} "
                 f"bright={buckets.get('bright_100_999',0):,} "
                 f"vbright={buckets.get('very_bright_1000_plus',0):,}) "
-                f"{coverage} {loss} age={spool['age_s']}s")
+                f"{coverage} {loss} age={spool['age_s']}s{scan_segment}")
     else:
         return (f"collection-side spool evidence (NOT delivered; source=app-private-spool): "
                 f"status={spool['status']} reason={spool['reason']} "

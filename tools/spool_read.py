@@ -11,9 +11,10 @@ evidence of what the producer actually collected. This tool reads it read-only v
 Constraints (from the spool-channel ruling, artifacts/senses-wake79358-spool-channel-ruling.md):
 
 - Bounded fields only: counts per allowlisted protocol kind, light magnitude
-  buckets, spool byte size, and retention window (oldest/newest row timestamps
-  converted to host epoch). No full dump, no shared_prefs, no secret/endpoint.
-  The cursor_<sha256> directory name is not republished.
+  buckets, the latest ``ble_scan_state`` row's own fields, spool byte size, and
+  retention window (oldest/newest row timestamps converted to host epoch). No
+  full dump, no shared_prefs, no secret/endpoint. The cursor_<sha256> directory
+  name is not republished.
 - Read-only, no mutation of the spool or the app.
 - Never presented as a delivered observation: the document carries
   ``source=app-private-spool`` and the consumer renders it as collection-side.
@@ -25,6 +26,13 @@ Constraints (from the spool-channel ruling, artifacts/senses-wake79358-spool-cha
   ``notice_epoch_s`` is a truthful zero (nothing evicted yet), not an absent
   field.
 - Repeatable via this owned tool, not a per-wake ad-hoc command.
+- The latest ``ble_scan_state`` row's fields are published so the pre-registered
+  scan-state discriminator (research-methods wake 84132 Rev 2) is scorable from
+  the summary: the threshold and falsifier steps read this row. The advertiser
+  control step additionally needs a row observed while the scan loop was in
+  ``phase=window``, so a latest row in ``gap`` is ``not_observable`` for it.
+  ``scan_state`` is ``null`` when the spool retains no such row (e.g. an APK that
+  predates the producer) -- never a fabricated zero.
 
 The document (exactly these keys, never the endpoint or the node secret):
 
@@ -43,6 +51,9 @@ The document (exactly these keys, never the endpoint or the node secret):
                        "moderate_10_99": 549, "bright_100_999": 180,
                        "very_bright_1000_plus": 0},
      "overflow": {"dropped": 108040, "notice_epoch_s": 1792050926},
+     "scan_state": {"epoch_s": 1792061943, "windows": 23, "phase": "gap",
+                    "last_error": "none", "sightings": 0,
+                    "window_ms": 60000, "gap_ms": 60000},
      "reason": null}
 
 Written atomically (temp file + rename, 0600) to
@@ -107,6 +118,45 @@ OVERFLOW_NOTICE_RE = re.compile(r"([0-9]{10}) spool overflow dropped=([0-9]+)")
 #: (device rc 1: a truthful zero) from a broken read. The probe can.
 OVERFLOW_PROBE_MARKER = "spool-overflow-probe rc="
 
+#: Device BRE for one ``ble_scan_state`` row (BleScanEvents.stateEvent), the
+#: per-cycle sampler-lane scan-loop state: ``<epoch> ble_scan_state windows=N
+#: phase=<none|window|gap> last_error=<reason> sightings=N window_ms=N
+#: gap_ms=N``. ``last_error`` is ``none`` or a reason plus one argument
+#: (``scan_failed code=2``); the optional-space group admits both. Rows are
+#: appended in order, so the LAST match is the current session state, and the
+#: app keeps ``windows``/``sightings``/``last_error`` durable across cycles
+#: and after the loop exits -- one retained row carries the whole session
+#: (research-methods pre-registration wake 84132 Rev 2).
+SCAN_STATE_ROW_BRE = (
+    r"[0-9]\{10\} ble_scan_state windows=[0-9]\{1,\} phase=[a-z]\{1,\} "
+    r"last_error=[^ ]*\( [^ ]*\)\{0,2\} sightings=[0-9]\{1,\} "
+    r"window_ms=[0-9]\{1,\} gap_ms=[0-9]\{1,\}"
+)
+
+#: Python parse of one device ``grep -o`` match above (full match: the
+#: row-leading epoch is emitted, so a bare ``windows=`` field cannot pass).
+SCAN_STATE_ROW_RE = re.compile(
+    r"([0-9]{10}) ble_scan_state windows=([0-9]+) phase=(none|window|gap) "
+    r"last_error=(.+?) sightings=([0-9]+) window_ms=([0-9]+) gap_ms=([0-9]+)")
+
+#: Admissible ``phase`` tokens (BleScanEvents.stateEvent).
+SCAN_STATE_PHASES = frozenset({"none", "window", "gap"})
+
+#: The bounded field set of the published ``scan_state`` object.
+SCAN_STATE_FIELDS = frozenset({
+    "epoch_s", "windows", "phase", "last_error", "sightings",
+    "window_ms", "gap_ms",
+})
+
+#: Bound on the retained ``last_error`` string (``none`` or a short reason).
+MAX_LAST_ERROR_CHARS = 64
+
+#: Device-status probe for the scan-state grep, same reason as the overflow
+#: probe: adb masks the device exit code, so the status is echoed explicitly
+#: and a ``run-as`` denial must fail the read instead of matching nothing.
+SCAN_STATE_PROBE_MARKER = "spool-scan-state-probe rc="
+
+
 #: Allowlisted protocol record kinds (verified from spool snapshot
 #: 2026-10-14T13:10Z and the protocol README; ``ble_sighting`` is emitted
 #: by BleScanEvents.sighting while a session is ON, ``ble_scan_state`` is the
@@ -160,7 +210,7 @@ ALLOWED_KEYS = frozenset({
     "node", "source", "method", "status", "observed_at_epoch_s",
     "validity_seconds", "spool_bytes", "retention_window_s",
     "oldest_row_epoch_s", "newest_row_epoch_s", "counts",
-    "light_buckets", "overflow", "reason",
+    "light_buckets", "overflow", "scan_state", "reason",
 })
 
 
@@ -371,6 +421,59 @@ def _overflow_notice(argv, serial, spool_path, timeout):
         raise RuntimeError(f"overflow-notice-failed: {e}") from e
 
 
+def _scan_state_row(argv, serial, spool_path, timeout):
+    """The latest ``ble_scan_state`` row's bounded fields, or None.
+
+    Returns ``{"epoch_s", "windows", "phase", "last_error", "sightings",
+    "window_ms", "gap_ms"}`` for the last match in append order, or ``None``
+    when the spool retains no such row. ``None`` is a truthful "no scan-state
+    row retained" (e.g. the installed APK predates the producer), never a
+    fabricated zero.
+
+    The read is bounded to the row's own allowlisted fields (spool-channel
+    ruling 79358 constraint 1) and read-only. A broken channel must not read
+    as calm: the device-side status is echoed as an explicit probe line (adb
+    masks the device exit code) and stderr is merged into the channel, so a
+    ``run-as`` denial fails the read instead of matching nothing.
+    """
+    try:
+        out = _run(argv, serial,
+                   f"run-as org.androidbody grep -a -o '{SCAN_STATE_ROW_BRE}' "
+                   f"{spool_path} 2>&1; echo '{SCAN_STATE_PROBE_MARKER}'$?",
+                   timeout)
+        lines = out.splitlines()
+        if not lines or not lines[-1].startswith(SCAN_STATE_PROBE_MARKER):
+            raise ValueError(f"no scan-state probe in output: {out[:60]!r}")
+        status = lines[-1][len(SCAN_STATE_PROBE_MARKER):].strip()
+        reported = [line.strip() for line in lines[:-1] if line.strip()]
+        if status == "1":
+            if reported:
+                raise ValueError(
+                    f"scan-state grep reported no match but said {reported[0][:60]!r}")
+            return None
+        if status != "0":
+            raise ValueError(f"scan-state grep status {status!r}")
+        row = None
+        for line in reported:
+            match = SCAN_STATE_ROW_RE.fullmatch(line)
+            if not match:
+                raise ValueError(f"unparsable scan-state line {line[:60]!r}")
+            row = {
+                "epoch_s": int(match.group(1)),
+                "windows": int(match.group(2)),
+                "phase": match.group(3),
+                "last_error": match.group(4),
+                "sightings": int(match.group(5)),
+                "window_ms": int(match.group(6)),
+                "gap_ms": int(match.group(7)),
+            }
+        if row is None:
+            raise ValueError("scan-state grep matched nothing parsable")
+        return row
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:
+        raise RuntimeError(f"scan-state-row-failed: {e}") from e
+
+
 def _phone_ts_to_epoch(phone_ts):
     """Convert a phone-local ISO timestamp to a naive epoch (seconds).
 
@@ -400,6 +503,7 @@ def spool_document(label, result, now, validity=300.0):
             "spool_bytes": None, "retention_window_s": None,
             "oldest_row_epoch_s": None, "newest_row_epoch_s": None,
             "counts": None, "light_buckets": None, "overflow": None,
+            "scan_state": None,
             "reason": "spool read failed",
         }
     return {
@@ -413,8 +517,30 @@ def spool_document(label, result, now, validity=300.0):
         "counts": result["counts"],
         "light_buckets": result["light_buckets"],
         "overflow": result["overflow"],
+        "scan_state": result["scan_state"],
         "reason": None,
     }
+
+
+def _valid_scan_state(value):
+    """True for ``None`` or the agreed bounded latest-scan-state field set."""
+    if value is None:
+        return True
+    if not isinstance(value, dict) or set(value) != set(SCAN_STATE_FIELDS):
+        return False
+    for key in ("windows", "sightings", "window_ms", "gap_ms"):
+        if not isinstance(value[key], int) or isinstance(value[key], bool) or value[key] < 0:
+            return False
+    epoch = value["epoch_s"]
+    if (not isinstance(epoch, int) or isinstance(epoch, bool)
+            or not 1700000000 <= epoch <= 2000000000):
+        return False
+    if (not isinstance(value["phase"], str)
+            or value["phase"] not in SCAN_STATE_PHASES):
+        return False
+    last_error = value["last_error"]
+    return (isinstance(last_error, str) and 0 < len(last_error) <= MAX_LAST_ERROR_CHARS
+            and "\n" not in last_error)
 
 
 def assert_bounded(document):
@@ -427,7 +553,8 @@ def assert_bounded(document):
     if document["status"] == "unavailable":
         if any(document[key] is not None for key in
                ("spool_bytes", "retention_window_s", "oldest_row_epoch_s",
-                "newest_row_epoch_s", "counts", "light_buckets", "overflow")):
+                "newest_row_epoch_s", "counts", "light_buckets", "overflow",
+                "scan_state")):
             raise ValueError("unavailable spool-summary document carries data")
     else:
         if not isinstance(document["spool_bytes"], int) or document["spool_bytes"] <= 0:
@@ -449,6 +576,8 @@ def assert_bounded(document):
             raise ValueError("ok spool-summary document has a malformed overflow field")
         if (dropped > 0) != (notice is not None):
             raise ValueError("overflow dropped and notice_epoch_s disagree")
+        if not _valid_scan_state(document["scan_state"]):
+            raise ValueError("ok spool-summary document has a malformed scan_state field")
     if document["reason"] is not None and (
         not isinstance(document["reason"], str)
         or len(document["reason"]) > MAX_REASON_CHARS
@@ -501,6 +630,8 @@ def run_once(args):
             argv, args.serial, spool_path, args.timeout)
         dropped, notice_epoch = _overflow_notice(
             argv, args.serial, spool_path, args.timeout)
+        scan_state = _scan_state_row(
+            argv, args.serial, spool_path, args.timeout)
         result = {
             "spool_bytes": spool_bytes,
             "retention_window_s": window,
@@ -509,6 +640,7 @@ def run_once(args):
             "counts": counts,
             "light_buckets": light_buckets,
             "overflow": {"dropped": dropped, "notice_epoch_s": notice_epoch},
+            "scan_state": scan_state,
         }
         reason = None
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as error:
@@ -523,9 +655,13 @@ def run_once(args):
     else:
         total_rows = sum(result["counts"].values())
         light_total = result["counts"].get("light", 0)
+        scan = result["scan_state"]
+        scan_text = (f", scan_state windows={scan['windows']} phase={scan['phase']} "
+                     f"last_error={scan['last_error']} sightings={scan['sightings']}"
+                     if scan else ", scan_state=none-retained")
         print(f"spool-summary {args.label}: {total_rows} rows, light={light_total}, "
               f"{result['spool_bytes']} B, window={result['retention_window_s']}s, "
-              f"overflow dropped={result['overflow']['dropped']} -> {output}")
+              f"overflow dropped={result['overflow']['dropped']}{scan_text} -> {output}")
     return 0
 
 

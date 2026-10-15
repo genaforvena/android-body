@@ -2640,5 +2640,144 @@ class SpoolCoverageVerdictTests(unittest.TestCase):
                      "overflow": bad, "age_s": 12.3}
             self.assertIn("overflow=unknown", watch.spool_view_line(spool), bad)
 
+
+class SpoolScanStateTests(unittest.TestCase):
+    """The collection-side scan-state segment is labelled, honest and bounded."""
+
+    ROW = {"epoch_s": 1792061943, "windows": 23, "phase": "gap",
+           "last_error": "none", "sightings": 0,
+           "window_ms": 60000, "gap_ms": 60000}
+
+    def test_segment_absent_row_is_none_retained(self):
+        self.assertEqual(watch.spool_scan_state_segment(True, None),
+                         " scan_state=none-retained")
+
+    def test_segment_absent_field_is_field_absent(self):
+        # A document that predates the field is not a none-retained row; the
+        # two must not collapse into one reading.
+        self.assertEqual(watch.spool_scan_state_segment(False, None),
+                         " scan_state=unknown/field-absent")
+
+    def test_segment_renders_the_bounded_fields(self):
+        segment = watch.spool_scan_state_segment(True, self.ROW)
+        self.assertIn("scan_state(windows=23", segment)
+        self.assertIn("phase=gap", segment)
+        self.assertIn("last_error=none", segment)
+        self.assertIn("sightings=0", segment)
+
+    def test_segment_renders_a_spaced_failure_reason(self):
+        row = dict(self.ROW, windows=28, phase="none",
+                   last_error="scan_failed code=2")
+        self.assertIn("last_error=scan_failed code=2",
+                      watch.spool_scan_state_segment(True, row))
+
+    def test_segment_marks_a_malformed_row_invalid(self):
+        for bad in ({"phase": "scanning", "windows": 1, "sightings": 0,
+                     "last_error": "none"},
+                    {"phase": "gap", "windows": "23", "sightings": 0,
+                     "last_error": "none"},
+                    {"phase": "gap", "windows": True, "sightings": 0,
+                     "last_error": "none"},
+                    {"phase": "gap", "windows": 1, "sightings": 0},
+                    "windows=1"):
+            self.assertEqual(watch.spool_scan_state_segment(True, bad),
+                             " scan_state=invalid", bad)
+
+    def test_view_line_appends_the_scan_state_inside_the_collection_side_line(self):
+        spool = {"status": "ok", "spool_bytes": 3130966,
+                 "retention_window_s": 20431.0,
+                 "counts": {kind: 100 for kind in watch.SPOOL_COVERAGE_KINDS},
+                 "light_buckets": {"dark_exact": 1, "faint_0_1": 0,
+                                   "dim_0_9": 1, "moderate_10_99": 0,
+                                   "bright_100_999": 0,
+                                   "very_bright_1000_plus": 0},
+                 "overflow": {"dropped": 0, "notice_epoch_s": None},
+                 "scan_state": self.ROW, "scan_state_present": True, "age_s": 5.0}
+        line = watch.spool_view_line(spool)
+        self.assertIn("NOT delivered", line)
+        self.assertIn("scan_state(windows=23 phase=gap last_error=none sightings=0)",
+                      line)
+
+    def test_view_line_with_a_present_null_row_says_none_retained(self):
+        spool = {"status": "ok", "spool_bytes": 3130966,
+                 "retention_window_s": 20431.0,
+                 "counts": {kind: 100 for kind in watch.SPOOL_COVERAGE_KINDS},
+                 "light_buckets": {"dark_exact": 1, "faint_0_1": 0,
+                                   "dim_0_9": 1, "moderate_10_99": 0,
+                                   "bright_100_999": 0,
+                                   "very_bright_1000_plus": 0},
+                 "overflow": {"dropped": 0, "notice_epoch_s": None},
+                 "scan_state": None, "scan_state_present": True, "age_s": 5.0}
+        self.assertIn("scan_state=none-retained", watch.spool_view_line(spool))
+
+    def test_view_line_without_the_field_says_field_absent(self):
+        spool = {"status": "ok", "spool_bytes": 3130966,
+                 "retention_window_s": 20431.0,
+                 "counts": {kind: 100 for kind in watch.SPOOL_COVERAGE_KINDS},
+                 "light_buckets": {"dark_exact": 1, "faint_0_1": 0,
+                                   "dim_0_9": 1, "moderate_10_99": 0,
+                                   "bright_100_999": 0,
+                                   "very_bright_1000_plus": 0},
+                 "overflow": {"dropped": 0, "notice_epoch_s": None},
+                 "scan_state_present": False, "age_s": 5.0}
+        self.assertIn("scan_state=unknown/field-absent",
+                      watch.spool_view_line(spool))
+
+    def test_read_spool_summary_passes_the_scan_state_through(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "body" / "perception"
+            directory.mkdir(parents=True)
+            (Path(tmp) / "body" / "spool-summary-note3.json").write_text(json.dumps({
+                "node": "note3", "source": "tools/spool_read.py",
+                "status": "ok", "observed_at_epoch_s": 1792061907.5,
+                "validity_seconds": 300.0, "spool_bytes": 3130966,
+                "retention_window_s": 20431.0, "oldest_row_epoch_s": 1792041446,
+                "newest_row_epoch_s": 1792061877, "counts": {"light": 4031},
+                "light_buckets": {"dark_exact": 563}, "overflow": {
+                    "dropped": 119348, "notice_epoch_s": 1792061882},
+                "scan_state": self.ROW, "reason": None}), encoding="utf-8")
+            spool = watch.read_spool_summary(directory, "note3", 1792061908.0)
+        self.assertEqual(spool["status"], "ok")
+        self.assertEqual(spool["scan_state"], self.ROW)
+        self.assertTrue(spool["scan_state_present"])
+
+    def test_read_spool_summary_unknown_states_carry_a_null_scan_state(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "body" / "perception"
+            directory.mkdir(parents=True)
+            spool = watch.read_spool_summary(directory, "note3", 1792061908.0)
+        self.assertEqual(spool["status"], "absent")
+        self.assertIsNone(spool["scan_state"])
+
+    def test_read_spool_summary_without_the_field_is_field_absent(self):
+        # The flag separating field-absent from none-retained is derived from the
+        # document's own key set; pin it on the absent side too.
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "body" / "perception"
+            directory.mkdir(parents=True)
+            (Path(tmp) / "body" / "spool-summary-note3.json").write_text(json.dumps({
+                "node": "note3", "source": "tools/spool_read.py",
+                "status": "ok", "observed_at_epoch_s": 1792061907.5,
+                "validity_seconds": 300.0, "spool_bytes": 3130966,
+                "retention_window_s": 20431.0, "oldest_row_epoch_s": 1792041446,
+                "newest_row_epoch_s": 1792061877, "counts": {"light": 4031},
+                "light_buckets": {"dark_exact": 563}, "overflow": {
+                    "dropped": 119348, "notice_epoch_s": 1792061882},
+                "reason": None}), encoding="utf-8")
+            spool = watch.read_spool_summary(directory, "note3", 1792061908.0)
+        self.assertEqual(spool["status"], "ok")
+        self.assertIsNone(spool["scan_state"])
+        self.assertFalse(spool["scan_state_present"])
+        self.assertIn("scan_state=unknown/field-absent",
+                      watch.spool_view_line(spool))
+
 if __name__ == "__main__":
     unittest.main()
