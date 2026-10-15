@@ -39,7 +39,7 @@ jobs:
           python3 -m unittest discover -s experiments/trial-eval
           python3 -m unittest discover -s tools
       - name: Build and lint
-        run: ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore
+        run: ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe
       - name: Upload installable debug APK
         uses: actions/upload-artifact@v4
         with:

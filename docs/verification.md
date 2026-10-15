@@ -39,7 +39,7 @@ Persistent-state checks cover endpoint-matching enable markers, failed preferenc
 
 ## Published repository and CI
 
-The public [GitHub repository](https://github.com/genaforvena/android-body) carries the source, CC0 license, third-party notices and the installable debug APK. `.github/workflows/check.yml` runs on every push and pull request: the protocol and spool shell harnesses, the rendezvous, light/vibrate, perception, minimal-substrate and trial-eval unittest suites, then `:app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore`, uploading the debug APK (`android-body-debug`) and the lint report.
+The public [GitHub repository](https://github.com/genaforvena/android-body) carries the source, CC0 license, third-party notices and the installable debug APK. `.github/workflows/check.yml` runs on every push and pull request: the protocol and spool shell harnesses, the rendezvous, light/vibrate, perception, minimal-substrate and trial-eval unittest suites, then `:app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe`, uploading the debug APK (`android-body-debug`) and the lint report.
 
 CI runs on the pushed tip, so a commit below the tip shares the tip's run. A run is named here only where a change needs one as evidence — the installed-APK payload run under [Built artifact](#built-artifact) is the current example; a tip's CI status is read from GitHub, not recorded here per push. This record is not a per-run ledger, and docs does not create a commit solely to record a CI run.
 
