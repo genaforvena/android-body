@@ -16,9 +16,8 @@ from pathlib import Path
 
 SERVER_PATH = (
     Path(__file__).resolve().parents[1]
-    / ".mishe-tauftauf"
-    / "body"
-    / "runtime"
+    / "rendezvous"
+    / "minimal-server"
     / "server.py"
 )
 
