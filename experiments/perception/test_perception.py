@@ -366,6 +366,53 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual((published["status"], published["mode"],
                           published["collect_only"]), ("ok", "ON_COLLECT_ONLY", True))
 
+    def test_space_snapshot_publishes_the_clock_domain_reading_additively(self):
+        """The clock-domain reading is one additive node field; inconsistent values pass through uncoerced."""
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1000)
+        # No verdict read: absent, never a verified offset.
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
+        self.assertEqual(node["clock_domain"],
+                         {"version": 1, "status": "absent", "offset_nominal_s": None,
+                          "offset_min_s": None, "offset_max_s": None,
+                          "observed_at_epoch_s": None, "validity_seconds": None,
+                          "samples": 0, "source": None,
+                          "reason": "no-clock-domain-reading", "jump": None})
+        # A fresh measurement publishes its raw values; nominal outside the bounds
+        # is preserved, not coerced. age_s is not republished (churn).
+        clock = {"status": "ok", "offset_min_s": 24.202, "offset_max_s": 25.202,
+                 "offset_nominal_s": 25.651, "observed_at_epoch_s": 999.0,
+                 "age_s": 12.0, "validity_seconds": 3600.0, "samples": 3,
+                 "source": "tools/clock_offset.py", "reason": None, "jump": None}
+        node = watch.space_snapshot([state], 1000, 30,
+                                    clocks={"note3": clock})["nodes"][0]
+        self.assertEqual(node["clock_domain"],
+                         {"version": 1, "status": "ok",
+                          "offset_nominal_s": 25.651,
+                          "offset_min_s": 24.202, "offset_max_s": 25.202,
+                          "observed_at_epoch_s": 999.0,
+                          "validity_seconds": 3600.0, "samples": 3,
+                          "source": "tools/clock_offset.py",
+                          "reason": None, "jump": None})
+        # read_space wires the directory document in without a schema bump:
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder) / "body" / "perception"
+            directory.mkdir(parents=True)
+            watch.save(directory / "note3.json", state)
+            (Path(folder) / "body" / "clock-domain-note3.json").write_text(json.dumps(
+                {"node": "note3", "status": "ok", "offset_min_s": 24.0,
+                 "offset_max_s": 25.0, "offset_nominal_s": 24.5, "samples": 7,
+                 "observed_at_epoch_s": 999.0, "validity_seconds": 3600.0,
+                 "source": "tools/clock_offset.py", "jump": None}), encoding="utf-8")
+            snapshot = watch.read_space(directory, 1000, 30)
+        self.assertEqual(snapshot["schema_version"], 1)
+        published = snapshot["nodes"][0]["clock_domain"]
+        self.assertEqual((published["status"], published["offset_nominal_s"],
+                          published["offset_min_s"], published["offset_max_s"],
+                          published["samples"], published["source"]),
+                         ("ok", 24.5, 24.0, 25.0, 7, "tools/clock_offset.py"))
+
     def test_space_render_is_stable_within_a_second_so_publish_can_skip_it(self):
         """publish_space rewrites only on change; a clock-derived field would defeat that."""
         state = self.state()
@@ -2488,7 +2535,9 @@ class PerceptionTests(unittest.TestCase):
                           "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1024)
         self.page(state, ["1001 light lux=12.5 accuracy=3 age_ms=21"], received=1026)
         clock = {"status": "ok", "offset_min_s": 19.0, "offset_max_s": 20.0,
-                 "offset_nominal_s": 19.6, "age_s": 12.0, "samples": 7}
+                 "offset_nominal_s": 19.6, "observed_at_epoch_s": 1020.0,
+                 "age_s": 12.0, "samples": 7, "source": "tools/clock_offset.py",
+                 "validity_seconds": 3600.0, "jump": None, "reason": None}
         node = watch.space_snapshot([state], 1026, 30,
                                     clocks={"note3": clock})["nodes"][0]["light"]
         self.assertEqual(node["status"], "fresh-clock-conditional")

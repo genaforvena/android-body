@@ -1740,6 +1740,7 @@ def space_snapshot(states, now, stale, node_states=None, clocks=None):
             "last_poll_utc": stamp(state["poll_at"]),
             "backlog_page_pending": state["has_more"],
             "node_state": node_state_snapshot((node_states or {}).get(state["node"])),
+            "clock_domain": clock_domain_snapshot((clocks or {}).get(state["node"])),
             "capabilities": {key: state["capabilities"].get(key, "unknown")
                              for key in CAPABILITIES},
             "owner_checkboxes": dict(state.get("owner_checkboxes") or {}),
@@ -1962,7 +1963,8 @@ def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS
     def unknown(status, reason):
         return {"status": status, "offset_min_s": None, "offset_max_s": None,
                 "offset_nominal_s": None, "observed_at_epoch_s": None, "age_s": None,
-                "samples": 0, "jump": None, "reason": reason}
+                "validity_seconds": None, "samples": 0, "jump": None,
+                "source": None, "reason": reason}
 
     path = directory.parent / f"{CLOCK_DOMAIN_PREFIX}{node}.json"
     try:
@@ -1995,14 +1997,17 @@ def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS
         return unknown("stale", "clock-domain-stale")
     samples = document.get("samples")
     jump = document.get("jump")
+    source = document.get("source")
     return {"status": "ok",
             "offset_min_s": numbers["offset_min_s"],
             "offset_max_s": numbers["offset_max_s"],
             "offset_nominal_s": numbers["offset_nominal_s"],
             "observed_at_epoch_s": numbers["observed_at_epoch_s"],
             "age_s": round(max(age, 0.0), 1),
+            "validity_seconds": validity,
             "samples": samples if isinstance(samples, int) and not isinstance(samples, bool) else 0,
             "jump": jump if isinstance(jump, dict) else None,
+            "source": source if isinstance(source, str) else None,
             "reason": None}
 
 
@@ -2020,6 +2025,40 @@ def clock_domain_line(clock):
             f"(previous {previous:+.1f}s, threshold {jump.get('threshold_s')}s) - "
             f"retained span bounds and offset-derived freshness are not comparable "
             f"across the step; re-measure before relying on either")
+
+
+def clock_domain_snapshot(clock):
+    """The host-side phone/host clock-offset reading as one additive space.json node field.
+
+    Published by tools/clock_offset.py at ``body/clock-domain-<node>.json`` and
+    resolved by ``read_clock_domain``. Additive to schema_version 1: the core
+    consumer pins ``schema_version == 1`` (core discovery.py:4220) and ignores
+    node keys it does not read, so a version bump would break it.
+
+    The raw status, nominal offset, lower/upper bounds, sample time, source and
+    sample count are published as-is: an inconsistent reading (nominal outside
+    the bounds) is preserved rather than coerced, and a missing value stays
+    null. The consumer judges consistency and freshness; the producer never
+    repairs a reading it cannot verify. ``age_s`` is deliberately *not*
+    republished for the same churn reason as ``node_state_snapshot``: the
+    document's own ``observed_at_epoch_s`` and ``validity_seconds`` carry the
+    freshness information without a caller-derived age that would rewrite
+    space.json within the same wall-clock second.
+    """
+    if clock is None:
+        return {"version": 1, "status": "absent", "offset_nominal_s": None,
+                "offset_min_s": None, "offset_max_s": None,
+                "observed_at_epoch_s": None, "validity_seconds": None,
+                "samples": 0, "source": None,
+                "reason": "no-clock-domain-reading", "jump": None}
+    return {"version": 1, "status": clock["status"],
+            "offset_nominal_s": clock["offset_nominal_s"],
+            "offset_min_s": clock["offset_min_s"],
+            "offset_max_s": clock["offset_max_s"],
+            "observed_at_epoch_s": clock["observed_at_epoch_s"],
+            "validity_seconds": clock.get("validity_seconds"),
+            "samples": clock["samples"], "source": clock.get("source"),
+            "reason": clock["reason"], "jump": clock["jump"]}
 
 def read_spool_summary(directory, node, now, max_age=SPOOL_SUMMARY_MAX_AGE_SECONDS):
     """Read the bounded app-spool summary for one node.
@@ -2285,6 +2324,39 @@ def node_state_snapshot(node_state):
             "observed_at_epoch_s": node_state["observed_at_epoch_s"],
             "reason": node_state["reason"],
             "reasons": list(node_state.get("reasons") or [])}
+
+def clock_domain_snapshot(clock):
+    """The host-side phone/host clock-offset reading as one additive space.json node field.
+
+    Published by tools/clock_offset.py at ``body/clock-domain-<node>.json`` and
+    resolved by ``read_clock_domain``. Additive to schema_version 1: the core
+    consumer pins ``schema_version == 1`` (core discovery.py:4220) and ignores
+    node keys it does not read, so a version bump would break it.
+
+    The raw status, nominal offset, lower/upper bounds, sample time, source and
+    sample count are published as-is: an inconsistent reading (nominal outside
+    the bounds) is preserved rather than coerced, and a missing value stays
+    null. The consumer judges consistency and freshness; the producer never
+    repairs a reading it cannot verify. ``age_s`` is deliberately *not*
+    republished for the same churn reason as ``node_state_snapshot``: the
+    document's own ``observed_at_epoch_s`` and ``validity_seconds`` carry the
+    freshness information without a caller-derived age that would rewrite
+    space.json within the same wall-clock second.
+    """
+    if clock is None:
+        return {"version": 1, "status": "absent", "offset_nominal_s": None,
+                "offset_min_s": None, "offset_max_s": None,
+                "observed_at_epoch_s": None, "validity_seconds": None,
+                "samples": 0, "source": None,
+                "reason": "no-clock-domain-reading", "jump": None}
+    return {"version": 1, "status": clock["status"],
+            "offset_nominal_s": clock["offset_nominal_s"],
+            "offset_min_s": clock["offset_min_s"],
+            "offset_max_s": clock["offset_max_s"],
+            "observed_at_epoch_s": clock["observed_at_epoch_s"],
+            "validity_seconds": clock.get("validity_seconds"),
+            "samples": clock["samples"], "source": clock.get("source"),
+            "reason": clock["reason"], "jump": clock["jump"]}
 
 
 def read_space(directory, now, stale):
