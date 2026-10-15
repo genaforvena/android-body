@@ -13,6 +13,8 @@
 # every service check above stays GREEN.
 # Section 3b supervises the Redmi tailnet HTTPS path (serve config, endpoint
 # probe, write recency); a device that is not connected reads UNKNOWN.
+# Section 9 checks the published candidate APK (downloads/) against the committed
+# SHA256SUMS record; the install itself stays gated on device transport.
 # Exits 0 if all invariants hold, 1 otherwise.
 set -u
 cd "$(dirname "$0")/.."
@@ -413,6 +415,30 @@ if [ -f "$WALL_CHECK" ]; then
   fi
 else
   echo "UNKNOWN own wall plate (no $WALL_CHECK)"
+fi
+
+# 9. Candidate APK readiness (deploy lane). The published sideload candidate
+# (downloads/android-body-debug.apk) must match the committed SHA256SUMS record;
+# installing anything else would put unpublished bytes on a device, the class of
+# publication hazard closed at wake 92338. Read-only: verifies the file, never
+# installs. The install itself stays gated on device transport (§3b), which this
+# check does not decide; a missing candidate or record reads UNKNOWN, like an
+# unattached device in §6.
+CANDIDATE="$PWD/downloads/android-body-debug.apk"
+SUMS="$PWD/downloads/SHA256SUMS"
+if [ -f "$SUMS" ]; then
+  if [ -f "$CANDIDATE" ]; then
+    CAND_SHA=$(sha256sum "$CANDIDATE" | awk '{print $1}')
+    if grep -q "$CAND_SHA" "$SUMS"; then
+      pass "candidate APK $CAND_SHA matches SHA256SUMS (deploy lane; install gated on device transport)"
+    else
+      fail "candidate APK SHA $CAND_SHA absent from SHA256SUMS (unpublished bytes)"
+    fi
+  else
+    echo "UNKNOWN candidate APK: $CANDIDATE missing (republish before install)"
+  fi
+else
+  echo "UNKNOWN candidate APK: no SHA256SUMS record at $SUMS"
 fi
 
 
