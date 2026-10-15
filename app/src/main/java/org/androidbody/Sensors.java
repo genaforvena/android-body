@@ -10,9 +10,14 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkInfo;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.BatteryManager;
+import android.os.Build;
 import android.os.SystemClock;
 
 /** Holds only the latest real samples; snapshots coalesce while the network is offline. */
@@ -130,13 +135,34 @@ final class Sensors implements SensorEventListener {
         if (wifi == null) return WifiRssi.unavailable("service_absent", observedAt, now);
         try {
             WifiInfo info = wifi.getConnectionInfo();
-            return WifiRssi.event(info != null && info.getNetworkId() >= 0,
+            boolean connected = info != null && info.getNetworkId() >= 0;
+            // getNetworkId() < 0 is ambiguous (AOSP): either no connected network,
+            // or a connected network whose ID the caller may not read. Name the
+            // actual basis instead of reporting "disconnected" for both causes.
+            if (!connected && info != null && wifiLinkUp()) {
+                return WifiRssi.unavailable("network_id_unavailable", observedAt, now);
+            }
+            return WifiRssi.event(connected,
                     info == null ? -127 : info.getRssi(), observedAt, now);
         } catch (SecurityException e) {
             return WifiRssi.unavailable("permission_denied", observedAt, now);
         } catch (RuntimeException e) {
             return WifiRssi.unavailable("read_failed", observedAt, now);
         }
+    }
+
+    /** True when the default network is a Wi-Fi network (link up; ID not implied). */
+    private boolean wifiLinkUp() {
+        ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null) return false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Network network = cm.getActiveNetwork();
+            if (network == null) return false;
+            NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+            return caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
+        }
+        NetworkInfo legacy = cm.getNetworkInfo(ConnectivityManager.TYPE_WIFI);
+        return legacy != null && legacy.isConnected();
     }
     private String bleStatus() {
         try {
