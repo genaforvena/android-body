@@ -223,7 +223,7 @@ class Store:
         self.lockfile = None
         self.journal = None
         try:
-            fd = os.open(directory / ".lock", os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            fd = self._open_lock(directory)
             self.lockfile = os.fdopen(fd, "r+b")
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -260,6 +260,30 @@ class Store:
         if self.lockfile is not None:
             self.lockfile.close()
             self.lockfile = None
+
+    @staticmethod
+    def _open_lock(directory: Path) -> int:
+        """Open the data-directory lock, clearing one we cannot open but may remove.
+
+        A lock file left behind by a process that is not ours (for example a
+        deploy-time smoke test run as another uid) otherwise bricks every
+        start with EACCES. Recovery is attempted only when the directory
+        itself is writable by us, so a read-only directory still fails
+        closed. O_NOFOLLOW is kept so a symlink at this name is never
+        followed; flock below still rejects a second live server.
+        """
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        path = directory / ".lock"
+        try:
+            return os.open(path, flags, 0o600)
+        except PermissionError as exc:
+            if not path.exists() or not os.access(directory, os.W_OK):
+                raise
+            try:
+                path.unlink()
+            except OSError:
+                raise exc
+            return os.open(path, flags, 0o600)
 
 
 class Server(ThreadingHTTPServer):
