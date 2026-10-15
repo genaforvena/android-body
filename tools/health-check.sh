@@ -6,6 +6,10 @@
 # is not attached reads UNKNOWN and does not fail the host-infrastructure checks.
 # Section 7 checks the published node-state file the perception consumer reads,
 # and that the bytes which publish it are the committed ones.
+# Section 8 checks this role's own plate (bin/wall-check): a settle whose staged
+# notes still hold an earlier wake's text writes that text over walls/health.md
+# with no error, so the plate can name a wake older than the last yield while
+# every service check above stays GREEN.
 # Section 3b supervises the Redmi tailnet HTTPS path (serve config, endpoint
 # probe, write recency); a device that is not connected reads UNKNOWN.
 # Exits 0 if all invariants hold, 1 otherwise.
@@ -295,30 +299,30 @@ else
   fail "node-state note3 MISSING"
 fi
 
-# 7b. android-body-node-state.timer executes tools/node_state.py (and its
-# device_state.py import) straight from this checkout, so the working tree --
-# not a frozen release -- is what publishes within 60s. Compare the live bytes
-# with HEAD: an uncommitted or half-applied edit is otherwise invisible until
-# the consumer misreads the document it produces. `git status` rather than
-# `git diff HEAD` because diff reports an untracked file as unchanged; a
-# skip-worktree/assume-unchanged bit hides even from status, so the index
-# flags are checked too.
+# 7b. android-body-node-state.timer runs node_state.py and clock_offset.py from
+# body/runtime/ (frozen deployed copies, added to the manifest 2026-10-15).
+# §7c verifies deployed == source; this check is the complement: the source of
+# the publisher's entry points (node_state.py, clock_offset.py) and of the module
+# they import (device_state.py) must match HEAD so the next deploy is from a
+# known state. `git status` rather than `git diff HEAD` because diff reports an
+# untracked file as unchanged; a skip-worktree/assume-unchanged bit hides even
+# from status, so the index flags are checked too.
 if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
-  if NS_DIRTY=$(git status --porcelain --untracked-files=all -- tools/node_state.py tools/device_state.py 2>/dev/null); then
+  if NS_DIRTY=$(git status --porcelain --untracked-files=all -- tools/node_state.py tools/clock_offset.py tools/device_state.py 2>/dev/null); then
     if [ -z "$NS_DIRTY" ]; then
-      pass "node-state publisher bytes match HEAD"
+      pass "node-state publisher source matches HEAD"
     else
-      fail "node-state publisher bytes differ from HEAD (uncommitted edits go live within 60s)"
+      fail "node-state publisher source differs from HEAD (deploy would be from a dirty tree)"
     fi
   else
-    echo "UNKNOWN node-state publisher bytes (git status failed)"
+    echo "UNKNOWN node-state publisher source (git status failed)"
   fi
-  NS_BITS=$(git ls-files -v -- tools/node_state.py tools/device_state.py 2>/dev/null | awk '$1 != "H"')
+  NS_BITS=$(git ls-files -v -- tools/node_state.py tools/clock_offset.py tools/device_state.py 2>/dev/null | awk '$1 != "H"')
   if [ -n "$NS_BITS" ]; then
-    fail "node-state publisher bytes carry an assume-unchanged/skip-worktree bit (invisible to git status)"
+    fail "node-state publisher source carries an assume-unchanged/skip-worktree bit (invisible to git status)"
   fi
 else
-  echo "UNKNOWN node-state publisher bytes (git unavailable)"
+  echo "UNKNOWN node-state publisher source (git unavailable)"
 fi
 
 # 7c. Runtime activation record (body/runtime-manifest.json). tools/runtime_manifest.py
@@ -344,6 +348,28 @@ elif command -v python3 >/dev/null 2>&1 && [ -x "$PWD/tools/runtime_manifest.py"
   esac
 else
   echo "UNKNOWN runtime activation record (python3 or tools/runtime_manifest.py unavailable)"
+fi
+
+# 8. Own wall plate (bin/wall-check health). A settle whose staged notes still
+# hold an earlier wake's text writes that text over the current plate with no
+# error, so walls/health.md and handoffs/health.md can name a wake older than the
+# last `seed yield health` while every check above stays GREEN (class: health
+# plate reverted to genome's wake-75020 text, written 2026-10-15T15:23Z, found by
+# `wall-check health` RED at wake 88579). The detector is deterministic and
+# site-local; when it is absent this reads UNKNOWN rather than passing.
+WALL_CHECK="$SITE/bin/wall-check"
+if [ -f "$WALL_CHECK" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    if WC_OUT=$(python3 "$WALL_CHECK" health 2>&1); then
+      pass "own wall plate current"
+    else
+      fail "own wall plate stale ($WC_OUT)"
+    fi
+  else
+    echo "UNKNOWN own wall plate (python3 unavailable)"
+  fi
+else
+  echo "UNKNOWN own wall plate (no $WALL_CHECK)"
 fi
 
 

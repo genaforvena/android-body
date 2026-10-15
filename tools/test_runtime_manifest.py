@@ -279,6 +279,24 @@ class ManifestCase(unittest.TestCase):
         doc = json.loads(self.manifest.read_text(encoding="utf-8"))
         self.assertEqual(["server.py", "watch.py"], sorted(doc["files"]))
 
+    def test_record_preserves_the_superseded_manifest(self) -> None:
+        # 2026-10-15: the 15:16:55Z widening replaced a four-file record with a
+        # seven-file one and kept no copy, so the previous coverage list
+        # survived only in chat evidence.
+        self.deploy("watch.py", "print('v1')\n")
+        code, lines = runtime_manifest.record(self.site, self.repo, None, {}, {}, None)
+        self.assertEqual(0, code, lines)
+        self.assertEqual([], sorted(self.manifest.parent.glob("runtime-manifest.json.pre-record-*")),
+                         lines)
+        first = self.manifest.read_text(encoding="utf-8")
+        code, lines = runtime_manifest.record(self.site, self.repo, None, {}, {}, None)
+        self.assertEqual(0, code, lines)
+        backups = sorted(self.manifest.parent.glob("runtime-manifest.json.pre-record-*"))
+        self.assertEqual(1, len(backups), lines)
+        self.assertEqual(first, backups[0].read_text(encoding="utf-8"))
+        self.assertTrue(any("preserved the superseded record" in line for line in lines), lines)
+        self.assertEqual(0, self.run_check()[0])
+
     def unit_case(self, offset_s: float | None) -> tuple[int, list[str]]:
         self.deploy("watch.py", "print('v1')\n")
         self.record_doc({"watch.py": {"sha256": runtime_manifest.sha256_file(self.runtime / "watch.py"),

@@ -25,7 +25,11 @@ This tool makes the record checkable and the drift visible:
   is running older code. Exit 0 GREEN / 1 RED / 2 UNKNOWN. A record that cannot
   be read or interpreted is UNKNOWN, never a pass.
 * ``record`` rewrites the record from the deployed bytes (atomic replace,
-  preserving unknown top-level and per-file keys). It refuses to record a file
+  preserving unknown top-level and per-file keys) and preserves the document it
+  replaces beside it as ``<manifest>.pre-record-<stamp>``, so a widening or
+  narrowing of the coverage list leaves the previous list readable instead of
+  surviving only in chat evidence (observed 2026-10-15: the 15:16:55Z widening
+  replaced a four-file record and kept no copy). It refuses to record a file
   whose deployed bytes differ from its declared source unless
   ``--divergence NAME=TEXT`` states why, so "deployed == source" cannot silently
   become false. It refuses to publish an empty record, which would otherwise
@@ -52,7 +56,9 @@ still readable):
      ...other keys preserved verbatim...}
 
 Backups (``<name>.pre-deploy-<stamp>``, ``.pre-redeploy-...``) and
-``__pycache__`` are not deployed bytes and are ignored.
+``__pycache__`` are not deployed bytes and are ignored; a
+``<manifest>.pre-record-<stamp>`` document is a superseded record, not deployed
+bytes, and is likewise not read.
 """
 
 from __future__ import annotations
@@ -63,6 +69,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -72,6 +79,7 @@ from pathlib import Path, PurePath
 RUNTIME_REL = Path("body") / "runtime"
 MANIFEST_REL = Path("body") / "runtime-manifest.json"
 BACKUP_RE = re.compile(r"\.pre-(?:deploy|redeploy)\d*-")
+RECORD_BACKUP_STAMP = "%Y%m%dT%H%M%SZ"
 
 GREEN, RED, UNKNOWN = "GREEN", "RED", "UNKNOWN"
 
@@ -123,6 +131,26 @@ def deployed_names(runtime_dir: Path) -> list[str]:
         for entry in runtime_dir.iterdir()
         if entry.is_file() and entry.suffix == ".py" and not BACKUP_RE.search(entry.name)
     )
+
+
+def backup_superseded_record(target: Path, manifest_name: str) -> Path | None:
+    """Copy the record about to be replaced, or None when there is none.
+
+    ``record`` replaces the whole document, so without this copy the previous
+    coverage list is lost the moment the new one lands. The copy is taken
+    immediately before the atomic replace and keeps the superseded file's mtime,
+    so the backup reads as the generation it holds.
+    """
+    if not target.is_file():
+        return None
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime(RECORD_BACKUP_STAMP)
+    backup = target.parent / f"{manifest_name}.pre-record-{stamp}"
+    serial = 1
+    while backup.exists():
+        backup = target.parent / f"{manifest_name}.pre-record-{stamp}-{serial}"
+        serial += 1
+    shutil.copy2(target, backup)
+    return backup
 
 
 def load_manifest(path: Path) -> dict:
@@ -438,6 +466,7 @@ def record(site: Path, repo: Path, names: list[str] | None, sources: dict[str, s
     # Write through a symlink instead of replacing the link with a regular file.
     target = manifest_path.resolve() if manifest_path.is_symlink() else manifest_path
     mode = target.stat().st_mode & 0o777 if target.exists() else 0o644
+    backup = backup_superseded_record(target, manifest_path.name)
     handle = tempfile.NamedTemporaryFile(
         "w", encoding="utf-8", dir=str(target.parent),
         prefix=target.name + ".", suffix=".tmp", delete=False,
@@ -459,6 +488,8 @@ def record(site: Path, repo: Path, names: list[str] | None, sources: dict[str, s
         raise
     lines.append(f"{GREEN:<7} wrote {target} (checked {out['checked']}, "
                  f"source_commit {out['source_commit'] or 'unknown'})")
+    if backup is not None:
+        lines.append(f"{GREEN:<7} preserved the superseded record at {backup.name}")
     return 0, lines
 
 
