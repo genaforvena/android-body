@@ -2052,6 +2052,174 @@ class PerceptionTests(unittest.TestCase):
             lines = path.read_text(encoding="utf-8").strip().split("\n")
             self.assertEqual(len(lines), watch.CLASS_C_DETECTOR_LINES)
 
+    def test_channel_delivery_verdict_pass_when_cursor_advancing(self):
+        state = self.state()
+        now = time.time()
+        state["latest"]["battery"] = {
+            "kind": "battery", "raw": "battery level=0.9 charging=true",
+            "fields": {"level": "0.9", "charging": "true"},
+            "received": now - 1.0, "collected": now - 1.0, "sequence": 100}
+        state["latest"]["light"] = {
+            "kind": "light", "raw": "light lux=17.0 accuracy=3 age_ms=4",
+            "fields": {"lux": "17.0", "accuracy": "3", "age_ms": "4"},
+            "received": now - 1.0, "collected": now - 1.0, "sequence": 100}
+        state["latest"]["acceleration"] = {
+            "kind": "acceleration",
+            "raw": "acceleration unavailable reason=stale",
+            "fields": {"reason": "stale"},
+            "received": now - 1.0, "collected": now - 1.0, "sequence": 100}
+        state["cursor"] = 100
+        state["poll_at"] = now
+        state["error"] = None
+        # First call seeds
+        watch._channel_delivery_verdict(state, now, 30.0)
+        # Second call: cursor advances
+        state["cursor"] = 101
+        verdict = watch._channel_delivery_verdict(state, now, 30.0)
+        self.assertEqual(verdict["status"], "pass")
+        self.assertEqual(verdict["cursor_state"], "advancing")
+        self.assertEqual(verdict["transport"], "reachable")
+        self.assertIsNone(verdict["reason"])
+
+    def test_channel_delivery_detector_fires_on_cursor_freeze(self):
+        state = self.state()
+        now = time.time()
+        state["latest"]["battery"] = {
+            "kind": "battery", "raw": "battery level=0.9 charging=true",
+            "fields": {"level": "0.9", "charging": "true"},
+            "received": now - 1.0, "collected": now - 1.0, "sequence": 100}
+        state["cursor"] = 100
+        state["poll_at"] = now
+        state["error"] = None
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            # Seed
+            watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            # Simulate cursor frozen for > 30s
+            state["_channel_delivery_last_cursor_advance_at"] = (
+                now - watch.CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS - 1)
+            detection = watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            self.assertIsNotNone(detection)
+            self.assertEqual(detection["reason"], "cursor-freeze")
+            self.assertEqual(detection["cursor_state"], "frozen")
+
+    def test_channel_delivery_detector_fires_on_transport_unreachable(self):
+        state = self.state()
+        now = time.time()
+        state["cursor"] = 100
+        state["poll_at"] = now
+        state["error"] = "network-error"
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            # Seed with reachable
+            state["error"] = None
+            watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            # Now unreachable
+            state["error"] = "network-error"
+            detection = watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            self.assertIsNotNone(detection)
+            self.assertEqual(detection["reason"], "transport-unreachable")
+
+    def test_channel_delivery_detector_silent_on_throttling(self):
+        """Cursor advancing + accel stale = throttling, NOT delivery loss."""
+        state = self.state()
+        now = time.time()
+        state["latest"]["battery"] = {
+            "kind": "battery", "raw": "battery level=0.9 charging=true",
+            "fields": {"level": "0.9", "charging": "true"},
+            "received": now - 1.0, "collected": now - 1.0, "sequence": 100}
+        state["latest"]["light"] = {
+            "kind": "light", "raw": "light lux=17.0 accuracy=3 age_ms=4",
+            "fields": {"lux": "17.0", "accuracy": "3", "age_ms": "4"},
+            "received": now - 1.0, "collected": now - 1.0, "sequence": 100}
+        state["latest"]["acceleration"] = {
+            "kind": "acceleration",
+            "raw": "acceleration unavailable reason=stale",
+            "fields": {"reason": "stale"},
+            "received": now - 1.0, "collected": now - 1.0, "sequence": 100}
+        state["cursor"] = 100
+        state["poll_at"] = now
+        state["error"] = None
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            # Seed
+            watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            # Cursor advances (throttling scenario)
+            state["cursor"] = 101
+            detection = watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            self.assertIsNone(detection)
+
+    def test_channel_delivery_detector_no_repeat_for_same_session_and_reason(self):
+        state = self.state()
+        now = time.time()
+        state["cursor"] = 100
+        state["poll_at"] = now
+        state["error"] = None
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            # Seed
+            watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            # Simulate cursor frozen
+            state["_channel_delivery_last_cursor_advance_at"] = (
+                now - watch.CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS - 1)
+            detection1 = watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            self.assertIsNotNone(detection1)
+            # Same session, same reason: no repeat
+            detection2 = watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            self.assertIsNone(detection2)
+            # New session: fires again
+            state["session"] = "s2"
+            detection3 = watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            self.assertIsNotNone(detection3)
+
+    def test_channel_delivery_detector_bounded_output(self):
+        state = self.state()
+        now = time.time()
+        state["cursor"] = 100
+        state["poll_at"] = now
+        state["error"] = None
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            # Seed
+            watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            for i in range(watch.CHANNEL_DELIVERY_DETECTOR_LINES + 5):
+                state["session"] = f"s{i}"
+                state["_channel_delivery_last_cursor_advance_at"] = (
+                    now - watch.CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS - 1)
+                state.pop("_channel_delivery_detected_key", None)
+                watch.detect_channel_delivery_gap(state, log_dir, 30.0)
+            path = log_dir / "channel-delivery-gap-detectors.jsonl"
+            lines = path.read_text(encoding="utf-8").strip().split("\n")
+            self.assertEqual(len(lines), watch.CHANNEL_DELIVERY_DETECTOR_LINES)
+
+    def test_channel_delivery_verdict_per_channel_ages(self):
+        state = self.state()
+        now = time.time()
+        state["latest"]["battery"] = {
+            "kind": "battery", "raw": "battery level=0.9 charging=true",
+            "fields": {"level": "0.9", "charging": "true"},
+            "received": now - 2.0, "collected": now - 2.0, "sequence": 100}
+        state["latest"]["light"] = {
+            "kind": "light", "raw": "light lux=17.0 accuracy=3 age_ms=4",
+            "fields": {"lux": "17.0", "accuracy": "3", "age_ms": "4"},
+            "received": now - 5.0, "collected": now - 5.0, "sequence": 100}
+        state["latest"]["acceleration"] = {
+            "kind": "acceleration",
+            "raw": "acceleration unavailable reason=stale",
+            "fields": {"reason": "stale"},
+            "received": now - 10.0, "collected": now - 10.0, "sequence": 100}
+        state["cursor"] = 100
+        state["poll_at"] = now
+        state["error"] = None
+        watch._channel_delivery_verdict(state, now, 30.0)  # seed
+        state["cursor"] = 101
+        verdict = watch._channel_delivery_verdict(state, now, 30.0)
+        self.assertEqual(verdict["channel_ages_seconds"]["battery"], 2.0)
+        self.assertEqual(verdict["channel_ages_seconds"]["light"], 5.0)
+        self.assertEqual(verdict["channel_ages_seconds"]["acceleration"], 10.0)
+        self.assertEqual(verdict["status"], "pass")
+        self.assertEqual(verdict["cursor_state"], "advancing")
+
     def test_host_stopped_state_true(self):
         mock_result = MagicMock()
         mock_result.returncode = 0

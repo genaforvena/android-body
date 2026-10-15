@@ -810,6 +810,109 @@ def detect_class_c_delivery_gap(state, log_dir):
     return detection
 
 
+CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS = 30.0
+CHANNEL_DELIVERY_DETECTOR_LINES = 128
+
+
+def _channel_delivery_verdict(state, now, stale):
+    """Evaluate channel-level delivery status without emitting.
+
+    Tracks cursor advance and computes per-channel observation ages. Returns
+    a verdict dict consumed by both the detector (for JSONL emission) and
+    space_snapshot (for the per-node channel_delivery field).
+    """
+    cursor = state["cursor"]
+    prev_cursor = state.get("_channel_delivery_prev_cursor")
+    if prev_cursor is not None and cursor != prev_cursor:
+        state["_channel_delivery_last_cursor_advance_at"] = now
+    state["_channel_delivery_prev_cursor"] = cursor
+
+    last_advance = state.get("_channel_delivery_last_cursor_advance_at")
+    if last_advance is None:
+        state["_channel_delivery_last_cursor_advance_at"] = now
+        last_advance = now
+
+    cursor_age = now - last_advance
+    cursor_frozen = cursor_age > CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS
+    transport_status = transport(state, now, stale)
+
+    channel_ages = {}
+    for kind in SENSORS:
+        item = state["latest"].get(kind)
+        if item and item.get("received") is not None:
+            channel_ages[kind] = round(now - item["received"], 1)
+        else:
+            channel_ages[kind] = None
+
+    if transport_status != "reachable":
+        status, reason = "fail", "transport-unreachable"
+    elif cursor_frozen:
+        status, reason = "fail", "cursor-freeze"
+    else:
+        status, reason = "pass", None
+
+    return {
+        "status": status,
+        "reason": reason,
+        "cursor_state": "frozen" if cursor_frozen else "advancing",
+        "cursor_age_seconds": round(cursor_age, 1),
+        "transport": transport_status,
+        "channel_ages_seconds": channel_ages,
+        "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS,
+    }
+
+
+def detect_channel_delivery_gap(state, log_dir, stale):
+    """Detect channel-level delivery loss: transport unreachable or cursor freeze.
+
+    RED only on delivery loss: transport unreachable OR cursor not advancing
+    within CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS. Cursor advancing + channel
+    stale = sensor throttling, NOT delivery loss. Emits bounded JSONL to
+    log_dir/channel-delivery-gap-detectors.jsonl.
+    """
+    if log_dir is None:
+        return None
+
+    now = time.time()
+    verdict = _channel_delivery_verdict(state, now, stale)
+    state["_channel_delivery_verdict"] = verdict
+
+    if verdict["status"] != "fail":
+        return None
+
+    session = state["session"]
+    reason = verdict["reason"]
+    detected_key = (session, reason)
+    if state.get("_channel_delivery_detected_key") == detected_key:
+        return None
+    state["_channel_delivery_detected_key"] = detected_key
+
+    detection = {
+        "kind": "channel-delivery-gap",
+        "detected_at": stamp(now),
+        "cursor": state["cursor"],
+        "cursor_state": verdict["cursor_state"],
+        "cursor_age_seconds": verdict["cursor_age_seconds"],
+        "transport": verdict["transport"],
+        "reason": reason,
+        "channel_ages_seconds": verdict["channel_ages_seconds"],
+        "session": session,
+        "node": state["node"],
+    }
+
+    path = log_dir / "channel-delivery-gap-detectors.jsonl"
+    previous = []
+    if path.exists():
+        text = path.read_text(encoding="utf-8").strip()
+        if text:
+            previous = text.split("\n")
+    previous.append(json.dumps(detection, ensure_ascii=False))
+    bounded = previous[-CHANNEL_DELIVERY_DETECTOR_LINES:]
+    atomic(path, "\n".join(bounded) + "\n")
+
+    return detection
+
+
 
 def freshness(item, now, stale):
     if item is None or item["received"] is None:
@@ -1505,6 +1608,17 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
         item = state["latest"].get(kind)
         lines.append(f"{kind} [{sensor_status(item, now, stale)}]: " +
                      (describe(item, now, stale) if item else "unknown; no observation"))
+    cd = state.get("_channel_delivery_verdict") or {
+        "status": "unknown", "reason": None, "cursor_state": "unknown",
+        "cursor_age_seconds": None, "transport": "unknown",
+        "channel_ages_seconds": {k: None for k in SENSORS},
+        "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS}
+    ages = " ".join(
+        f"{k}={cd['channel_ages_seconds'].get(k)}s"
+        for k in SENSORS)
+    lines.append(f"  channel-delivery [{cd['status']}]: cursor={cd['cursor_state']} "
+                 f"transport={cd['transport']} interval={cd['interval_seconds']}s "
+                 f"{ages}")
     rssi = state["latest"].get("wifi_link_rssi_dbm")
     lines.append("Wi-Fi link RSSI (connected-link API observation; not room proximity):")
     lines.append("  status=" + wifi_rssi_status(rssi, now, stale) +
@@ -1797,7 +1911,12 @@ def space_snapshot(states, now, stale, node_states=None, clocks=None):
                     "not provided by protocol v1"),
                 "acquisition_span_ms": acquisition_span
             },
-            "last_light_transition": state.get("last_light_transition")
+            "last_light_transition": state.get("last_light_transition"),
+            "channel_delivery": state.get("_channel_delivery_verdict") or {
+                "status": "unknown", "reason": None, "cursor_state": "unknown",
+                "cursor_age_seconds": None, "transport": "unknown",
+                "channel_ages_seconds": {k: None for k in SENSORS},
+                "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS}
         })
     return {"schema_version": 1, "generated_at_utc": stamp(now),
             "producer": {"name": "android-body-perception", "entry_point": "watch.py",
@@ -2462,6 +2581,9 @@ def follow(args, directory):
                 detection_c = detect_class_c_delivery_gap(state, directory)
                 if detection_c:
                     print(f"class-c-delivery-gap: {detection_c}", flush=True)
+                detection_ch = detect_channel_delivery_gap(state, directory, args.stale_seconds)
+                if detection_ch:
+                    print(f"channel-delivery-gap: {detection_ch}", flush=True)
                 if changed:
                     print(state["events"][-1], flush=True)
                 # Publish each durable node result before polling the next node.
