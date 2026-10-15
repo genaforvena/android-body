@@ -243,3 +243,20 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Also checked and **not** changed: the Note3 app spool file (3,607,822 B) exceeds its 2 MiB logical bound but sits inside the designed `(maxBytes, 2*maxBytes]` compaction window (`ObservationSpool.commit`), so it is bounded, not leaking.
 - Revert: restore the old §5 loop, remove `tools/queue_capacity.py` and `tools/test_queue_capacity.py`, and revert the one README sentence. `tools/health-check.sh` is not service- or timer-driven; no device, transport, cursor, queue file, actuator, radio, APK or frozen `body/runtime` byte is touched.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake87821-queue-capacity-detector.md`.
+
+## Spool-summary publisher liveness detector (health wake 89733, 2026-10-15)
+
+- Trigger: `body/spool-summary-note3.json` is published by `android-body-spool-read.timer` → `runtime/spool_read.py` every 5 min and consumed by `watch.py` (`SPOOL_SUMMARY_MAX_AGE_SECONDS = 600`), but no health-check section supervised the publisher's output: §4 journals only the three long-running services, and a dead oneshot or a failed adb read leaves the timer "active" while the file goes stale.
+- Fix (commit `7fe4c39`): §7d — the file must exist and be ≤450 s old (1.5 ticks), so a missed tick REDs 150 s before the consumer renders the evidence stale.
+- Verification: live `GREEN spool-summary note3 fresh (84s)`; controlled failure (backdated mtime to 481 s) → `RED spool-summary note3 stale 481s (>450s)`, `HEALTH: RED`, rc=1, no other section affected; recovery via the real 18:09:25Z tick → `GREEN spool-summary note3 fresh (47s)`, rc=0. Full GREEN→RED→GREEN cycle proven.
+- Revert: restore the pre-`7fe4c39` bytes of `tools/health-check.sh` (it is not service- or timer-driven).
+- Evidence: `.mishe-tauftauf/artifacts/health-wake89733-spool-summary-detector-20261015.md`.
+
+## Perception consumer view liveness detector (health wake 90622, 2026-10-15)
+
+- Trigger: `android-body-perception.service` runs `body/runtime/watch.py follow`, the observation consumer; §1 only proves the unit is `active`, and a hung (not crashed) loop stays `active` with `Restart=on-failure` un-triggered, freezing the rendered perception (`body/perception/view.txt`) while health-check stayed GREEN. §2b's stderr tripwire watches the *pain watch* renderers, not this consumer, and the spool leg of the same pipeline already had §7d.
+- Fix: §7e — `body/perception/view.txt` must exist and be ≤120 s old (10x the worst-case follow cycle: `--poll-seconds 2` + one `--timeout 5` poll per node, two nodes ≈ 12 s). `view.txt` is rewritten unconditionally each cycle (watch.py:2471); `events.txt` is written only on change (watch.py:2473), so it is not a liveness signal.
+- Verification: `sh -n` OK; live `GREEN perception consumer view fresh (0s)`, `HEALTH: GREEN`, rc=0. Controlled failure isolated to §7e: `kill -STOP` on the consumer MainPID plus a view.txt mtime backdated to 200 s → `GREEN service android-body-perception active` / `RED perception consumer view stale 201s (>120s; watch.py follow loop stopped)` / `HEALTH: RED`, rc=1; `kill -CONT` → 8 s later view.txt had advanced, `GREEN perception consumer view fresh (2s)`, `HEALTH: GREEN`, rc=0. `python3 -m unittest discover -s tools` → 222 OK. Independent review (`reviewer`): correct, 0 findings.
+- Known shared limit, not introduced here: a future mtime yields a negative age and a false GREEN in §7a/§7d/§7e alike.
+- Revert: `git checkout -- tools/health-check.sh`; it is not service- or timer-driven, and the exercise touched only a regenerated file's mtime plus a SIGSTOP/SIGCONT pair.
+- Evidence: `.mishe-tauftauf/artifacts/health-wake90622-perception-view-detector-20261015.md`.

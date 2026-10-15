@@ -4,9 +4,9 @@
 # and the Redmi tailnet transport.
 # Section 6 classifies the device session (tools/device_state.py); a node that
 # is not attached reads UNKNOWN and does not fail the host-infrastructure checks.
-# Section 7 checks the published node-state and spool-summary files the
-# perception consumer reads, and that the bytes which publish them are the
-# committed ones.
+# Section 7 checks the published node-state, spool-summary and perception-view
+# files the perception consumer reads and writes, and that the bytes which
+# publish them are the committed ones.
 # Section 8 checks this role's own plate (bin/wall-check): a settle whose staged
 # notes still hold an earlier wake's text writes that text over walls/health.md
 # with no error, so the plate can name a wake older than the last yield while
@@ -370,6 +370,27 @@ if [ -f "$SPOOL_SUMMARY" ]; then
   fi
 else
   fail "spool-summary note3 MISSING"
+fi
+
+# 7e. Perception consumer loop liveness. android-body-perception.service runs
+# body/runtime/watch.py `follow`, whose loop rewrites body/perception/view.txt
+# unconditionally every cycle (follow(): atomic(view.txt, ...) per loop);
+# events.txt is written only when its content changes, so view.txt is the
+# liveness signal. Section 1 only proves the unit is active, and a hung loop
+# (no crash) leaves it active with Restart=on-failure un-triggered, so the
+# rendered perception would freeze while every check above stayed GREEN. The
+# cycle is bounded by --poll-seconds 2 plus one poll per node (--timeout 5,
+# two nodes) ~= 12s worst case; 120s is 10x that, matching section 7a's bound.
+VIEW="$SITE/body/perception/view.txt"
+if [ -f "$VIEW" ]; then
+  VIEW_AGE=$(( $(date +%s) - $(stat -c%Y "$VIEW") ))
+  if [ "$VIEW_AGE" -le 120 ]; then
+    pass "perception consumer view fresh (${VIEW_AGE}s)"
+  else
+    fail "perception consumer view stale ${VIEW_AGE}s (>120s; watch.py follow loop stopped)"
+  fi
+else
+  fail "perception consumer view.txt MISSING"
 fi
 
 # 8. Own wall plate (bin/wall-check health). A settle whose staged notes still
