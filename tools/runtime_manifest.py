@@ -385,7 +385,22 @@ def record(site: Path, repo: Path, names: list[str] | None, sources: dict[str, s
             if not source_path.is_file():
                 return 1, lines + [f"{RED:<7} {name}: declared source {source} is missing"]
             source_hash = sha256_file(source_path)
-            if source_hash != actual:
+            committed = committed_source_hash(repo, source)
+            if committed is not None and committed == actual:
+                # The deployed bytes are the committed source. A differing
+                # working-tree copy is a peer's undeployed edit, not an
+                # undeclared divergence -- the same rule check() applies. Refusing
+                # here would block recording a deploy of committed bytes for as
+                # long as any peer has the shared checkout dirty.
+                divergence = None
+                if source_hash == committed:
+                    lines.append(f"{GREEN:<7} {name}: deployed == source {source} "
+                                 f"(sha256 {actual[:16]})")
+                else:
+                    lines.append(f"{GREEN:<7} {name}: deployed == committed source {source} "
+                                 f"(sha256 {actual[:16]}); working tree has undeployed edits "
+                                 f"(HEAD {committed[:16]}, worktree {source_hash[:16]})")
+            elif source_hash != actual:
                 if not divergence:
                     return 1, lines + [
                         f"{RED:<7} {name}: deployed differs from source {source} "

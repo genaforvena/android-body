@@ -146,6 +146,26 @@ class ManifestCase(unittest.TestCase):
         self.assertEqual(0, code, lines)
         self.assertTrue(any("undeployed edits" in line for line in lines), lines)
 
+    def test_record_succeeds_when_worktree_source_has_undeployed_edits(self) -> None:
+        # A peer's undeployed edit must not block recording a deploy of the
+        # committed bytes: record() compares against the committed blob at HEAD,
+        # as check() does. Otherwise every activation of committed bytes waits
+        # for a clean shared checkout.
+        self.source(SOURCE_WATCH, "print('v1')\n")
+        self.deploy("watch.py", "print('v1')\n")
+        self.commit()
+        self.source(SOURCE_WATCH, "print('v2-uncommitted')\n")
+        self.record_doc({})
+        code, lines = runtime_manifest.record(
+            self.site, self.repo, None, {"watch.py": SOURCE_WATCH}, {}, None)
+        self.assertEqual(0, code, lines)
+        self.assertTrue(any("undeployed edits" in line for line in lines), lines)
+        doc = json.loads(self.manifest.read_text(encoding="utf-8"))
+        self.assertIsNone(doc["files"]["watch.py"]["divergence"])
+        self.assertEqual(runtime_manifest.sha256_file(self.runtime / "watch.py"),
+                         doc["files"]["watch.py"]["sha256"])
+        self.assertEqual(0, self.run_check()[0])
+
     def test_green_when_deployed_bytes_are_an_uncommitted_edit(self) -> None:
         # The deploy-then-commit window: the live bytes match the working tree but
         # not yet HEAD. That stays GREEN, as it did before, rather than becoming
