@@ -56,6 +56,25 @@ class DocumentTests(unittest.TestCase):
         self.assertIsNone(doc["jump"])
         self.assertIsNone(doc["reason"])
 
+    def test_nominal_is_inside_the_published_interval(self):
+        # A consumer checks min <= nominal <= max to accept the reading. The median
+        # of the one-sided uppers used to be published here, which is >= the upper
+        # bound by construction and so could never pass that check.
+        for uppers in ([25.9, 25.2, 25.7], [25.5], [30.0, 40.0, 50.0, 60.0]):
+            doc = clock_offset.offset_document("note3", pairs(uppers), now=7)
+            clock_offset.assert_bounded(doc)
+            self.assertLessEqual(doc["offset_min_s"], doc["offset_nominal_s"], uppers)
+            self.assertLessEqual(doc["offset_nominal_s"], doc["offset_max_s"], uppers)
+            self.assertEqual(doc["offset_nominal_s"],
+                             round(doc["offset_max_s"] - clock_offset.QUANTIZATION_S / 2, 3))
+
+    def test_a_nominal_outside_the_interval_is_refused(self):
+        doc = clock_offset.offset_document("note3", pairs([25.5]), now=7)
+        with self.assertRaises(ValueError):
+            clock_offset.assert_bounded(dict(doc, offset_nominal_s=doc["offset_max_s"] + 0.5))
+        with self.assertRaises(ValueError):
+            clock_offset.assert_bounded(dict(doc, offset_nominal_s=doc["offset_min_s"] - 0.5))
+
     def test_single_sample_still_bounds_and_reports_rtt(self):
         doc = clock_offset.offset_document("note3", pairs([25.5], rtt=0.08), now=7)
         self.assertEqual(doc["samples"], 1)

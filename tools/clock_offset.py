@@ -39,14 +39,19 @@ The document (exactly these keys, never the endpoint or the node secret):
      "samples": 7,
      "quantization_s": 1.0,
      "rtt_max_s": 0.059,
-     "offset_min_s": 24.175, "offset_max_s": 25.175, "offset_nominal_s": 25.665,
+     "offset_min_s": 24.175, "offset_max_s": 25.175, "offset_nominal_s": 24.675,
      "host_ntp_synchronized": false,
      "jump": null,
      "reason": null}
 
 - ``offset_*`` are ``host wall - phone wall`` in seconds: a positive offset means
   the phone clock is *behind* the host. All three are ``null`` when ``status`` is
-  ``unavailable``; a failed read never fabricates a number.
+  ``unavailable``; a failed read never fabricates a number. ``offset_nominal_s`` is
+  the midpoint of ``[offset_min_s, offset_max_s]`` -- the min-max-error point
+  estimate inside the interval the document itself publishes, so a consumer may
+  check ``min <= nominal <= max``. It used to be the *median* of the one-sided
+  sample upper bounds, which is >= ``offset_max_s`` by construction and therefore
+  could never satisfy that check; core senses gates clock agreement on it.
 - ``jump`` is ``null`` or the bounded record of a wall-clock step against the
   previously published reading; it is the detector for the hazard a stable-offset
   assumption hides (a phone NTP correction invalidates the retained span bound).
@@ -171,9 +176,11 @@ def offset_document(label, pairs, now, previous=None, ntp=None, validity=3600.0)
         }
     uppers = sorted(pair["host_mid"] - pair["phone_epoch"] for pair in pairs)
     tight_upper = uppers[0]
-    middle = len(uppers) // 2
-    nominal = (uppers[middle] if len(uppers) % 2
-               else (uppers[middle - 1] + uppers[middle]) / 2)
+    # The tight interval is (tight_upper - QUANTIZATION_S, tight_upper]; its midpoint
+    # is the min-max-error point estimate and lies inside it by construction. The
+    # median of the one-sided uppers used to be published here, which is >=
+    # tight_upper and so outside the interval this same document publishes.
+    nominal = tight_upper - QUANTIZATION_S / 2
     return {
         "node": label, "source": SOURCE, "method": METHOD,
         "status": "ok", "observed_at_epoch_s": observed,
@@ -230,6 +237,8 @@ def assert_bounded(document):
             raise ValueError("unavailable clock-domain document carries an offset")
     elif any(not isinstance(document[key], (int, float)) for key in numbers):
         raise ValueError("ok clock-domain document is missing an offset")
+    elif not document["offset_min_s"] <= document["offset_nominal_s"] <= document["offset_max_s"]:
+        raise ValueError("clock-domain nominal offset is outside the published interval")
     if document["reason"] is not None and (
         not isinstance(document["reason"], str)
         or len(document["reason"]) > MAX_REASON_CHARS
