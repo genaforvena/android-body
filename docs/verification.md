@@ -103,6 +103,7 @@ Deployed software current state (deployment chains and per-run checks in Git his
 - Bounded host snapshot lifecycle (per-node publication repair, byte-switch under lock, revert/reapply) was exercised with independent witness acceptance on 2026-10-07; the publication repair has been live since.
 - Isolated `:ble-probe` diagnostic (2026-10-07): JVM report formatting and Android compile/package/lint/signature verified; no APK installation or device BLE result.
 - Host reboot 2026-10-14 (~15h downtime): all 16 `android-body*` units auto-restarted with no failures; the durable spool preserved every phone-generated record and the backlog drained completely on reconnect — zero data loss; installed APK re-confirmed `a5cc750e`.
+- Host reboot 2026-10-15T10:55Z: every `android-body*` unit auto-restarted; `tools/runtime_manifest.py check` GREEN (4 files, 3 unit starts). The first scheduled spool-read publication (10:55:53Z) was UNKNOWN (`spool-dir-listing-failed`: adb server not yet accepting) because `After=/Wants=android-body-usb.service` orders unit start, not adb readiness (the USB bridge logged transport present at 10:56:03Z); the 11:00:47Z tick published normally. A post-boot spool UNKNOWN is therefore expected until the transport is ready, not a spool fault.
 
 ## Bounded probe runner
 
