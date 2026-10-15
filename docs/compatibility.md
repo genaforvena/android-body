@@ -103,7 +103,7 @@ Run the same signed APK against the same controlled bridge, and record APK hash,
 
 | Device | Required baseline | Status |
 | --- | --- | --- |
-| Old Samsung Note 3 | SM-N900, Android5/API21, firmware `LRX21V.N900XXSEBRH3`; charging, private USB-loopback HTTP; then-final 0.2.0 APK (`7eb54e9b`); current install the exec-probe build `c3dbdc3a` since 2026-10-15T12:14Z (supersedes `a5cc750e`) | BOUNDED SMOKE PASS: installation, native ON/OFF, actual sensor delivery, collect-only/backlog, process-loss restoration, 15s screen-off; APK update over ON installation verified 2026-10-12 (ON session restored, cursor advancing — see verification.md eval-route record; OFF-install update NOT RUN); full checklist incomplete |
+| Old Samsung Note 3 | SM-N900, Android5/API21, firmware `LRX21V.N900XXSEBRH3`; charging, private USB-loopback HTTP; then-final 0.2.0 APK (`7eb54e9b`); current install `bb66a3f4` (CI payload of `9360b92`) since 2026-10-15 ~20:55Z (supersedes the exec-probe build `c3dbdc3a`) | BOUNDED SMOKE PASS on earlier lineage builds: installation, native ON/OFF, actual sensor delivery, collect-only/backlog, process-loss restoration, 15s screen-off; APK update over ON installation verified 2026-10-12 (ON session restored, cursor advancing — see verification.md eval-route record; OFF-install update NOT RUN). The current build `bb66a3f4` is verified only as an install (pulled bytes match the candidate, process=foreground, marker confirmed, spool live, 2026-10-15T20:55Z); the smoke list was not re-run on it. Full checklist incomplete |
 | Xiaomi | Exact model; MIUI/HyperOS and Android version | NOT RUN |
 | Current Android device | API 34+; preferably API 36; notification/type checks | NOT RUN |
 
