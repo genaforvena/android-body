@@ -58,3 +58,10 @@ tasks.register('testEvalOutcome', JavaExec) {
                       "$buildDir/intermediates/javac/debug/compileDebugJavaWithJavac/classes")
     mainClass = 'org.androidbody.EvalOutcomeTest'
 }
+
+tasks.register('testExecProbe', JavaExec) {
+    dependsOn 'compileDebugUnitTestJavaWithJavac'
+    classpath = files("$buildDir/intermediates/javac/debugUnitTest/compileDebugUnitTestJavaWithJavac/classes",
+                      "$buildDir/intermediates/javac/debug/compileDebugJavaWithJavac/classes")
+    mainClass = 'org.androidbody.ExecProbeTest'
+}

@@ -242,6 +242,7 @@ public final class BodyService extends Service {
             } catch (IOException | SecurityException e) {
                 hello += Protocol.event("probe identity unavailable reason=" + e.getClass().getSimpleName() + " session=" + sessionId);
             }
+            hello += Protocol.event(ExecProbe.observation(android.os.Process.myUid(), getFilesDir(), sessionId));
             long pending = session.preferences.getLong(session.cursorKey + "_pending", 0);
             if (pending > 0) hello += Protocol.event("action " + pending + " unknown reason=interrupted verification=unverified");
             session.spool.enqueue(hello);
