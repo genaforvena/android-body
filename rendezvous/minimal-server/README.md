@@ -108,7 +108,12 @@ Errors are plain text: `error reason\n`. Relevant status codes:
 
 When a queue fills, reads still work and appends fail explicitly. Increase the cap
 with enough disk available or stop and deliberately rotate to a **new node ID and
-endpoint**. Never silently delete or replace an active log to reclaim space.
+endpoint**. A filled queue is also a start-up hazard, not only a write failure: a
+restart refuses to open an over-cap queue, so the rendezvous does not come back up
+until the queue is rotated. `tools/health-check.sh` §5 reports each queue's fill
+fraction and turns RED at 90% of the configured cap, so the fill is dated rather
+than discovered at the outage. Never silently delete or replace an active log to
+reclaim space.
 A cursor ahead of the current head detects some resets, not every rollback: a
 replacement log that has already grown past a saved cursor cannot be distinguished
 without an epoch protocol, which this MVP deliberately does not have.

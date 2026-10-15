@@ -216,16 +216,30 @@ else
   fail "$WARNS journal warning(s) (1h)"
 fi
 
-# 5. Queue sizes
-for q in note3.observations.log note3.actions.log redmi10.observations.log redmi10.actions.log; do
-  f="$SITE/body/queues/$q"
-  if [ -f "$f" ]; then
-    sz=$(stat -c%s "$f")
-    pass "queue $q ${sz}B"
-  else
-    fail "queue $q MISSING"
-  fi
-done
+# 5. Queue sizes against the live rendezvous cap. The rendezvous appends forever
+# (README "Bounds and errors": no automatic log retention/deletion), so a queue
+# approaching --max-queue-bytes reads like an empty one until it fills -- then
+# appends fail 507 queue_full and the next start cannot open the oversized file.
+# Report the fill fraction and RED at the tool's warning threshold so the
+# documented remedy (raise the cap, or rotate to a new node ID) is dated, not
+# discovered at the outage. The cap comes from the live unit's ExecStart; an
+# unreadable cap is UNKNOWN, never a DEFAULT_QUEUE_BYTES guess (8x too small
+# here, which would RED a healthy queue).
+if command -v python3 >/dev/null 2>&1 && [ -x "$PWD/tools/queue_capacity.py" ]; then
+  QC_OUT=$(env XDG_RUNTIME_DIR=/run/user/$(id -u) \
+    systemctl --user show android-body-rendezvous.service -p ExecStart 2>/dev/null \
+    | python3 "$PWD/tools/queue_capacity.py" "$SITE/body/queues" \
+      note3.observations.log note3.actions.log redmi10.observations.log redmi10.actions.log 2>&1)
+  QC_RC=$?
+  printf '%s\n' "$QC_OUT"
+  case "$QC_RC" in
+    0) ;;
+    1) FAIL=1 ;;
+    *) ;;
+  esac
+else
+  echo "UNKNOWN queue capacity (python3 or tools/queue_capacity.py unavailable)"
+fi
 
 # 6. Device session state (read-only). Classifies ON-sending / ON-collect-only /
 # OFF / app-absent so a silent producer is not misread as "OFF" or "app dead".
