@@ -1159,6 +1159,96 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(node["ble_scan"]["status"], "unknown/no-observation")
         self.assertIsNone(node["ble_scan"]["subtype"])
 
+    def test_ble_scan_state_surfaces_quantitative_loop_state_everywhere(self):
+        # Discover 83319: the per-session scan status must be quantitative and
+        # co-retained with the five per-cycle kinds, not a coarse flag.
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_scan_state windows=3 phase=window last_error=none "
+                          "sightings=12 window_ms=60000 gap_ms=60000"], received=1000)
+        view = watch.render(state, 1000, 30)
+        self.assertIn("scan_state windows=3 phase=window last_error=none sightings=12 "
+                      "(window_ms=60000 gap_ms=60000)", view)
+        self.assertTrue(watch.update_events(state, 1000, 30))
+        events = watch.render_events(state, 1000, 30)
+        self.assertIn("scan_state=fresh-clock-conditional windows=3 phase=window "
+                      "last_error=none sightings=12", events)
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
+        self.assertEqual(node["ble_scan_state"]["windows"], 3)
+        self.assertEqual(node["ble_scan_state"]["phase"], "window")
+        self.assertEqual(node["ble_scan_state"]["last_error"], "none")
+        self.assertEqual(node["ble_scan_state"]["sightings"], 12)
+        self.assertEqual(node["ble_scan_state"]["window_ms"], 60000)
+        self.assertEqual(node["ble_scan_state"]["gap_ms"], 60000)
+
+    def test_ble_scan_state_persists_spaced_error_reason_across_cycles(self):
+        # last_error may contain a space (scan_failed code=2); it must survive
+        # parsing intact, not truncate at the whitespace split.
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_scan_state windows=27 phase=window "
+                          "last_error=scan_failed code=2 sightings=5 "
+                          "window_ms=60000 gap_ms=60000"], received=1000)
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
+        self.assertEqual(node["ble_scan_state"]["last_error"], "scan_failed code=2")
+        self.assertEqual(node["ble_scan_state"]["windows"], 27)
+        view = watch.render(state, 1000, 30)
+        self.assertIn("last_error=scan_failed code=2 sightings=5", view)
+
+    def test_ble_scan_state_absent_is_unknown_not_a_calm_zero(self):
+        # The deployed publisher predates the field; absence must not read as
+        # "loop healthy" or "loop dead" — it is simply not observed.
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1"], received=1000)
+        view = watch.render(state, 1000, 30)
+        self.assertTrue(watch.update_events(state, 1000, 30))
+        events = watch.render_events(state, 1000, 30)
+        self.assertIn("scan_state=unknown/no-observation", events)
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
+        self.assertEqual(node["ble_scan_state"]["status"], "unknown/no-observation")
+        self.assertIsNone(node["ble_scan_state"]["windows"])
+        self.assertIsNone(node["ble_scan_state"]["phase"])
+        self.assertIsNone(node["ble_scan_state"]["last_error"])
+        self.assertIsNone(node["ble_scan_state"]["sightings"])
+
+    def test_ble_scan_state_stale_drops_fields_and_emits_no_event(self):
+        # A stale cycle row is historical evidence: fields drop to None. The
+        # fresh->stale flip itself changes the view, so it emits once and is
+        # then stable.
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_scan_state windows=3 phase=gap last_error=none "
+                          "sightings=1 window_ms=60000 gap_ms=60000"], received=1000)
+        self.assertTrue(watch.update_events(state, 1000, 30))
+        self.assertFalse(watch.update_events(state, 1000, 30))
+        node = watch.space_snapshot([state], 1031, 30)["nodes"][0]
+        self.assertEqual(node["ble_scan_state"]["status"], "stale")
+        self.assertIsNone(node["ble_scan_state"]["windows"])
+        self.assertIsNone(node["ble_scan_state"]["sightings"])
+        view = watch.render(state, 1031, 30)
+        self.assertIn("scan_state stale", view)
+        self.assertTrue(watch.update_events(state, 1031, 30))
+        events = watch.render_events(state, 1031, 30)
+        self.assertIn("scan_state=stale", events)
+        self.assertFalse(watch.update_events(state, 1031, 30))
+
+    def test_ble_scan_state_change_is_an_evidence_event(self):
+        # windows/phase advancing is new evidence; identical rows are churn.
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_scan_state windows=3 phase=gap last_error=none "
+                          "sightings=1 window_ms=60000 gap_ms=60000"], received=1000)
+        self.assertTrue(watch.update_events(state, 1000, 30))
+        self.page(state, ["1001 ble_scan_state windows=3 phase=gap last_error=none "
+                          "sightings=1 window_ms=60000 gap_ms=60000"], received=1001)
+        self.assertFalse(watch.update_events(state, 1001, 30))
+        self.page(state, ["1002 ble_scan_state windows=4 phase=window last_error=none "
+                          "sightings=1 window_ms=60000 gap_ms=60000"], received=1002)
+        self.assertTrue(watch.update_events(state, 1002, 30))
+        events = watch.render_events(state, 1002, 30)
+        self.assertIn("scan_state windows=4 phase=window last_error=none sightings=1",
+                      events)
+
     def test_stale_ble_sighting_drops_measured_values_and_new_sighting_is_evidence_change(self):
         state = self.state()
         self.page(state, ["1000 hello node=note3 protocol=1 session=s1",

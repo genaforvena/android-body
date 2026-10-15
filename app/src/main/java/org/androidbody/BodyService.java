@@ -284,6 +284,12 @@ public final class BodyService extends Service {
             while (session.active) {
                 if (!notificationsVisible(this)) { fail(session, "notifications disabled"); return; }
                 session.spool.enqueue(session.sensors.snapshot());
+                // Per-cycle scan-loop state on the sampler lane: co-retained
+                // with the five per-cycle kinds, unlike the sparse lifecycle
+                // events that bounded retention evicts within hours.
+                if (session.bleScan != null) {
+                    session.spool.enqueue(Protocol.event(session.bleScan.state()));
+                }
                 session.queued = session.spool.lineCount();
                 requestNotice(session);
                 Thread.sleep(5000);

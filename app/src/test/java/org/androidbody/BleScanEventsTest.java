@@ -18,6 +18,16 @@ public final class BleScanEventsTest {
         equal("ble_scan stop reason=session_end", BleScanEvents.stopEvent());
         equal("ble_scan error reason=SecurityException", BleScanEvents.errorEvent(new SecurityException()));
         equal("ble_scan unavailable reason=adapter_off", BleScanEvents.unavailableEvent("adapter_off"));
+        equal("ble_scan_state windows=3 phase=window last_error=none sightings=12 window_ms=60000 gap_ms=60000",
+                BleScanEvents.stateEvent(3, "window", "none", 12));
+        equal("ble_scan_state windows=27 phase=window last_error=scan_failed code=2 sightings=5 window_ms=60000 gap_ms=60000",
+                BleScanEvents.stateEvent(27, "window", "scan_failed code=2", 5));
+        equal("ble_scan_state windows=0 phase=none last_error=adapter_off sightings=0 window_ms=60000 gap_ms=60000",
+                BleScanEvents.stateEvent(0, "none", "adapter_off", 0));
+        count++;
+        if (!"none".equals(BleScanEvents.LAST_ERROR_NONE)) throw new AssertionError("LAST_ERROR_NONE changed");
+        count++;
+        if (!"none".equals(BleScanEvents.PHASE_NONE)) throw new AssertionError("PHASE_NONE changed");
         count++;
         if (BleScanEvents.SCAN_WINDOW_MS > 60000L) throw new AssertionError("scan window exceeds programme bound: " + BleScanEvents.SCAN_WINDOW_MS);
         count++;

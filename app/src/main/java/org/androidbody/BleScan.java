@@ -14,6 +14,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Bounded BLE scan-sighting recorder for the allowlisted experiment beacon.
@@ -46,7 +47,7 @@ final class BleScan {
             record(result.getDevice().getName(), result.getRssi());
         }
         @Override public void onScanFailed(int errorCode) {
-            error("scan_failed code=" + errorCode);
+            fail("scan_failed code=" + errorCode);
             stopped = true;
         }
     }
@@ -57,6 +58,14 @@ final class BleScan {
     private Sink sink;
     private Callback callback;
     private final CountDownLatch finished = new CountDownLatch(1);
+    // Per-cycle scan-state row (BleScanEvents.stateEvent), read by the sampler
+    // lane every 5 s: windows completed since scan start, current phase, the
+    // last error reason (persisted after the failure instant) and the session
+    // sighting count. Volatile for cross-thread reads from the sampler.
+    private final AtomicInteger windows = new AtomicInteger();
+    private final AtomicInteger sightings = new AtomicInteger();
+    private volatile String phase = BleScanEvents.PHASE_NONE;
+    private volatile String lastError = BleScanEvents.LAST_ERROR_NONE;
 
     BleScan() {
         HandlerThread thread = new HandlerThread("body-ble-scan");
@@ -80,12 +89,14 @@ final class BleScan {
         if (!running.compareAndSet(false, true)) return;
         try {
             if (Build.VERSION.SDK_INT < 21) {
-                enqueue(BleScanEvents.unavailableEvent("api<21"));
+                unavailable("api<21");
                 return;
             }
             enqueue(BleScanEvents.startEvent());
             while (!stopped) {
+                phase = BleScanEvents.PHASE_WINDOW;
                 if (!window()) break;
+                phase = BleScanEvents.PHASE_GAP;
                 sleep(BleScanEvents.GAP_MS);
             }
         } catch (InterruptedException e) {
@@ -105,6 +116,7 @@ final class BleScan {
         if (!startScan()) return false;
         sleep(BleScanEvents.SCAN_WINDOW_MS);
         stopScan();
+        windows.incrementAndGet();
         return true;
     }
 
@@ -114,19 +126,19 @@ final class BleScan {
         BluetoothAdapter adapter;
         try { adapter = BluetoothAdapter.getDefaultAdapter(); }
         catch (RuntimeException e) { enqueue(BleScanEvents.errorEvent(e)); return false; }
-        if (adapter == null) { enqueue(BleScanEvents.unavailableEvent("adapter_unavailable")); return false; }
-        if (!adapter.isEnabled()) { enqueue(BleScanEvents.unavailableEvent("adapter_off")); return false; }
+        if (adapter == null) { unavailable("adapter_unavailable"); return false; }
+        if (!adapter.isEnabled()) { unavailable("adapter_off"); return false; }
         callback = new Callback();
         try {
             callback.scanner = adapter.getBluetoothLeScanner();
-            if (callback.scanner == null) { enqueue(BleScanEvents.unavailableEvent("scanner_null")); return false; }
+            if (callback.scanner == null) { unavailable("scanner_null"); return false; }
             List<ScanFilter> filters = new ArrayList<ScanFilter>();
             filters.add(new ScanFilter.Builder().setDeviceName(BleScanEvents.BEACON_NAME).build());
             callback.scanner.startScan(filters, new ScanSettings.Builder()
                     .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER).build(), callback);
             return true;
         } catch (RuntimeException e) {
-            enqueue(BleScanEvents.errorEvent(e));
+            fail(e.getClass().getSimpleName());
             return false;
         }
     }
@@ -143,13 +155,26 @@ final class BleScan {
     private void record(String name, int rssi) {
         String event = BleScanEvents.sighting(name, rssi);
         if (event == null) return;
+        sightings.incrementAndGet();
         try { enqueue(event); }
         catch (IOException | IllegalStateException e) { /* spool unusable; loop exits via sampler failure */ }
     }
 
     private void error(String reason) {
+        lastError = reason;
         try { enqueue("ble_scan error reason=" + reason); }
         catch (IOException | IllegalStateException e) { /* spool unusable; loop exits via sampler failure */ }
+    }
+
+    private void unavailable(String reason) {
+        lastError = reason;
+        try { enqueue(BleScanEvents.unavailableEvent(reason)); }
+        catch (IOException | IllegalStateException e) { /* spool unusable; loop exits via sampler failure */ }
+    }
+
+    private void fail(String reason) {
+        lastError = reason;
+        error(reason);
     }
 
     private void enqueue(String event) throws IOException {
@@ -164,6 +189,16 @@ final class BleScan {
             if (remaining <= 0) return;
             Thread.sleep(Math.min(remaining, 1000L));
         }
+    }
+
+    /**
+     * Per-cycle state row for the sampler lane. phase is "none" when no loop
+     * is running (never started or exited); the remaining fields persist after
+     * exit so a terminal failure stays visible in later cycles.
+     */
+    synchronized String state() {
+        String currentPhase = running.get() ? phase : BleScanEvents.PHASE_NONE;
+        return BleScanEvents.stateEvent(windows.get(), currentPhase, lastError, sightings.get());
     }
 
 }

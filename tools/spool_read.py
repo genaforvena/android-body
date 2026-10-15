@@ -109,11 +109,12 @@ OVERFLOW_PROBE_MARKER = "spool-overflow-probe rc="
 
 #: Allowlisted protocol record kinds (verified from spool snapshot
 #: 2026-10-14T13:10Z and the protocol README; ``ble_sighting`` is emitted
-#: by BleScanEvents.sighting while a session is ON).
+#: by BleScanEvents.sighting while a session is ON, ``ble_scan_state`` is the
+#: per-cycle sampler-lane scan-loop state row, BleScanEvents.stateEvent).
 ALLOWED_KINDS = frozenset({
     "battery", "light", "acceleration", "ble_status", "wifi_link_rssi",
     "spool", "cap", "hello", "android", "owner_checkboxes", "probe",
-    "ble_scan", "ble_sighting", "action",
+    "ble_scan", "ble_scan_state", "ble_sighting", "action",
 })
 
 #: Tokens that begin a spool row: the kind written immediately after the
@@ -221,10 +222,16 @@ def _count_kind(argv, serial, spool_path, kind, timeout):
     count wifi and bluetooth rows. The epoch anchor also tolerates the
     app's varying kind/field separator (space or glued underscore) and the
     binary row prefix, which defeats a line-start ``^`` anchor.
+
+    ``ble_scan`` is a prefix of ``ble_scan_state``, so the lifecycle kind is
+    anchored with a trailing space: every ble_scan row carries fields after
+    the kind (start/stop/error/unavailable plus a reason), while
+    ble_scan_state rows then count only themselves.
     """
     try:
         output = _run(argv, serial,
-                      f"run-as org.androidbody grep -a -c '{ROW_EPOCH_BRE} {kind}' {spool_path}",
+                      f"run-as org.androidbody grep -a -c '{ROW_EPOCH_BRE} {kind}"
+                      f"{' ' if kind == 'ble_scan' else ''}' {spool_path}",
                       timeout)
         return _parse_int(output, f"grep-count-{kind}")
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:

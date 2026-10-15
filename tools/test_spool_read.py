@@ -463,6 +463,22 @@ class CountKindTests(unittest.TestCase):
         self.assertIn(f"'{spool_read.ROW_EPOCH_BRE} light'", command)
         self.assertIn("grep -a -c", command)
 
+    def test_ble_scan_pattern_excludes_scan_state_rows(self):
+        # ble_scan is a prefix of ble_scan_state; without the trailing-space
+        # anchor the lifecycle count would include the per-cycle state rows.
+        with mock.patch.object(spool_read, "_run", return_value="7") as run:
+            spool_read._count_kind(["adb"], "S", "PATH", "ble_scan", 5.0)
+        command = run.call_args[0][2]
+        self.assertIn(f"'{spool_read.ROW_EPOCH_BRE} ble_scan '", command)
+        self.assertNotIn(f"'{spool_read.ROW_EPOCH_BRE} ble_scan'", command)
+
+    def test_scan_state_pattern_counts_only_itself(self):
+        with mock.patch.object(spool_read, "_run", return_value="7") as run:
+            spool_read._count_kind(["adb"], "S", "PATH", "ble_scan_state", 5.0)
+        command = run.call_args[0][2]
+        self.assertIn(f"'{spool_read.ROW_EPOCH_BRE} ble_scan_state'", command)
+        self.assertNotIn("ble_scan '", command)
+
     def test_unparseable_output_raises(self):
         with mock.patch.object(spool_read, "_run", return_value="not-a-count"):
             with self.assertRaises(RuntimeError):
@@ -475,7 +491,7 @@ class AllowedKindsTests(unittest.TestCase):
     EXPECTED = frozenset({
         "battery", "light", "acceleration", "ble_status", "wifi_link_rssi",
         "spool", "cap", "hello", "android", "owner_checkboxes", "probe",
-        "ble_scan", "ble_sighting", "action",
+        "ble_scan", "ble_scan_state", "ble_sighting", "action",
     })
 
     def test_exact_set(self):
@@ -490,7 +506,7 @@ class AllowedKindsTests(unittest.TestCase):
         self.assertEqual(missing, frozenset())
 
     def test_kind_count(self):
-        self.assertEqual(len(spool_read.ALLOWED_KINDS), 14)
+        self.assertEqual(len(spool_read.ALLOWED_KINDS), 15)
 
 
 class RetentionWindowTests(unittest.TestCase):
@@ -568,8 +584,8 @@ class RowKindTokensTests(unittest.TestCase):
     #: the Wi-Fi row token, and the spool overflow notice.
     APP_ROW_TOKENS = frozenset({
         "hello", "android", "cap", "owner", "sensor", "actuator",
-        "owner_checkboxes", "probe", "action", "ble_scan", "ble_sighting",
-        "ble_status", "battery", "light", "acceleration",
+        "owner_checkboxes", "probe", "action", "ble_scan", "ble_scan_state",
+        "ble_sighting", "ble_status", "battery", "light", "acceleration",
         "wifi_link_rssi_dbm", "spool",
     })
 

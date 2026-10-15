@@ -1184,6 +1184,16 @@ def ble_sighting_snapshot(item, now, stale):
 
 BLE_SCAN_SUBTYPES = {"start", "stop", "error", "unavailable"}
 
+#: BRE for the app's per-cycle scan-state spool row: ``<epoch>
+#: ble_scan_state windows=<n> phase=<none|window|gap> last_error=<reason>
+#: sightings=<n> window_ms=<ms> gap_ms=<ms>`` (BleScanEvents.stateEvent).
+#: Quantitative loop state, co-retained with the five per-cycle kinds.
+#: ``last_error`` may contain a space (``scan_failed code=2``), so it is
+#: matched lazily up to the next field.
+SCAN_STATE_BRE = re.compile(
+    r"[0-9]+ ble_scan_state windows=(\d+) phase=(none|window|gap) "
+    r"last_error=(.+?) sightings=(\d+) window_ms=(\d+) gap_ms=(\d+)")
+
 
 def _ble_scan_consecutive_error_count(state):
     """Durable session count of back-to-back ble_scan error events.
@@ -1213,6 +1223,31 @@ def ble_scan_snapshot(item, now, stale, consecutive_errors=None):
         "gap_ms": number(fields, "gap_ms") if current else None,
         "consecutive_errors": consecutive_errors,
     }
+
+def ble_scan_state_snapshot(item, now, stale):
+    """Per-cycle scan-loop state: windows, phase, last error, sightings.
+
+    Emitted by the app on the sampler lane (5 s cadence), so it is retained
+    alongside the five per-cycle kinds and answers "is the scan loop alive"
+    for the current session. Absent in documents published by a predating
+    APK: unknown, never a fabricated zero.
+    """
+    status = freshness(item, now, stale) if item else "unknown/no-observation"
+    current = status == "fresh-clock-conditional"
+    windows = phase = last_error = sightings = None
+    window_ms = gap_ms = None
+    if current and item is not None:
+        match = SCAN_STATE_BRE.fullmatch(item["raw"])
+        if match:
+            windows = int(match[1])
+            phase = match[2]
+            last_error = match[3]
+            sightings = int(match[4])
+            window_ms = int(match[5])
+            gap_ms = int(match[6])
+    return {"status": status, "windows": windows, "phase": phase,
+            "last_error": last_error, "sightings": sightings,
+            "window_ms": window_ms, "gap_ms": gap_ms}
 
 
 
@@ -1307,8 +1342,11 @@ def compact_key(state, now, stale):
     sighting = ble_sighting_snapshot(state["latest"].get("ble_sighting"), now, stale)
     scan = ble_scan_snapshot(state["latest"].get("ble_scan"), now, stale,
                               _ble_scan_consecutive_error_count(state))
+    scan_state = ble_scan_state_snapshot(state["latest"].get("ble_scan_state"), now, stale)
     rf_key = [sighting["status"], sighting["name"], sighting["rssi_dbm"],
-              scan["status"], scan["subtype"], scan["reason"]]
+              scan["status"], scan["subtype"], scan["reason"],
+              scan_state["status"], scan_state["windows"], scan_state["phase"],
+              scan_state["last_error"], scan_state["sightings"]]
     return [node_status(state, now, stale), transport(state, now, stale),
             state["session"], dict(state["capabilities"]), measured, actions,
             rssi_key, ble_key, rf_key, dict(state["owner_checkboxes"])]
@@ -1409,6 +1447,10 @@ def update_events(state, now, stale):
                    f"battery={key[4][0][1:]} light={key[4][1][1:]} "
                    f"acceleration={key[4][2][1:]} {rssi_text} {ble_text} "
                    f"ble_sighting={key[8][0]}/{key[8][4] or 'unknown'} rssi_dbm={key[8][2] if key[8][2] is not None else 'unknown'} "
+                   f"scan_state={key[8][6]}"
+                   + (f" windows={key[8][7]} phase={key[8][8]} "
+                      f"last_error={key[8][9]} sightings={key[8][10]}"
+                      if key[8][7] is not None else "") + " "
                    f"caps={state['capabilities']} action_receipts={len(state['actions'])}")
         state["events"].append(summary)
     transitions = new_light_transitions(state, now, stale)
@@ -1505,6 +1547,18 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
     if scan_view.get("consecutive_errors"):
         lines.append(f"  consecutive_errors={scan_view['consecutive_errors']} "
                      "(session count of back-to-back scan error events)")
+    scan_state_view = ble_scan_state_snapshot(state["latest"].get("ble_scan_state"), now, stale)
+    if scan_state_view["windows"] is not None:
+        lines.append(f"  scan_state windows={scan_state_view['windows']} "
+                     f"phase={scan_state_view['phase']} "
+                     f"last_error={scan_state_view['last_error']} "
+                     f"sightings={scan_state_view['sightings']} "
+                     f"(window_ms={scan_state_view['window_ms']} gap_ms={scan_state_view['gap_ms']})")
+    else:
+        lines.append(f"  scan_state {scan_state_view['status']}")
+    lines.append("  scan_state is the per-cycle sampler-lane row: phase none = no scan loop "
+                 "ran this session; windows counts completed scan windows since scan "
+                 "start; last_error persists after the failure instant")
     stillness = stillness_snapshot(state, now, stale)
     lines.append("Composite stillness (joint variance of accel magnitude + light + wifi RSSI):")
     lines.append(f"  status={stillness['status']} basis={stillness['basis']}")
@@ -1581,11 +1635,17 @@ def render_events(state, now, stale, node_state=None, clock=None, spool=None):
         f"advertiser_getter={advertiser_getter or 'unknown'} "
         f"advertiser_supported={supported or 'unknown'} errors={dict(errors)}")
     (sighting_status, sighting_name, sighting_rssi,
-     scan_status, scan_subtype, scan_reason) = key[8]
+     scan_status, scan_subtype, scan_reason, scan_state_status,
+     scan_windows, scan_phase, scan_last_error, scan_sightings) = key[8]
     lines.append(f"  ble_sighting {sighting_status} name={sighting_name or 'unknown'} "
                  f"rssi_dbm={sighting_rssi if sighting_rssi is not None else 'unknown'} "
                  f"scan={scan_status}/{scan_subtype or 'unknown'} "
                  f"reason={scan_reason or 'unspecified'}")
+    if scan_windows is not None:
+        lines.append(f"  scan_state windows={scan_windows} phase={scan_phase} "
+                     f"last_error={scan_last_error} sightings={scan_sightings}")
+    else:
+        lines.append(f"  scan_state {scan_state_status}")
     lines.extend("  " + event for event in state["events"][-4:])
     if state["actions"]:
         lines.append("  receipt: " + state["actions"][-1]["raw"])
@@ -1692,6 +1752,8 @@ def space_snapshot(states, now, stale, node_states=None, clocks=None):
             "ble_scan": ble_scan_snapshot(
                 state["latest"].get("ble_scan"), now, stale,
                 _ble_scan_consecutive_error_count(state)),
+            "ble_scan_state": ble_scan_state_snapshot(
+                state["latest"].get("ble_scan_state"), now, stale),
             "stillness": stillness_snapshot(state, now, stale),
             "light": {
                 "status": status,
