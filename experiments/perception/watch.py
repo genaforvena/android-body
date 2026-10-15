@@ -2027,39 +2027,6 @@ def clock_domain_line(clock):
             f"across the step; re-measure before relying on either")
 
 
-def clock_domain_snapshot(clock):
-    """The host-side phone/host clock-offset reading as one additive space.json node field.
-
-    Published by tools/clock_offset.py at ``body/clock-domain-<node>.json`` and
-    resolved by ``read_clock_domain``. Additive to schema_version 1: the core
-    consumer pins ``schema_version == 1`` (core discovery.py:4220) and ignores
-    node keys it does not read, so a version bump would break it.
-
-    The raw status, nominal offset, lower/upper bounds, sample time, source and
-    sample count are published as-is: an inconsistent reading (nominal outside
-    the bounds) is preserved rather than coerced, and a missing value stays
-    null. The consumer judges consistency and freshness; the producer never
-    repairs a reading it cannot verify. ``age_s`` is deliberately *not*
-    republished for the same churn reason as ``node_state_snapshot``: the
-    document's own ``observed_at_epoch_s`` and ``validity_seconds`` carry the
-    freshness information without a caller-derived age that would rewrite
-    space.json within the same wall-clock second.
-    """
-    if clock is None:
-        return {"version": 1, "status": "absent", "offset_nominal_s": None,
-                "offset_min_s": None, "offset_max_s": None,
-                "observed_at_epoch_s": None, "validity_seconds": None,
-                "samples": 0, "source": None,
-                "reason": "no-clock-domain-reading", "jump": None}
-    return {"version": 1, "status": clock["status"],
-            "offset_nominal_s": clock["offset_nominal_s"],
-            "offset_min_s": clock["offset_min_s"],
-            "offset_max_s": clock["offset_max_s"],
-            "observed_at_epoch_s": clock["observed_at_epoch_s"],
-            "validity_seconds": clock.get("validity_seconds"),
-            "samples": clock["samples"], "source": clock.get("source"),
-            "reason": clock["reason"], "jump": clock["jump"]}
-
 def read_spool_summary(directory, node, now, max_age=SPOOL_SUMMARY_MAX_AGE_SECONDS):
     """Read the bounded app-spool summary for one node.
 
