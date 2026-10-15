@@ -74,6 +74,10 @@ class DocumentTests(unittest.TestCase):
             clock_offset.assert_bounded(dict(doc, offset_nominal_s=doc["offset_max_s"] + 0.5))
         with self.assertRaises(ValueError):
             clock_offset.assert_bounded(dict(doc, offset_nominal_s=doc["offset_min_s"] - 0.5))
+        # The guard is inclusive: a nominal exactly at either bound is still inside
+        # the interval it publishes, and must not start being rejected.
+        clock_offset.assert_bounded(dict(doc, offset_nominal_s=doc["offset_min_s"]))
+        clock_offset.assert_bounded(dict(doc, offset_nominal_s=doc["offset_max_s"]))
 
     def test_single_sample_still_bounds_and_reports_rtt(self):
         doc = clock_offset.offset_document("note3", pairs([25.5], rtt=0.08), now=7)
