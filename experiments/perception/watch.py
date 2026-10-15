@@ -1535,10 +1535,10 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
                      describe(sighting, now, stale))
     else:
         lines.append("  status=unknown/no-observation")
-    lines.append("  sightings_in_history_window=" +
+    lines.append("  sightings_in_delivered_history=" +
                  str(sum(1 for item in state["history"]
                          if item["kind"] == "ble_sighting")) +
-                 " (bounded window; count is not a rate or duration)")
+                 " (delivered-envelope window; collect-only freezes this — see scan_state below for spool-side count)")
     lines.append(f"  scan_lifecycle status={scan_view['status']} "
                  f"latest={scan_view['subtype'] or 'unknown'} "
                  f"reason={scan_view['reason'] or 'unspecified'}")

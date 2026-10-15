@@ -1095,7 +1095,7 @@ class PerceptionTests(unittest.TestCase):
         view = watch.render(state, 1000, 30)
         self.assertIn("#2 1000 ble_scan start beacon=MISHE-BEACON window_ms=60000 gap_ms=60000", view)
         self.assertIn("#3 1000 ble_sighting name=MISHE-BEACON rssi=-62", view)
-        self.assertIn("sightings_in_history_window=1", view)
+        self.assertIn("sightings_in_delivered_history=1", view)
         self.assertIn("scan_lifecycle status=fresh-clock-conditional latest=start", view)
         self.assertIn("NOT presence, occupancy or proximity proof", view)
         node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
@@ -1197,7 +1197,7 @@ class PerceptionTests(unittest.TestCase):
         self.page(state, ["1000 hello node=note3 protocol=1 session=s1"], received=1000)
         view = watch.render(state, 1000, 30)
         self.assertIn("status=unknown/no-observation", view)
-        self.assertIn("sightings_in_history_window=0", view)
+        self.assertIn("sightings_in_delivered_history=0", view)
         self.assertIn("scan_lifecycle status=unknown/no-observation latest=unknown "
                       "reason=unspecified", view)
         node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
