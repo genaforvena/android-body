@@ -1,10 +1,13 @@
 #!/bin/sh
 # SPDX-License-Identifier: CC0-1.0
-# Bounded health check for android-body infrastructure and the Note3 session.
+# Bounded health check for android-body infrastructure, the Note3 session,
+# and the Redmi tailnet transport.
 # Section 6 classifies the device session (tools/device_state.py); a node that
 # is not attached reads UNKNOWN and does not fail the host-infrastructure checks.
 # Section 7 checks the published node-state file the perception consumer reads,
 # and that the bytes which publish it are the committed ones.
+# Section 3b supervises the Redmi tailnet HTTPS path (serve config, endpoint
+# probe, write recency); a device that is not connected reads UNKNOWN.
 # Exits 0 if all invariants hold, 1 otherwise.
 set -u
 cd "$(dirname "$0")/.."
@@ -104,6 +107,93 @@ if command -v adb >/dev/null 2>&1; then
   fi
 else
   echo "UNKNOWN adb reverse mapping (adb unavailable)"
+fi
+
+# 3b. Redmi transport (tailnet HTTPS; no USB path, so adb reverse does not
+# apply). The phone app writes to https://mesh-home.tail3e4555.ts.net, which
+# `tailscale serve` proxies to 127.0.0.1:8765. Three host-side facts: the
+# serve mapping is configured, the phone's exact URL answers (404
+# unknown_route = serve+TLS+rendezvous alive), and the device actually
+# writes (writes.jsonl recency). RED when the host path is dead, or when the
+# device is on the tailnet but silent past REDMI_SILENT_BOUND (900s: the
+# observed write cadence is a 4-7s interval, and the only >60s gap in the
+# first 95 min of history was one 29-min outage). UNKNOWN when the device is
+# simply not connected, matching section 6 above.
+REMI_URL=${REMI_URL:-https://mesh-home.tail3e4555.ts.net/node/redmi10}
+REMI_NODE=${REMI_NODE:-redmi-10}
+REMI_SILENT_BOUND=${REMI_SILENT_BOUND:-900}
+if command -v tailscale >/dev/null 2>&1; then
+  if SERVE_OUT=$(tailscale serve status 2>/dev/null) && echo "$SERVE_OUT" | grep -q 'proxy http://127.0.0.1:8765'; then
+    pass "tailscale serve maps the redmi URL to the rendezvous loopback"
+  else
+    fail "tailscale serve mapping for the redmi URL absent (or daemon down)"
+  fi
+  REMI_PROBE=$(python3 - "$REMI_URL" <<'PY'
+import urllib.request, ssl, sys
+# host-local liveness probe of this host's own serve; the serve config itself
+# is checked via 'tailscale serve status' above, so full CA validation adds
+# no signal here and would depend on tailscale CA placement.
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
+try:
+    urllib.request.urlopen(sys.argv[1], timeout=8, context=ctx)
+    print('unexpected-200')
+except urllib.error.HTTPError as e:
+    print('alive' if 'unknown_route' in e.read().decode() else 'unexpected-404')
+except Exception:
+    print('dead')
+PY
+)
+  if [ "$REMI_PROBE" = "alive" ]; then
+    pass "redmi tailnet endpoint answers (serve+TLS+rendezvous alive)"
+  else
+    fail "redmi tailnet endpoint probe $REMI_PROBE"
+  fi
+  REMI_ONLINE=$(tailscale status 2>/dev/null | awk -v n="$REMI_NODE" '$2==n && !/offline/{print "yes"}')
+  REMI_AGE=$(python3 - "$SITE/body/queues/writes.jsonl" <<'PY'
+import json, sys, datetime
+last = None
+try:
+    for line in open(sys.argv[1]):
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if r.get('node') == 'redmi10' and r.get('ts'):
+            last = r['ts']
+except FileNotFoundError:
+    pass
+if last is None:
+    print('never')
+else:
+    try:
+        age = (datetime.datetime.now(datetime.timezone.utc)
+               - datetime.datetime.fromisoformat(last)).total_seconds()
+        print(int(age))
+    except ValueError:
+        print('badts')
+PY
+)
+  if [ -z "$REMI_AGE" ]; then
+    fail "redmi10 write recency unreadable (no output)"
+  else
+    case "$REMI_AGE" in
+      never) echo "UNKNOWN redmi10 transport: no writes yet (device not connected)" ;;
+      badts) fail "redmi10 last write timestamp unreadable" ;;
+      *)
+        if [ "$REMI_AGE" -le "$REMI_SILENT_BOUND" ]; then
+          pass "redmi10 writing over tailnet HTTPS (last ${REMI_AGE}s ago)"
+        elif [ "$REMI_ONLINE" = "yes" ]; then
+          fail "redmi10 silent ${REMI_AGE}s over a live tailnet path"
+        else
+          echo "UNKNOWN redmi10 transport: silent ${REMI_AGE}s and not on tailnet (device off)"
+        fi
+        ;;
+    esac
+  fi
+else
+  echo "UNKNOWN redmi transport (tailscale unavailable)"
 fi
 
 # 4. Journal warnings (last hour)
