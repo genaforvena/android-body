@@ -150,7 +150,15 @@ PY
   else
     fail "redmi tailnet endpoint probe $REMI_PROBE"
   fi
-  REMI_ONLINE=$(tailscale status 2>/dev/null | awk -v n="$REMI_NODE" '$2==n && !/offline/{print "yes"}')
+  # Peer reachability for the RED/UNKNOWN split below: `Online` (coordination
+  # server's view) OR `Active` (traffic now). The earlier text test treated the
+  # literal word "offline" as not-connected, but a phone on mobile data keeps a
+  # working direct path while Online lags, so its line reads
+  # "active; direct ...; offline, last seen 12m ago" while it writes every ~4s;
+  # that made the RED branch unreachable for exactly the silent-but-connected
+  # case it exists to catch (measured 2026-10-15: Online=False, Active=True,
+  # writes every ~4s). Empty output = peer absent or view unreadable = UNKNOWN.
+  REMI_ONLINE=$(tailscale status --json 2>/dev/null | python3 "$PWD/tools/tailnet_peer.py" "$REMI_NODE")
   REMI_AGE=$(python3 - "$SITE/body/queues/writes.jsonl" <<'PY'
 import json, sys, datetime
 last = None
