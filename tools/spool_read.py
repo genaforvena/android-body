@@ -184,20 +184,34 @@ ROW_KIND_TOKENS = ALLOWED_KINDS | {
 NON_SENSOR_KINDS = frozenset({"cap", "hello", "android", "owner_checkboxes", "probe", "action"})
 
 #: Light magnitude buckets (lux ranges), disjoint by construction: every
-#: non-negative Java float string the app can emit (``"lux=" + float``)
-#: matches exactly one bucket, so the bucket counts partition the light
-#: rows and their sum equals the ``lux=`` row count. Each pattern is the
-#: exact BRE string sent to the device's ``grep -a -c``: toybox grep is BRE
-#: by default, so intervals must be brace-escaped (``\{3,\}``), like the
-#: epoch pattern above. ``faint_0_1`` covers the open interval (0, 1) that
-#: the dim bucket's ``[1-9]`` leading digit excludes (discover 81172).
+#: finite non-negative float the app can emit matches exactly one bucket, so
+#: the bucket counts partition the light rows and their sum equals the
+#: ``lux=`` row count. ``Sensors.java`` rejects ``!finite`` and ``< 0``
+#: samples and writes ``"lux=" + float`` followed by ``" accuracy="``, so the
+#: emitted value strings are Java ``Float.toString`` output for finite
+#: non-negative floats, each terminated by a space. Each pattern is the exact
+#: ERE string sent to the device's ``grep -a -c -E``, and its trailing space
+#: is the value/field boundary: without it ``dark_exact``'s ``lux=0\.0`` is a
+#: strict prefix of ``lux=0.05``, which the dark bucket then miscounted
+#: (discover 91782).
+#:
+#: ERE rather than BRE: ``Float.toString`` uses scientific notation
+#: (``d.dddE±dd``) below 1e-3 and at or above 1e7, so ``faint_0_1`` and
+#: ``very_bright_1000_plus`` each need two alternative shapes and therefore
+#: one alternation per bucket. This device's toybox grep silently counts zero
+#: for a BRE ``\|`` alternation (probed 2026-10-15 on the live Note3 spool:
+#: ``lux=\(0\.0\|5\.9506\)`` -> 0 rows, ``-E 'lux=(0\.0|5\.9506) '`` -> 2961
+#: rows), so the buckets use ERE, where ``|`` and ``{m,}`` are unescaped.
+#: ``faint_0_1`` covers the open interval (0, 1) that the dim bucket's
+#: ``[1-9]`` leading digit excludes (discover 81172).
 LIGHT_BUCKETS = (
-    ("dark_exact", r"lux=0\.0"),
-    ("faint_0_1", r"lux=0\.[1-9]"),
-    ("dim_0_9", r"lux=[1-9]\.[0-9]"),
-    ("moderate_10_99", r"lux=[1-9][0-9]\.[0-9]"),
-    ("bright_100_999", r"lux=[1-9][0-9][0-9]\.[0-9]"),
-    ("very_bright_1000_plus", r"lux=[1-9][0-9]\{3,\}"),
+    ("dark_exact", r"lux=0\.0 "),
+    ("faint_0_1", r"lux=(0\.[0-9]*[1-9][0-9]*|[1-9]\.[0-9][0-9]*E-[0-9][0-9]*) "),
+    ("dim_0_9", r"lux=[1-9]\.[0-9][0-9]* "),
+    ("moderate_10_99", r"lux=[1-9][0-9]\.[0-9][0-9]* "),
+    ("bright_100_999", r"lux=[1-9][0-9][0-9]\.[0-9][0-9]* "),
+    ("very_bright_1000_plus",
+     r"lux=([1-9][0-9]{3,}\.[0-9][0-9]*|[1-9]\.[0-9][0-9]*E[0-9][0-9]*) "),
 )
 
 #: Pattern to extract the spool path from run-as ls output.
@@ -289,10 +303,15 @@ def _count_kind(argv, serial, spool_path, kind, timeout):
 
 
 def _count_light_bucket(argv, serial, spool_path, pattern, timeout):
-    """Count light rows matching a magnitude bucket regex."""
+    """Count light rows matching a magnitude bucket ERE via device ``grep -E``.
+
+    ``-E`` is required, not cosmetic: the bucket patterns use ERE alternation
+    ``|``, which the device's toybox grep reads literally in BRE mode and then
+    counts zero rows (silent zero-count, probed 2026-10-15).
+    """
     try:
         output = _run(argv, serial,
-                      f"run-as org.androidbody grep -a -c '{pattern}' {spool_path}",
+                      f"run-as org.androidbody grep -a -c -E '{pattern}' {spool_path}",
                       timeout)
         return _parse_int(output, f"grep-bucket-{pattern[:20]}")
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:

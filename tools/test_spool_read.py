@@ -429,93 +429,100 @@ class PublishTests(unittest.TestCase):
 
 
 class LightBucketRegexTests(unittest.TestCase):
-    """Light bucket regex patterns match expected lux values."""
+    """Light bucket patterns classify every lux string the app can emit.
 
-    def _match_bucket(self, lux_str):
-        """Return the first bucket name whose device-BRE pattern matches lux_str.
+    ``_matches`` searches a canonical spool light row, so the value/field
+    boundary the device grep sees (``lux=<v> accuracy=<a>``) is part of every
+    assertion. The patterns are ERE and the device command passes ``-E``.
+    """
 
-        The device runs toybox grep (BRE), where ``\\{``/``\\}`` are interval
-        delimiters; Python re reads the same source as literal braces. The
-        bridge strips the backslashes, so the checked string is the exact
-        pattern the device receives.
-        """
-        for name, bre in spool_read.LIGHT_BUCKETS:
-            py = re.compile(bre.replace(r"\{", "{").replace(r"\}", "}"))
-            if py.search(lux_str):
-                return name
-        return None
+    ROW = "1792095553 light {value} accuracy=3 age_ms=12 sensor_time_ns=1"
 
-    def test_dark_exact_matches_0_0(self):
-        self.assertEqual(self._match_bucket("lux=0.0"), "dark_exact")
+    #: (emitted value string, correct bucket) over the Java ``Float.toString``
+    #: shapes the app can emit: fixed notation for 1e-3 <= x < 1e7, scientific
+    #: notation below 1e-3 and at or above 1e7, and ``0.0`` for exact zero.
+    #: Sensors.java rejects ``!finite`` and ``< 0`` samples, so every emitted
+    #: value is a finite non-negative float.
+    SHAPES = (
+        ("lux=0.0", "dark_exact"),
+        ("lux=1.0E-45", "faint_0_1"),
+        ("lux=1.0E-4", "faint_0_1"),
+        ("lux=5.0E-4", "faint_0_1"),
+        ("lux=9.999999E-4", "faint_0_1"),
+        ("lux=0.001", "faint_0_1"),
+        ("lux=0.05", "faint_0_1"),
+        ("lux=0.099", "faint_0_1"),
+        ("lux=0.5", "faint_0_1"),
+        ("lux=0.505", "faint_0_1"),
+        ("lux=0.999", "faint_0_1"),
+        ("lux=1.0", "dim_0_9"),
+        ("lux=1.251", "dim_0_9"),
+        ("lux=2.505", "dim_0_9"),
+        ("lux=5.5", "dim_0_9"),
+        ("lux=5.9506", "dim_0_9"),
+        ("lux=9.9", "dim_0_9"),
+        ("lux=10.0", "moderate_10_99"),
+        ("lux=42.3", "moderate_10_99"),
+        ("lux=99.9", "moderate_10_99"),
+        ("lux=100.0", "bright_100_999"),
+        ("lux=250.7", "bright_100_999"),
+        ("lux=999.9", "bright_100_999"),
+        ("lux=1000.0", "very_bright_1000_plus"),
+        ("lux=12345.6", "very_bright_1000_plus"),
+        ("lux=9999999.0", "very_bright_1000_plus"),
+        ("lux=1.0E7", "very_bright_1000_plus"),
+        ("lux=1.2E7", "very_bright_1000_plus"),
+        ("lux=3.4028235E38", "very_bright_1000_plus"),
+    )
 
-    def test_faint_0_1_matches_0_5(self):
-        self.assertEqual(self._match_bucket("lux=0.5"), "faint_0_1")
+    def _matches(self, value):
+        """Bucket names whose pattern matches a real row carrying ``value``."""
+        row = self.ROW.format(value=value)
+        return [name for name, ere in spool_read.LIGHT_BUCKETS
+                if re.compile(ere).search(row)]
 
-    def test_faint_0_1_matches_0_505(self):
-        self.assertEqual(self._match_bucket("lux=0.505"), "faint_0_1")
+    def _match_bucket(self, value):
+        matches = self._matches(value)
+        return matches[0] if matches else None
 
-    def test_faint_0_1_does_not_match_exact_zero(self):
-        self.assertNotEqual(self._match_bucket("lux=0.0"), "faint_0_1")
-
-    def test_dim_0_9_matches_5_5(self):
-        self.assertEqual(self._match_bucket("lux=5.5"), "dim_0_9")
-
-    def test_moderate_10_99_matches_42_3(self):
-        self.assertEqual(self._match_bucket("lux=42.3"), "moderate_10_99")
-
-    def test_bright_100_999_matches_250_7(self):
-        self.assertEqual(self._match_bucket("lux=250.7"), "bright_100_999")
-
-    def test_very_bright_1000_plus_matches_1500_0(self):
-        self.assertEqual(self._match_bucket("lux=1500.0"), "very_bright_1000_plus")
-
-    def test_dark_exact_does_not_match_nonzero(self):
-        self.assertNotEqual(self._match_bucket("lux=1.0"), "dark_exact")
-
-    def test_dim_does_not_match_two_digit_integer(self):
-        self.assertNotEqual(self._match_bucket("lux=10.0"), "dim_0_9")
-
-    def test_dim_does_not_match_dark_or_sub_1(self):
-        """Partition defect (discover 81172): the old dim pattern
-        ``lux=[0-9]\.[0-9]`` also matched ``lux=0.0`` (its ``[0-9]`` class
-        matched the dark leading zero), so dark rows were double-counted,
-        and a future ``lux=0.5`` row must land in faint_0_1, not dim."""
-        self.assertNotEqual(self._match_bucket("lux=0.0"), "dim_0_9")
-        self.assertNotEqual(self._match_bucket("lux=0.5"), "dim_0_9")
+    def test_every_lux_shape_lands_in_its_magnitude_bucket(self):
+        """Assert the bucket, not just the count: the old patterns put
+        ``lux=0.05``/``lux=0.099`` in dark_exact and the scientific shapes
+        (``lux=1.0E-4``, ``lux=1.2E7``) in dim_0_9 (discover 91782)."""
+        for value, expected in self.SHAPES:
+            self.assertEqual(self._match_bucket(value), expected, value)
 
     def test_buckets_partition_every_lux_shape(self):
         """Each lux string shape the app can emit matches exactly one
-        bucket: the buckets are disjoint and exhaustive over non-negative
-        Java float strings (``"lux=" + float``), so their counts sum to
-        the ``lux=`` row count."""
-        shapes = ["lux=0.0", "lux=0.5", "lux=0.505", "lux=0.999",
-                  "lux=1.0", "lux=5.5", "lux=9.9", "lux=2.505",
-                  "lux=10.0", "lux=42.3", "lux=99.9",
-                  "lux=100.0", "lux=250.7", "lux=999.9",
-                  "lux=1000.0", "lux=1500.0", "lux=12345.6",
-                  "lux=1.0E-45", "lux=1.2E5"]
-        for shape in shapes:
-            matches = [name for name, bre in spool_read.LIGHT_BUCKETS
-                       if re.compile(bre.replace(r"\{", "{")
-                                     .replace(r"\}", "}")).search(shape)]
-            self.assertEqual(len(matches), 1,
-                             f"{shape} matched {matches}")
+        bucket: the buckets are disjoint and exhaustive over finite
+        non-negative Java float strings (``"lux=" + float``), so their
+        counts sum to the ``lux=`` row count."""
+        for value, _ in self.SHAPES:
+            self.assertEqual(len(self._matches(value)), 1, value)
 
-    def test_moderate_does_not_match_three_digit(self):
-        self.assertNotEqual(self._match_bucket("lux=100.0"), "moderate_10_99")
+    def test_bucket_patterns_use_device_supported_ere(self):
+        """The device grep is invoked with ``-E``, so the patterns must be ERE.
 
-    def test_bright_does_not_match_four_digit(self):
-        self.assertNotEqual(self._match_bucket("lux=1000.0"), "bright_100_999")
+        This device's toybox grep does not implement BRE alternation ``\\|``
+        and counts zero rows for it (probed on the live Note3 spool
+        2026-10-15: ``lux=\\(0\\.0\\|5\\.9506\\)`` -> 0 rows,
+        ``-E 'lux=(0\\.0|5\\.9506) '`` -> 2961 rows), so a BRE-only construct
+        here would silently zero a bucket. In ERE ``{m,}`` is an unescaped
+        interval; an escaped ``\\{`` would be a literal brace.
+        """
+        for name, ere in spool_read.LIGHT_BUCKETS:
+            for bre_only in (r"\|", r"\{", r"\}", r"\+", r"\?"):
+                self.assertNotIn(bre_only, ere, name)
+            re.compile(ere)
 
-    def test_very_bright_does_not_match_three_digit(self):
-        self.assertNotEqual(self._match_bucket("lux=999.9"), "very_bright_1000_plus")
-
-    def test_very_bright_interval_is_escaped_for_device_bre(self):
-        """Defect 4 regression: device grep is BRE, so the interval must reach
-        it brace-escaped; a raw ``{3,}`` is a literal there and the bucket
-        silently counts zero on-device."""
-        bre = dict(spool_read.LIGHT_BUCKETS)["very_bright_1000_plus"]
-        self.assertEqual(bre, r"lux=[1-9][0-9]\{3,\}")
+    def test_bucket_patterns_are_sent_to_grep_with_dash_e(self):
+        """The patterns use ERE alternation, so the device command must pass
+        ``-E``; without it toybox grep reads ``|`` literally and the bucket
+        silently counts zero."""
+        pattern = dict(spool_read.LIGHT_BUCKETS)["faint_0_1"]
+        with mock.patch.object(spool_read, "_run", return_value="7\n") as run:
+            spool_read._count_light_bucket(["adb"], "S", "PATH", pattern, 5.0)
+        self.assertIn("-E", run.call_args[0][2].split())
 
     def test_bucket_names_are_exactly_expected(self):
         names = [name for name, _ in spool_read.LIGHT_BUCKETS]
