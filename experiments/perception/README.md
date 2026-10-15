@@ -78,8 +78,14 @@ The sightings channel is explicitly not presence, occupancy or proximity proof;
 `sightings_in_history_window` is a bounded count, not a rate or duration. The
 installed phone emits scan lifecycle events live (retained evidence: `ble_scan
 start beacon=MISHE-BEACON`, 2026-10-13T09:34Z; other subtypes not yet
-retained-observed), but no allowlisted beacon has been sighted, so `ble_sighting`
-evidence and any RF conclusion remain unknown.
+retained-observed). One allowlisted-beacon window has now been retained, in the
+app-private spool rather than the delivered stream: 20 `ble_sighting
+name=MISHE-BEACON` rows at rssi −16 to −28 dBm, host 17:17:20Z–17:25:55Z on
+2026-10-15, inside the host advertiser window 17:16:25Z–17:28:25Z (direct
+read-only `adb run-as` count). That is scanner-visible reception only: no
+presence, occupancy or proximity conclusion, and RSSI is not calibrated. Under
+collect-only the delivered stream is frozen, so `sightings_in_history_window`
+reads 0 until the backlog is uploaded.
 The bounded state retains the latest 32 event kinds, last 32 observations and last
 16 action receipts. An unknown event is not treated as evidence of a known sensor.
 
