@@ -4,8 +4,9 @@
 # and the Redmi tailnet transport.
 # Section 6 classifies the device session (tools/device_state.py); a node that
 # is not attached reads UNKNOWN and does not fail the host-infrastructure checks.
-# Section 7 checks the published node-state file the perception consumer reads,
-# and that the bytes which publish it are the committed ones.
+# Section 7 checks the published node-state and spool-summary files the
+# perception consumer reads, and that the bytes which publish them are the
+# committed ones.
 # Section 8 checks this role's own plate (bin/wall-check): a settle whose staged
 # notes still hold an earlier wake's text writes that text over walls/health.md
 # with no error, so the plate can name a wake older than the last yield while
@@ -348,6 +349,27 @@ elif command -v python3 >/dev/null 2>&1 && [ -x "$PWD/tools/runtime_manifest.py"
   esac
 else
   echo "UNKNOWN runtime activation record (python3 or tools/runtime_manifest.py unavailable)"
+fi
+
+# 7d. Spool-summary publisher liveness. android-body-spool-read.timer runs
+# runtime/spool_read.py every 5min (observed 300s cadence, ~9s runtime) and
+# publishes body/spool-summary-note3.json; the consumer accepts the file for
+# 600s (watch.py SPOOL_SUMMARY_MAX_AGE_SECONDS). Nothing else supervises the
+# publisher's output: §4 journals only the three long-running services, and a
+# dead oneshot or failed adb read leaves the timer "active" while the file goes
+# stale, so health-check would stay GREEN through stale spool evidence. 450s is
+# one-and-a-half ticks: a missed tick reads RED 150s before the consumer renders
+# the evidence stale.
+SPOOL_SUMMARY="$SITE/body/spool-summary-note3.json"
+if [ -f "$SPOOL_SUMMARY" ]; then
+  SS_AGE=$(( $(date +%s) - $(stat -c%Y "$SPOOL_SUMMARY") ))
+  if [ "$SS_AGE" -le 450 ]; then
+    pass "spool-summary note3 fresh (${SS_AGE}s)"
+  else
+    fail "spool-summary note3 stale ${SS_AGE}s (>450s)"
+  fi
+else
+  fail "spool-summary note3 MISSING"
 fi
 
 # 8. Own wall plate (bin/wall-check health). A settle whose staged notes still
