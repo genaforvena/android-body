@@ -87,7 +87,9 @@ python3 -m unittest discover -s rendezvous/minimal-server
 python3 -m unittest discover -s experiments/light-vibrate
 python3 -m unittest discover -s experiments/perception
 python3 -m unittest discover -s experiments/minimal-substrate
-./gradlew :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool
+python3 -m unittest discover -s experiments/trial-eval
+python3 -m unittest discover -s tools
+./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore
 ```
 
 See the [verification record](docs/verification.md), [compatibility and physical validation](docs/compatibility.md), [observations](docs/observations.md), [actions](docs/actions.md), [integration](docs/integration.md), and the [wire protocol](protocol/README.md). Physical Note3, Xiaomi and contemporary-device checks remain explicit rather than inferred from emulator/host tests.
