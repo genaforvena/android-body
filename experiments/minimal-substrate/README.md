@@ -31,6 +31,14 @@ Probes: `host-identity` (`id`), `host-environment` (`dumpsys sensorservice`),
 text script written to app-private scratch via run-as, run twice, deleted,
 source+SHA-256+provenance retained).
 
+Since the 2026-10-16 install the APK itself also emits a class-4 session-start row —
+`probe exec uid=<app uid> cmd=<files>/probe.txt output=hello exit=0` — executing the
+app-written 0700 script under the app UID: SELinux `untrusted_app` ALLOW on the Note3
+(API 21). It is bounded (≤4,096 B merged output, ≤5 s, one file, child destroyed on
+timeout), runs in every session including collect-only, and is one observed exec shape
+rather than a general execution capability. Evidence and limits: [verification
+record](../../docs/verification.md).
+
 Bounds (env-overridable): per-command timeout with child kill (default 10s),
 per-line output cap (default 1024 bytes, matching the text-delivery per-line
 limit), total output cap (default 64 KiB), artifact retention (newest 20;
