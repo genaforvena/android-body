@@ -201,14 +201,14 @@ public final class BoundedEvaluator {
             String path = sub[0];
             if (sub.length < 2 || sub[1].isEmpty())
                 throw new IllegalArgumentException("write requires content");
-            resolveInFilesDir(filesDir, path);
+            try { resolveInFilesDir(filesDir, path); } catch (IllegalArgumentException e) { throw new IllegalArgumentException("write " + e.getMessage()); }
             String content = unescape(sub[1]);
             return new Command(name, path + " " + sub[1], content);
         }
         if (name.equals("exec")) {
             if (argument == null || argument.isEmpty())
                 throw new IllegalArgumentException("exec requires a path argument");
-            resolveInFilesDir(filesDir, argument);
+            try { resolveInFilesDir(filesDir, argument); } catch (IllegalArgumentException e) { throw new IllegalArgumentException("exec " + e.getMessage()); }
             return new Command(name, argument, null);
         }
         throw new IllegalArgumentException("unknown eval command: " + name);

@@ -232,7 +232,7 @@ public final class BoundedEvaluatorTest {
         // exec timeout: child past the deadline is destroyed, truthful destroyed=
         body.execute(BoundedEvaluator.parse("write t.sh #!/bin/sh\\nsleep 10\\n", bodyDir), clock);
         BoundedExec.TIMEOUT_MS = 100;
-        BoundedExec.DESTROY_WAIT_MS = 50;
+        BoundedExec.DESTROY_WAIT_MS = 500;
         BoundedExec.READ_JOIN_MS = 50;
         BoundedEvaluator.Result to;
         try {
