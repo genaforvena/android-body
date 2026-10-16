@@ -106,6 +106,52 @@ public final class EvalOutcomeTest {
         enqueue(new File(base, "t6"), EvalOutcome.failed(6, meminfo, BoundedEvaluator.execute(meminfo, CLOCK)), 2);
         enqueue(new File(base, "t7"), EvalOutcome.invalid(7), 2);
 
+        // 7. A write echoes its content in command=; the receipt must still fit the spool
+        // bound. Before the fix, a write at the parse limit produced a 1106-byte line that
+        // ObservationSpool.enqueue rejected by throwing.
+        File writeDir = new File(base, "write-dir");
+        check(writeDir.mkdirs(), "cannot create " + writeDir);
+        BoundedEvaluator.Session writes = new BoundedEvaluator.Session(writeDir, -1);
+        StringBuilder writeInput = new StringBuilder("write big.txt ");
+        while (writeInput.length() < 1007) writeInput.append('A');
+        BoundedEvaluator.Command writeBig = BoundedEvaluator.parse(writeInput.toString(), writeDir);
+        String writeOut = EvalOutcome.succeeded(7, writeBig, writes.execute(writeBig, CLOCK));
+        enqueue(new File(base, "t8"), writeOut, 2);
+        check(writeOut.contains("truncated=true"), "7: clamped command is marked truncated");
+
+        // 8. A write that fails still bounds the echoed command value and marks the clamp.
+        StringBuilder failInput = new StringBuilder("write missingdir/f.txt ");
+        while (failInput.length() < 1007) failInput.append('A');
+        BoundedEvaluator.Command writeFail = BoundedEvaluator.parse(failInput.toString(), writeDir);
+        BoundedEvaluator.Result failResult = writes.execute(writeFail, CLOCK);
+        check(!failResult.ok, "8: write to a missing parent dir should fail");
+        String failOut = EvalOutcome.failed(8, writeFail, failResult);
+        enqueue(new File(base, "t9"), failOut, 2);
+        check(failOut.contains("truncated=true"), "8: clamped command is marked truncated");
+
+        // 9. The parse limit is char-based but the line bound is byte-based: astral content at
+        // the parse limit must still fit, and fit must not split a surrogate pair.
+        StringBuilder astralInput = new StringBuilder("write astral.txt ");
+        while (astralInput.length() + 2 <= 1007) astralInput.append("\uD83D\uDE00");
+        BoundedEvaluator.Command writeAstral = BoundedEvaluator.parse(astralInput.toString(), writeDir);
+        String astralWriteOut = EvalOutcome.succeeded(9, writeAstral, writes.execute(writeAstral, CLOCK));
+        enqueue(new File(base, "t10"), astralWriteOut, 2);
+        check(astralWriteOut.contains("truncated=true"), "9: clamped command is marked truncated");
+
+        // 10. Both variable fields clamped on one line: a long allowlisted read path plus an
+        // output larger than the clamp budget. The command value is cut, then the output.
+        StringBuilder segment = new StringBuilder();
+        while (segment.length() < 900) segment.append('r');
+        File nested = base;
+        for (int i = 0; i < 5; i++) nested = new File(nested, segment.substring(i * 180, (i + 1) * 180));
+        check(nested.mkdirs(), "cannot create " + nested);
+        File longFile = writeFile(nested, "big-ascii.txt", ascii);
+        BoundedEvaluator.addAllowedPath(longFile.getAbsolutePath());
+        BoundedEvaluator.Command readLong = BoundedEvaluator.parse("read " + longFile.getAbsolutePath());
+        String bothOut = EvalOutcome.succeeded(10, readLong, BoundedEvaluator.execute(readLong, CLOCK));
+        enqueue(new File(base, "t11"), bothOut, 2);
+        check(bothOut.contains("truncated=true"), "10: both clamps are marked truncated");
+
         System.out.println("EvalOutcome: " + assertions + " assertions passed");
     }
 }

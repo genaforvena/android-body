@@ -24,20 +24,38 @@ final class EvalOutcome {
     }
 
     static String succeeded(long id, BoundedEvaluator.Command c, BoundedEvaluator.Result r) {
-        String body = "action " + id + " succeeded kind=eval command=" + canonical(c)
-                + " identity=" + identity(c) + " status=" + r.status;
+        String canonical = canonical(c);
+        String head = "action " + id + " succeeded kind=eval command=";
+        String mid = " identity=" + identity(c) + " status=" + r.status + " truncated=";
         String output = sanitize(r.output);
         if (output == null) output = "null"; // keeps the original null-concatenation text
-        String unclamped = line(body + " truncated=false output=");
+        // A write echoes its escaped content in command=, so the value itself must be
+        // bounded: the fixed skeleton alone can otherwise overrun the spool line budget,
+        // which ObservationSpool rejects by throwing (no receipt; the action loop fails).
+        String command = fit(head, canonical, mid + "false output=", ObservationSpool.MAX_LINE_BYTES);
+        boolean commandTruncated = command.length() < canonical.length();
+        String body = head + command + mid;
+        String unclamped = line(body + "false output=");
         String clamped = clamp(unclamped, output, ObservationSpool.MAX_LINE_BYTES);
-        boolean truncated = r.truncated || clamped.length() < unclamped.length() + output.length() + 1;
-        return requested(id) + clamp(line(body + " truncated=" + truncated + " output="), output,
+        boolean truncated = r.truncated || commandTruncated
+                || clamped.length() < unclamped.length() + output.length() + 1;
+        return requested(id) + clamp(line(body + truncated + " output="), output,
                 ObservationSpool.MAX_LINE_BYTES);
     }
 
     static String failed(long id, BoundedEvaluator.Command c, BoundedEvaluator.Result r) {
-        return requested(id) + Protocol.event("action " + id + " failed kind=eval command=" + canonical(c)
-                + " identity=" + identity(c) + " status=" + r.status + " error=" + r.error);
+        String canonical = canonical(c);
+        String head = "action " + id + " failed kind=eval command=";
+        String tail = " identity=" + identity(c) + " status=" + r.status;
+        String error = r.error == null ? "null" : r.error;
+        // Bound the command value first (a write echoes its content), then the error text:
+        // no single client- or exception-supplied field can push the line over the budget.
+        String command = fit(head, canonical, tail + " truncated=true error=",
+                ObservationSpool.MAX_LINE_BYTES);
+        boolean truncated = command.length() < canonical.length();
+        return requested(id) + clamp(line(head + command + tail
+                + (truncated ? " truncated=true" : "") + " error="), error,
+                ObservationSpool.MAX_LINE_BYTES);
     }
 
     static String denied(long id, String path) {
@@ -86,6 +104,26 @@ final class EvalOutcome {
             i += Character.charCount(codePoint);
         }
         return sb.append('\n').toString();
+    }
+
+    /**
+     * Copy as much of {@code value} as keeps {@code line(head) + value + suffix} within
+     * {@code maxBytes} UTF-8 bytes. The {@code command=} value is client-supplied for
+     * write/exec, so it can be long enough that the fixed skeleton alone overruns the
+     * spool line budget; clamping the value first keeps the whole line admissible.
+     */
+    private static String fit(String head, String value, String suffix, int maxBytes) {
+        int used = utf8(line(head)) + utf8(suffix);
+        StringBuilder sb = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); ) {
+            int codePoint = value.codePointAt(i);
+            int bytes = utf8(new String(Character.toChars(codePoint)));
+            if (used + bytes > maxBytes) break;
+            sb.appendCodePoint(codePoint);
+            used += bytes;
+            i += Character.charCount(codePoint);
+        }
+        return sb.toString();
     }
 
     private static int utf8(String s) { return s.getBytes(Protocol.UTF8).length; }
