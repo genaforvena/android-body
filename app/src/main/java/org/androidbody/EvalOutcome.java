@@ -41,7 +41,12 @@ final class EvalOutcome {
     }
 
     static String denied(long id, String path) {
-        return requested(id) + clamp(line("action " + id + " failed reason=read_denied path="), path,
+        return denied(id, "read", path);
+    }
+
+    /** Path-denied outcome for any verb; the kind keeps write/exec denials distinct from read. */
+    static String denied(long id, String kind, String path) {
+        return requested(id) + clamp(line("action " + id + " failed reason=" + kind + "_denied path="), path,
                 ObservationSpool.MAX_LINE_BYTES);
     }
 

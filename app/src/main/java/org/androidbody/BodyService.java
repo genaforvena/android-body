@@ -72,7 +72,7 @@ public final class BodyService extends Service {
             sensors = new Sensors(owner, preferences);
             vibrator = (Vibrator) owner.getSystemService(VIBRATOR_SERVICE);
             transport = new Transport(endpoint, secret, allowHttp);
-            evalSession = new BoundedEvaluator.Session();
+            evalSession = new BoundedEvaluator.Session(owner.getFilesDir(), android.os.Process.myUid());
         }
     }
     static void awaitStoppedWork() throws IOException {
@@ -402,11 +402,12 @@ public final class BodyService extends Service {
     private String executeEval(final Session session, final String evalInput, final long actionId) {
         final BoundedEvaluator.Command command;
         try {
-            command = BoundedEvaluator.parse(evalInput);
+            command = BoundedEvaluator.parse(evalInput, session.evalSession.filesDir);
         } catch (IllegalArgumentException e) {
             String msg = e.getMessage();
             if (msg != null && msg.contains("not in allowlist")) {
-                return EvalOutcome.denied(actionId, msg.substring(msg.lastIndexOf(": ") + 2));
+                String path = msg.substring(msg.lastIndexOf(": ") + 2);
+                return EvalOutcome.denied(actionId, msg.substring(0, msg.indexOf(' ')), path);
             }
             return EvalOutcome.invalid(actionId);
         }

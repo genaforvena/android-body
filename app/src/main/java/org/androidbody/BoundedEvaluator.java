@@ -3,9 +3,12 @@ package org.androidbody;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.FileOutputStream;
+
 import java.nio.charset.Charset;
 import java.util.HashSet;
 import java.util.Set;
@@ -32,8 +35,15 @@ import java.util.concurrent.TimeoutException;
  *   <li>{@code clock} -- report elapsedRealtime ms</li>
  *   <li>{@code read <path>} -- read a bounded file (from allowlist only)</li>
  *   <li>{@code env} -- report /proc/self/status (bounded)</li>
+ *   <li>{@code write <path> <content>} -- persist a bounded script inside the
+ *       app's own {@code files/} ({@code \n} escapes become newlines)</li>
+ *   <li>{@code exec <path>} -- exec the app-written file itself (class-4 route:
+ *       real app parent via {@link ProcessBuilder}, owner-exec set first)</li>
  * </ul>
- * Bounds: 1,024 bytes/output, 65,536 bytes/session, 10s timeout, 128 commands/session.
+ * Bounds: 1,024 bytes/output, 65,536 bytes/session, 10s timeout, 128
+ * commands/session, 65,536 bytes cumulative write storage per session; exec
+ * stdout ≤ 4096 B and exec duration ≤ 5 s via {@link BoundedExec}, with
+ * destroy-on-timeout and a truthful {@code destroyed=} flag.
  */
 public final class BoundedEvaluator {
     public static final int MAX_OUTPUT_PER_COMMAND = 1024;
@@ -69,9 +79,12 @@ public final class BoundedEvaluator {
     public static final class Command {
         public final String name;
         public final String argument;
-        private Command(String name, String argument) {
+        /** Unescaped write content; null unless {@code name} is {@code "write"}. */
+        public final String writeContent;
+        private Command(String name, String argument, String writeContent) {
             this.name = name;
             this.argument = argument;
+            this.writeContent = writeContent;
         }
     }
 
@@ -93,17 +106,38 @@ public final class BoundedEvaluator {
         }
     }
 
-    /** Session with bounded total output and command count. */
+    /** Session with bounded total output, command count and write storage. */
     public static final class Session {
+        final File filesDir;
+        private final int uid;
         private int totalOutput;
         private int commandCount;
+        private long writtenBytes;
+
+        /** Read-only session: write/exec are rejected (no files dir). */
+        public Session() { this(null, -1); }
+
+        /**
+         * @param filesDir the app's own files directory; write/exec paths are
+         *                 restricted to it (canonical-prefix check)
+         * @param uid      the parent app UID, reported on exec rows; -1 omits it
+         */
+        public Session(File filesDir, int uid) {
+            this.filesDir = filesDir;
+            this.uid = uid;
+        }
 
         public Result execute(Command command, Clock clock) {
             if (commandCount >= MAX_COMMANDS_PER_SESSION) {
                 return new Result(false, null, "session command limit exceeded", "error", clock.elapsedRealtime(), false);
             }
             commandCount++;
-            Result result = BoundedEvaluator.execute(command, clock);
+            long writeSize = writeSize(command);
+            if (writeSize >= 0 && writtenBytes + writeSize > MAX_TOTAL_OUTPUT) {
+                return new Result(false, null, "session storage limit exceeded", "error", clock.elapsedRealtime(), false);
+            }
+            Result result = BoundedEvaluator.execute(command, clock, filesDir, uid);
+            if (result.ok && writeSize >= 0) writtenBytes += writeSize;
             if (result.ok && result.output != null) {
                 totalOutput += result.output.getBytes(ASCII).length;
                 if (totalOutput > MAX_TOTAL_OUTPUT) {
@@ -112,6 +146,13 @@ public final class BoundedEvaluator {
             }
             return result;
         }
+
+        /** Bytes a write would persist, or -1 for non-write commands. */
+        private static long writeSize(Command command) {
+            if (!"write".equals(command.name) || command.writeContent == null) return -1;
+            return command.writeContent.getBytes(ASCII).length;
+        }
+
         public void close() {
             // No resources to release; marks session as closed
         }
@@ -121,9 +162,19 @@ public final class BoundedEvaluator {
 
     /**
      * Parse and validate a command string against the fixed grammar.
+     * Write/exec require a files dir and are rejected without one.
      * @throws IllegalArgumentException if the command is invalid
      */
     public static Command parse(String input) {
+        return parse(input, null);
+    }
+
+    /**
+     * Parse and validate a command string against the fixed grammar, with
+     * write/exec paths resolved against {@code filesDir} (null rejects them).
+     * @throws IllegalArgumentException if the command is invalid
+     */
+    public static Command parse(String input, File filesDir) {
         if (input == null) throw new IllegalArgumentException("eval input is null");
         String trimmed = input.trim();
         if (trimmed.isEmpty()) throw new IllegalArgumentException("eval input is empty");
@@ -134,14 +185,31 @@ public final class BoundedEvaluator {
         if (name.equals("identity") || name.equals("clock") || name.equals("env")) {
             if (argument != null && !argument.isEmpty())
                 throw new IllegalArgumentException(name + " takes no argument");
-            return new Command(name, null);
+            return new Command(name, null, null);
         }
         if (name.equals("read")) {
             if (argument == null || argument.isEmpty())
                 throw new IllegalArgumentException("read requires a path argument");
             if (!ALLOWED_READS.contains(argument))
                 throw new IllegalArgumentException("read path not in allowlist: " + argument);
-            return new Command(name, argument);
+            return new Command(name, argument, null);
+        }
+        if (name.equals("write")) {
+            if (argument == null || argument.isEmpty())
+                throw new IllegalArgumentException("write requires path and content");
+            String[] sub = argument.split("\\s+", 2);
+            String path = sub[0];
+            if (sub.length < 2 || sub[1].isEmpty())
+                throw new IllegalArgumentException("write requires content");
+            resolveInFilesDir(filesDir, path);
+            String content = unescape(sub[1]);
+            return new Command(name, path + " " + sub[1], content);
+        }
+        if (name.equals("exec")) {
+            if (argument == null || argument.isEmpty())
+                throw new IllegalArgumentException("exec requires a path argument");
+            resolveInFilesDir(filesDir, argument);
+            return new Command(name, argument, null);
         }
         throw new IllegalArgumentException("unknown eval command: " + name);
     }
@@ -153,12 +221,21 @@ public final class BoundedEvaluator {
      * @return the execution result with durable terminal state
      */
     public static Result execute(Command command, final Clock clock) {
+        return execute(command, clock, null, -1);
+    }
+
+    /**
+     * Execute a parsed command with bounds, timeout and write/exec context.
+     * @param filesDir the app's own files directory (null: write/exec fail)
+     * @param uid the parent app UID for exec rows (-1: omitted)
+     */
+    static Result execute(Command command, final Clock clock, final File filesDir, final int uid) {
         if (command == null) throw new IllegalArgumentException("command is null");
         if (clock == null) throw new IllegalArgumentException("clock is null");
         long timestamp = clock.elapsedRealtime();
         Future<String> future = EXECUTOR.submit(new Callable<String>() {
             @Override public String call() throws Exception {
-                return runCommand(command, clock);
+                return runCommand(command, clock, filesDir, uid);
             }
         });
         try {
@@ -180,7 +257,7 @@ public final class BoundedEvaluator {
         }
     }
 
-    private static String runCommand(Command command, final Clock clock) throws Exception {
+    private static String runCommand(Command command, final Clock clock, final File filesDir, final int uid) throws Exception {
         if (command.name.equals("identity")) {
             return identity();
         }
@@ -192,6 +269,12 @@ public final class BoundedEvaluator {
         }
         if (command.name.equals("env")) {
             return read("/proc/self/status");
+        }
+        if (command.name.equals("write")) {
+            return write(command, filesDir);
+        }
+        if (command.name.equals("exec")) {
+            return exec(command, filesDir, uid);
         }
         throw new IllegalArgumentException("unknown command: " + command.name);
     }
@@ -240,6 +323,76 @@ public final class BoundedEvaluator {
     private static String read(String path) throws IOException {
         byte[] bytes = readBoundedBytes(path, MAX_STATUS_BYTES);
         return new String(bytes, ASCII);
+    }
+
+    /**
+     * Resolve a write/exec path inside the app's own files dir. Relative paths
+     * resolve against {@code filesDir}; the canonical result must stay inside
+     * it, so {@code ..} traversal and absolute paths outside are denials.
+     * @throws IllegalArgumentException on null dir, empty path or escape
+     */
+    private static File resolveInFilesDir(File filesDir, String rawPath) {
+        if (filesDir == null) throw new IllegalArgumentException("files dir unavailable");
+        if (rawPath == null || rawPath.isEmpty()) throw new IllegalArgumentException("path required");
+        File file = new File(rawPath);
+        if (!file.isAbsolute()) file = new File(filesDir, rawPath);
+        try {
+            String base = filesDir.getCanonicalPath();
+            if (!file.getCanonicalPath().startsWith(base + File.separator))
+                throw new IllegalArgumentException("path not in allowlist: " + rawPath);
+            return file;
+        } catch (IOException e) {
+            throw new IllegalArgumentException("path unavailable: " + rawPath);
+        }
+    }
+
+    /**
+     * Unescape write content: {@code \n} becomes a newline, {@code \\} a
+     * backslash; any other escape is rejected. The wire protocol is
+     * line-based, so a real newline cannot arrive in the command itself.
+     */
+    private static String unescape(String s) {
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c != '\\') { sb.append(c); continue; }
+            if (i + 1 >= s.length()) throw new IllegalArgumentException("write content ends with escape");
+            char next = s.charAt(++i);
+            if (next == 'n') sb.append('\n');
+            else if (next == '\\') sb.append('\\');
+            else throw new IllegalArgumentException("write content invalid escape: \\" + next);
+        }
+        return sb.toString();
+    }
+
+    /** Persist an already-validated write inside the app's files dir. */
+    private static String write(Command command, File filesDir) throws IOException {
+        String path = command.argument.split("\\s+", 2)[0];
+        File file = resolveInFilesDir(filesDir, path);
+        FileOutputStream out = new FileOutputStream(file);
+        try { out.write(command.writeContent.getBytes(ASCII)); } finally { out.close(); }
+        return "wrote path=" + path + " bytes=" + command.writeContent.getBytes(ASCII).length;
+    }
+
+    /**
+     * Exec the app-written file itself under the app identity (class-4 route).
+     * The owner-only exec bit is set first so a DAC denial is not misattributed
+     * to the SELinux MAC decision; a child past its deadline is destroyed and
+     * the destroy result is reported truthfully.
+     */
+    private static String exec(Command command, File filesDir, int uid) {
+        String path = command.argument;
+        File file = resolveInFilesDir(filesDir, path);
+        try {
+            if (file.isFile() && !file.setExecutable(true, true)) return "exec unavailable reason=dac-setup";
+            BoundedExec.Outcome outcome = BoundedExec.run(file.getAbsolutePath());
+            String id = uid >= 0 ? "uid=" + uid + " " : "";
+            if (outcome.ok) return id + "exec cmd=" + path + " output=" + outcome.output.trim() + " exit=" + outcome.exit;
+            if (outcome.timedOut) return id + "exec cmd=" + path + " timeout reason=no-exit destroyed=" + outcome.destroyed;
+            return id + "exec cmd=" + path + " unavailable reason=" + outcome.reason;
+        } catch (RuntimeException e) {
+            return "exec unavailable reason=" + BoundedExec.reason(e);
+        }
     }
 
     private static String bound(String output) {

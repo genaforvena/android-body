@@ -3,6 +3,7 @@ package org.androidbody;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.FileInputStream;
 
 /** Zero-dependency JVM tests for BoundedEvaluator: run tools/test-protocol.sh. */
 public final class BoundedEvaluatorTest {
@@ -28,6 +29,19 @@ public final class BoundedEvaluatorTest {
         count++;
         BoundedEvaluator.Command command = BoundedEvaluator.parse(input);
         return BoundedEvaluator.execute(command, clock);
+    }
+    private static String readFile(File file) throws IOException {
+        FileInputStream in = new FileInputStream(file);
+        try {
+            byte[] buf = new byte[(int) file.length()];
+            int off = 0;
+            while (off < buf.length) {
+                int n = in.read(buf, off, buf.length - off);
+                if (n < 0) break;
+                off += n;
+            }
+            return new String(buf, 0, off, "US-ASCII");
+        } finally { in.close(); }
     }
 
     public static void main(String[] ignored) throws IOException {
@@ -182,6 +196,108 @@ public final class BoundedEvaluatorTest {
         // Truncation: short output is not marked truncated
         BoundedEvaluator.Result shortResult = execOk("clock", clock);
         ok(!shortResult.truncated, "short output should not be marked truncated");
+
+        // write/exec: bounded verbs inside a temp files dir (Option A substrate)
+        File bodyDir = new File(System.getProperty("java.io.tmpdir"), "eval-write-exec-" + System.nanoTime());
+        ok(bodyDir.mkdirs(), "bodyDir should be created");
+        BoundedEvaluator.Session body = new BoundedEvaluator.Session(bodyDir, 1000);
+
+        // write: \n escapes become real newlines on disk; row reports path+bytes
+        BoundedEvaluator.Result w1 = body.execute(BoundedEvaluator.parse("write s.sh #!/bin/sh\\necho genome-marker-42\\n", bodyDir), clock);
+        ok(w1.ok, "write should succeed");
+        ok(w1.output.startsWith("wrote path=s.sh bytes="), "write row: " + w1.output);
+        File sFile = new File(bodyDir, "s.sh");
+        ok(sFile.isFile(), "write should persist the script");
+        ok(readFile(sFile).equals("#!/bin/sh\necho genome-marker-42\n"), "write should unescape \\n");
+
+        // exec: the persisted script is the exec target; marker + rc reported
+        BoundedEvaluator.Result e1 = body.execute(BoundedEvaluator.parse("exec s.sh", bodyDir), clock);
+        ok(e1.ok, "exec should succeed");
+        ok(e1.output.contains("uid=1000"), "exec row should carry parent uid: " + e1.output);
+        ok(e1.output.contains("cmd=s.sh"), "exec row should name the target: " + e1.output);
+        ok(e1.output.contains("output=genome-marker-42"), "exec marker: " + e1.output);
+        ok(e1.output.contains("exit=0"), "exec rc: " + e1.output);
+
+        // rerun: same target, no rewrite before the second exec, same marker+rc
+        BoundedEvaluator.Result e2 = body.execute(BoundedEvaluator.parse("exec s.sh", bodyDir), clock);
+        ok(e2.ok && e2.output.contains("output=genome-marker-42") && e2.output.contains("exit=0"), "rerun row: " + e2.output);
+
+        // exec output bound: command output clamps to 1024 bytes
+        body.execute(BoundedEvaluator.parse("write big.sh #!/bin/sh\\nyes genome-big-marker | head -c 2000\\n", bodyDir), clock);
+        BoundedEvaluator.Result big = body.execute(BoundedEvaluator.parse("exec big.sh", bodyDir), clock);
+        ok(big.ok, "big exec should succeed");
+        ok(big.output.length() <= BoundedEvaluator.MAX_OUTPUT_PER_COMMAND, "exec output within 1024 bound");
+        ok(big.truncated, "big exec output should be marked truncated");
+
+        // exec timeout: child past the deadline is destroyed, truthful destroyed=
+        body.execute(BoundedEvaluator.parse("write t.sh #!/bin/sh\\nsleep 10\\n", bodyDir), clock);
+        BoundedExec.TIMEOUT_MS = 100;
+        BoundedExec.DESTROY_WAIT_MS = 50;
+        BoundedExec.READ_JOIN_MS = 50;
+        BoundedEvaluator.Result to;
+        try {
+            to = body.execute(BoundedEvaluator.parse("exec t.sh", bodyDir), clock);
+        } finally {
+            BoundedExec.TIMEOUT_MS = 5000;
+            BoundedExec.DESTROY_WAIT_MS = 1000;
+            BoundedExec.READ_JOIN_MS = 1000;
+        }
+        ok(to.ok, "exec timeout is an observed outcome, not a command error");
+        ok(to.output.contains("timeout reason=no-exit destroyed=true"), "timeout row: " + to.output);
+
+        // exec missing target: truthful unavailable reason
+        BoundedEvaluator.Result missing = body.execute(BoundedEvaluator.parse("exec nope.sh", bodyDir), clock);
+        ok(missing.ok, "missing target is an observed outcome");
+        ok(missing.output.contains("unavailable reason="), "missing row: " + missing.output);
+        ok(missing.output.contains("No such file or directory"), "missing row should name ENOENT: " + missing.output);
+
+        // exec without uid: token omitted
+        BoundedEvaluator.Session anon = new BoundedEvaluator.Session(bodyDir, -1);
+        BoundedEvaluator.Result e3 = anon.execute(BoundedEvaluator.parse("exec s.sh", bodyDir), clock);
+        ok(e3.ok && !e3.output.contains("uid="), "uid omitted when unknown: " + e3.output);
+
+        // denials: paths outside the app files dir are rejected at parse
+        rejects(new Runnable() { public void run() { BoundedEvaluator.parse("write ../escape.sh x", bodyDir); } });
+        rejects(new Runnable() { public void run() { BoundedEvaluator.parse("write /etc/passwd x", bodyDir); } });
+        rejects(new Runnable() { public void run() { BoundedEvaluator.parse("exec ../s.sh", bodyDir); } });
+        rejects(new Runnable() { public void run() { BoundedEvaluator.parse("exec /etc/passwd", bodyDir); } });
+        try {
+            BoundedEvaluator.parse("write /etc/passwd x", bodyDir);
+            throw new AssertionError("traversal should be rejected");
+        } catch (IllegalArgumentException e) {
+            ok(e.getMessage().contains("write path not in allowlist: /etc/passwd"), "denial message: " + e.getMessage());
+        }
+
+        // write grammar: content and escapes are validated
+        rejects(new Runnable() { public void run() { BoundedEvaluator.parse("write s.sh", bodyDir); } });
+        rejects(new Runnable() { public void run() { BoundedEvaluator.parse("write s.sh \\q", bodyDir); } });
+        rejects(new Runnable() { public void run() { BoundedEvaluator.parse("exec", bodyDir); } });
+
+        // write/exec without a files dir: rejected, not executed
+        BoundedEvaluator.Session noDir = new BoundedEvaluator.Session();
+        BoundedEvaluator.Result nd = noDir.execute(BoundedEvaluator.parse("write x.sh echo hi", bodyDir), clock);
+        ok(!nd.ok, "write without files dir should fail");
+        BoundedEvaluator.Result nde = noDir.execute(BoundedEvaluator.parse("exec s.sh", bodyDir), clock);
+        ok(!nde.ok, "exec without files dir should fail");
+
+        // storage bound: cumulative writes capped at 65536 bytes/session
+        StringBuilder content = new StringBuilder();
+        for (int i = 0; i < 990; i++) content.append('x');
+        BoundedEvaluator.Session st = new BoundedEvaluator.Session(bodyDir, -1);
+        int writes = 0;
+        boolean storageLimitHit = false;
+        for (int i = 0; i < 70; i++) {
+            BoundedEvaluator.Result r = st.execute(BoundedEvaluator.parse("write f" + i + ".txt " + content, bodyDir), clock);
+            if (!r.ok && r.error.equals("session storage limit exceeded")) { storageLimitHit = true; break; }
+            writes++;
+        }
+        ok(storageLimitHit, "session storage limit should be hit");
+        equal(66, writes);
+
+        // cleanup
+        File[] leftovers = bodyDir.listFiles();
+        if (leftovers != null) for (File f : leftovers) f.delete();
+        bodyDir.delete();
 
         // Summary
         System.out.println("BoundedEvaluatorTest: " + count + " tests passed");
