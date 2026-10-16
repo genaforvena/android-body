@@ -655,3 +655,49 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   The script is not service- or timer-driven, and the check only reads pane text: no device,
   transport, cursor, queue, actuator, radio, APK, tmux state or `body/runtime` byte is touched.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake103031-pane-lease-frame-cycle-detector.md`.
+
+## Failed-unit visibility and the cross-site detector's window (health wake 103721, 2026-10-16)
+
+- Trigger: a routine sweep of the health-owned units found `android-body-crosssite-check.service` at
+  `loaded failed` for over nine hours (journal: `Failed with result 'exit-code'` on every 5-minute
+  tick from 12:41:40Z to 22:04:40Z) while `tools/health-check.sh` §1b read it `GREEN` and the
+  dashboard read `SERVICES: GREEN — 12 listed units active/running, 0 restarts`.
+- Cause (two independent defects, each observed):
+  1. `tools/service_units.py` read only the LOAD column. The cross-site unit is deliberately left
+     `failed` (`Type=oneshot`, no `Restart=`) so a detected cross-site CLI selection stays visible
+     instead of being retried away, so `loaded` is its healthy LOAD and the failure is only in the
+     ACTIVE column — a state the LOAD-only read cannot express. Failing-before: the same script on
+     the live dump printed `GREEN unit android-body-crosssite-check.service loads`.
+  2. `bin/health-crosssite-check` bounded the `--minutes` window by session *file mtime* only, then
+     checked every command in an in-window session. The senses session
+     `2026-10-16T21-07-03-188Z_…jsonl` stays live for its whole turn, so the 2026-10-16T21:09:08.781Z
+     episode was re-reported by every tick from 21:19:38Z to 22:04:40Z — 55+ minutes after the
+     operation — and would have been re-reported forever. The module docstring already promised the
+     opposite ("a RED ages out of its window").
+- Fix: `tools/service_units.py` now reads the ACTIVE and SUB columns too (exit 0 every unit loads
+  and none is `failed`; `inactive`/`dead` stays GREEN as the normal between-runs oneshot state) and
+  §1b prints the state per unit. `bin/health-crosssite-check` bounds the window by each operation's
+  own transcript timestamp; an unparseable timestamp is kept, not dropped, so a possible violation
+  cannot be aged out by a missing stamp.
+- Verification: `python3 -m unittest discover -s tools` → 308 OK (15 service_units cases, including
+  the `loaded failed` oneshot and the load-only call); `bin/health-crosssite-check --selftest` →
+  15/15 PASS, with a new in-window/aged-out pair over two freshly written session files and an
+  unparseable-timestamp case. Live `service_units.py` on the real dump: `RED unit
+  android-body-crosssite-check.service active state failed sub failed (last start failed)` after the
+  fix, `GREEN … loads` before it. Live `bin/health-crosssite-check --minutes 30 --out …` after the
+  fix: `GREEN … foreign_ops=0 foreign_reads=0` (the 21:09 episode aged out), where the pre-fix run
+  re-reported it; `systemctl --user start android-body-crosssite-check.service` → `Result=success`,
+  `ActiveState=inactive`, and `sh tools/health-check.sh` then read
+  `GREEN unit android-body-crosssite-check.service loads active=inactive sub=dead` with the only RED
+  remaining the known §2c witness frame cycle.
+- Not fixed here, deliberately: the underlying RED verdict is a real (self-corrected) label
+  deviation — the 21:09:08.781Z `wall dm --source senses --to body-research` was re-issued 14 s later
+  with the canonical `--source android-body/senses` — and the core plant has a role named `senses`,
+  so an unprefixed source in the core tape is ambiguous between the two plants. The detector keeps it
+  RED; only the staleness was repaired.
+- Revert: `git checkout -- tools/service_units.py tools/test_service_units.py`; restore
+  `bin/health-crosssite-check` from `.mishe-tauftauf/artifacts/` (site file, not versioned) and
+  `systemctl --user reset-failed android-body-crosssite-check.service`. Neither repair is
+  service- or timer-driven beyond the check's own timer; no device, transport, cursor, queue,
+  actuator, radio, APK or `body/runtime` byte is touched.
+- Evidence: `.mishe-tauftauf/artifacts/health-wake103721-crosssite-failed-unit-and-stale-episode.md`.
