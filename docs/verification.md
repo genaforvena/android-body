@@ -121,6 +121,8 @@ Device liveness probes on the Note3 are themselves a hazard: `/system/bin/ps` is
 
 ## Reproduce the host checks
 
+The same set as the [README Checks block](../README.md#checks-and-truthful-scope), plus the APK signature step:
+
 ```sh
 # The system default java is JDK 8 without javac; export a JDK 17+ install first:
 #   export JAVA_HOME=/home/mesh-home/.local/jdk21
@@ -129,9 +131,11 @@ tools/test-protocol.sh
 tools/test-spool.sh
 python3 -m unittest discover -s rendezvous/minimal-server
 python3 -m unittest discover -s experiments/light-vibrate
-python3 -m unittest discover -s experiments/minimal-substrate
 python3 -m unittest discover -s experiments/perception
-./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool
+python3 -m unittest discover -s experiments/minimal-substrate
+python3 -m unittest discover -s experiments/trial-eval
+python3 -m unittest discover -s tools
+./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testBleScanEvents :app:testEvalOutcome :app:testExecProbe
 "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose \
   app/build/outputs/apk/debug/app-debug.apk
 ```
