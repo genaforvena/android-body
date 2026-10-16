@@ -48,6 +48,21 @@ jobs:
           python3 -m unittest discover -s tools
       - name: Build and lint
         run: ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe
+      # minSdk 18 (the original Note 3 baseline) cannot install an APK signed
+      # only with the v2 scheme: API 18 predates it. The debug signing config
+      # enables v1 and both installable artifacts carry it, but nothing checked
+      # that, so a lost v1 signature (an AGP upgrade, a signing-config edit or a
+      # hand-rebuilt download) would break the documented install path with CI
+      # still green -- the published-payload check that follows ignores `META-INF`
+      # by design and so cannot see it. `--min-sdk-version 18` states the floor
+      # explicitly, so raising the manifest minimum cannot silently weaken this
+      # to a v2-only check. A v2-only rebuild of the same source fails here
+      # (exit 1, "Missing META-INF/MANIFEST.MF").
+      - name: APKs carry the v1 signature the API 18 install path needs
+        run: |
+          sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          "$sdk/build-tools/35.0.0/apksigner" verify --min-sdk-version 18 app/build/outputs/apk/debug/app-debug.apk
+          "$sdk/build-tools/35.0.0/apksigner" verify --min-sdk-version 18 downloads/android-body-debug.apk
       - name: Published download matches the built APK
         run: python3 tools/check_published_apk.py
       - name: Upload installable debug APK
