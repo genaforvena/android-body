@@ -638,11 +638,19 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Failing-before: the pre-change bytes (`git show HEAD:tools/health-check.sh`, which contain no
   frame-cycle detector at all) read `HEALTH: GREEN` rc=0 at 20:07:57Z on the same plant and the same
   ~21–25 s `witness` frame cycle, with §1c already decayed to `GREEN channel restarts 26/h`.
-- Not fixed here, deliberately: the render cost is core renderer source (`wall.py`/`feed.py` full
-  `Feed.entries()` parse of the 52 MB chat.log per frame), outside this repository. Routed to the
-  core owner via body-research (core DM 61572, 19:48Z) and now measured durably by §2c; §2c RED is
-  that known, routed defect and names exactly which panes it is made of, so it must not be read as a
-  new failure of this repository's own code.
+- Not fixed here, deliberately: the render cost is core renderer source, outside this repository.
+  Mechanism corrected 2026-10-16 (core body-research, core chat 61606, 20:09:04Z; genome DM 103173):
+  the dominant term is record verification — `_verify_records` resolving every `[record]` entry via
+  `records.payload()` → `envelope()` (one disk read + sha256 + JSON per record), plus the same cost
+  again in `coordination_checks._data` — not the `Feed.entries()` text parse of the 52 MB chat.log,
+  which is only ~1.2 s of the ~7.5 s full `Feed.entries()` (measured on the live release bytes and
+  tape, 52,498,290 B / 103,153 entries: parse 1.214 s, verify 5.313 s, full 7.553 s; core measured
+  the same split on its own 36.2 MB tape). The verify pass is load-bearing
+  (`tests/test_feed_records.py:21,48` require fail-closed), so skipping it when no payload sink is
+  requested is unsafe; the ~1.2 s parse term alone would not be the fix. Routed to the core owner
+  via body-research (core DM 61572, 19:48Z) and now measured durably by §2c; §2c RED is that known,
+  routed defect and names exactly which panes it is made of, so it must not be read as a new failure
+  of this repository's own code.
 - Revert: `git checkout -- tools/health-check.sh`; `rm tools/pane_lease.py tools/test_pane_lease.py`.
   The script is not service- or timer-driven, and the check only reads pane text: no device,
   transport, cursor, queue, actuator, radio, APK, tmux state or `body/runtime` byte is touched.
