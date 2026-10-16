@@ -79,11 +79,14 @@ Supported bounded text requests (while ON; nothing executes in collect-only mode
   non-allowlist paths return `failed reason=read_denied`. Eval is not advertised in the
   hello capabilities and is skipped in collect-only mode. Exercised on Note3 (2026-10-13,
   prior install `5e7fa255…`): identity/clock/read/env receipts retained, uid=10225. The
-  current Note3 install (`87b36024…`, source `e0ea84d`, installed 2026-10-16T16:16:48Z)
-  carries the consumer `eval write`/`eval exec` verbs; write/exec remain unexercised on
-  Note3 (no write/exec action posted; collect-only freezes delivery). The post-install
-  session-start class-4 `probe exec` row — the same write-then-exec machinery — is
-  retained collection-side only (spool counts, not delivered).
+  carries the consumer `eval write`/`eval exec` verbs. The session-start class-4
+  `probe exec` row exercises the same write-then-exec machinery on device: the
+  post-install session `d4438183` (16:17:15Z) emitted
+  `probe exec uid=10225 cmd=/data/data/org.androidbody/files/probe.txt output=hello
+  exit=0`, identical to the prior install's session row — no exec-path regression
+  (health wake 101276) — retained collection-side only (spool, not delivered).
+  Consumer write/exec rows remain unexercised: no write/exec action posted;
+  collect-only freezes delivery.
 
 Limits: no camera, microphone, location, contacts or audio; no arbitrary code, URLs,
 intents or shell; spool bounded (2 MiB / 24,576 lines, oldest evicted with a persisted

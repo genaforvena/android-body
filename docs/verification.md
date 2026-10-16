@@ -251,6 +251,7 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Independent re-read by docs at 13:56Z: the same `probe exec` row text and its `hello node=note3 … session=8b509a76…` row are present in the spool; `body/spool-summary-note3.json` (written by `tools/spool_read.py`, a separate reader) counts `probe=2` (identity plus exec) for the new session; `body/activation_probe.py` reported `recorded == observed == 5e7fa255…`.
 - Limits: one device, one firmware (API 21), one run. `uid=10225` is the parent's inherited `Process.myUid()`, not an independently read child identity; no AVC line was captured in-process. Revert: `adb install -r` the retained `bb66a3f4` bytes.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake99964-class4-execprobe-activation.md` (timestamps UTC+3 as noted above).
+- Post-install repeat on `87b36024…` (health wake 101276): the session after the 16:16:48Z install, `d4438183` at 16:17:15Z, emitted the identical `probe exec uid=10225 … output=hello exit=0` row — a same-shape regression check across the install, still phone-local spool, not delivered. Evidence: `.mishe-tauftauf/artifacts/health-wake101276-postinstall-session-start-and-verb-gate.md`.
 
 ## Redmi10 tailnet reachability predicate — detector false negative (health wake 87607, 2026-10-15)
 
