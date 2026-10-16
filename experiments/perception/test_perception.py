@@ -2505,7 +2505,8 @@ class PerceptionTests(unittest.TestCase):
                 "pid": 4242, "started_unix": 900.0, "timestamp_unix": 990.0}))
             log_file.write_text(json.dumps({
                 "event": "light-cycle-resumed", "lux": 11.4, "prev_lux": 0.2,
-                "prev_observed_unix": 960.0, "threshold_lux": 7.0, "poll": 7,
+                "prev_observed_unix": 960.0, "baseline_first_unix": 960.0,
+                "baseline_samples": [[12, 960.0, 0.2]], "threshold_lux": 7.0, "samples": 7,
                 "timestamp_unix": 990.0}) + "\n")
             with patch.object(watch, "MONITOR_STATE_FILE", state_file), \
                  patch.object(watch, "MONITOR_LOG_FILE", log_file):
@@ -2514,8 +2515,8 @@ class PerceptionTests(unittest.TestCase):
         self.assertIn("heartbeat_age=10.0s (stale>30s)", view)
         self.assertIn("armed=True", view)
         self.assertIn("pid=4242", view)
-        self.assertIn("last_row=lux=11.4 prev_lux=0.2 threshold_lux=7.0 poll=7 "
-                      "prev_observed_gap=30s", view)
+        self.assertIn("last_row=lux=11.4 prev_lux=0.2 threshold_lux=7.0 samples=7 "
+                      "baseline_span_s=-", view)
         self.assertNotIn("predates the 7.0-lux rule", view)
 
     def test_light_resumption_view_flags_silent_detector_and_retained_old_row(self):
@@ -2710,8 +2711,8 @@ class PerceptionTests(unittest.TestCase):
             with patch.object(watch, "MONITOR_STATE_FILE", Path(folder) / "absent.json"), \
                  patch.object(watch, "MONITOR_LOG_FILE", log_file):
                 view = watch.light_resumption_view(1000, 30)
-        self.assertIn("last_row=lux=11.4 prev_lux=0.2 threshold_lux=7.0 poll=7 "
-                      "prev_observed_gap=30s", view)
+        self.assertIn("last_row=lux=11.4 prev_lux=0.2 threshold_lux=7.0 samples=7 "
+                      "baseline_span_s=-", view)
         self.assertNotIn("last_row=none", view)
 
     def test_last_monitor_row_reports_none_when_no_line_is_complete(self):
@@ -2737,8 +2738,42 @@ class PerceptionTests(unittest.TestCase):
             with patch.object(watch, "MONITOR_STATE_FILE", Path(folder) / "absent.json"), \
                  patch.object(watch, "MONITOR_LOG_FILE", log_file):
                 view = watch.light_resumption_view(1000, 30)
-        self.assertIn("last_row=lux=67.0 prev_lux=0.2 threshold_lux=7.0 poll=59", view)
+        self.assertIn("last_row=lux=67.0 prev_lux=0.2 threshold_lux=7.0 samples=59", view)
 
+
+    def test_last_monitor_row_names_a_pre_rename_row_and_flags_it(self):
+        # The count of consumed samples and the baseline start were written as ``poll`` and
+        # ``prev_observed_unix`` until 2026-10-16. The view renders both under their current
+        # names and says the row predates the rename, so a reader is not left comparing the
+        # row's ``poll`` against the heartbeat's ``poll`` (the check index).
+        with tempfile.TemporaryDirectory() as folder:
+            log_file = Path(folder) / "light-cycle-resumed.jsonl"
+            log_file.write_text(json.dumps({
+                "event": "light-cycle-resumed", "lux": 14.0, "prev_lux": 4.0,
+                "prev_observed_unix": 1005.0, "threshold_lux": 10.0, "poll": 3284,
+                "baseline_samples": [[49923, 1005.0, 4.0], [49943, 1030.0, 4.0]],
+                "timestamp_unix": 1073.0}) + "\n")
+            with patch.object(watch, "MONITOR_STATE_FILE", Path(folder) / "absent.json"), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                view = watch.light_resumption_view(1000, 30)
+        self.assertIn("last_row=lux=14.0 prev_lux=4.0 threshold_lux=10.0 samples=3284 "
+                      "baseline_span_s=25s", view)
+        self.assertIn("predates the 2026-10-16 field rename", view)
+
+    def test_last_monitor_row_names_a_current_row_without_the_rename_note(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log_file = Path(folder) / "light-cycle-resumed.jsonl"
+            log_file.write_text(json.dumps({
+                "event": "light-cycle-resumed", "lux": 14.0, "prev_lux": 4.0,
+                "prev_observed_unix": 1030.0, "baseline_first_unix": 1005.0,
+                "baseline_samples": [[49923, 1005.0, 4.0], [49943, 1030.0, 4.0]],
+                "threshold_lux": 10.0, "samples": 3341, "timestamp_unix": 1073.0}) + "\n")
+            with patch.object(watch, "MONITOR_STATE_FILE", Path(folder) / "absent.json"), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                view = watch.light_resumption_view(1000, 30)
+        self.assertIn("last_row=lux=14.0 prev_lux=4.0 threshold_lux=10.0 samples=3341 "
+                      "baseline_span_s=25s", view)
+        self.assertNotIn("predates the 2026-10-16 field rename", view)
 
     def test_node_state_document_is_not_parsed_as_a_perception_state(self):
         # tools/node_state.py publishes node-state-<node>.json into the same

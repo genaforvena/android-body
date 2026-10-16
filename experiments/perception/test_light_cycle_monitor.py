@@ -34,7 +34,11 @@ class TestRules(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["rule"], "single-sample")
         self.assertEqual(events[0]["prev_lux"], 0.2)
+        self.assertEqual(events[0]["prev_observed_unix"], 1000)  # the sample prev_lux describes
+        self.assertEqual(events[0]["baseline_samples"], [[1, 1000, 0.2]])  # its own seq, not the fire's
         self.assertEqual(events[0]["threshold_lux"], 7.0)
+        self.assertEqual(events[0]["samples"], 2)
+        self.assertNotIn("poll", events[0])
 
     def test_note3_rule_does_not_fire_on_the_first_lit_sample(self):
         events, _ = self._events("note3", [(1, 1000, 12.0), (2, 1005, 13.0)])
@@ -58,7 +62,8 @@ class TestRules(unittest.TestCase):
                          {"arm_lux_max": 6.0, "resume_lux_min": 10.0,
                           "dark_dwell_samples": 3})
         self.assertEqual(events[0]["prev_lux"], 2.0)
-        self.assertEqual(events[0]["prev_observed_unix"], 1000)
+        self.assertEqual(events[0]["prev_observed_unix"], 1010)  # the sample prev_lux describes
+        self.assertEqual(events[0]["baseline_first_unix"], 1000)  # where the baseline window starts
         self.assertEqual([sample[2] for sample in events[0]["baseline_samples"]], [0.0, 1.0, 2.0])
         self.assertFalse(detector.armed)  # a fire disarms until the dwell is rebuilt
 
@@ -100,13 +105,6 @@ class TestTailReader(unittest.TestCase):
         self.assertEqual([lux for _, _, lux in found], [0.0, 12.0])
         self.assertEqual(found[1][0], 3)
 
-    def test_leaves_a_half_written_final_line_for_the_next_check(self):
-        text = "1 1000 light lux=0.0 accuracy=3\n2 1005 light lux=1"
-        found, offset = self._read(text)
-        self.assertEqual([lux for _, _, lux in found], [0.0])
-        again, _ = self._read(text[:offset] + "2.0 accuracy=3\n", offset)
-        self.assertEqual([lux for _, _, lux in again], [12.0 - 10.8])  # 12.0 written as "12.0"
-
     def test_missing_file_yields_no_rows(self):
         with tempfile.TemporaryDirectory() as folder:
             found, offset = light_cycle_monitor.read_new_rows(Path(folder) / "absent.log", 7)
@@ -118,7 +116,6 @@ class TestTailReader(unittest.TestCase):
             path.write_text("1 1000 light lux=0.0 accuracy=3\n")
             found, offset = light_cycle_monitor.read_new_rows(path, 999)
         self.assertEqual([lux for _, _, lux in found], [0.0])
-
 
     def test_leaves_a_half_written_final_line_for_the_next_check(self):
         text = "1 1000 light lux=0.0 accuracy=3\n2 1005 light lux=1"
@@ -164,6 +161,8 @@ class TestRun(unittest.TestCase):
         self.assertEqual(status, 1)  # one check, then the bounded run ends
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["lux"], 12.0)
+        self.assertEqual(events[0]["samples"], 4)  # the heartbeat's own name for this count
+        self.assertNotIn("poll", events[0])  # the heartbeat's poll is the check index, not this
         self.assertEqual(state["node"], "redmi10")
         self.assertEqual(state["rule"], "dark-dwell")
         self.assertEqual(state["threshold_lux"], 10.0)

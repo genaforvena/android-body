@@ -1160,16 +1160,40 @@ def _last_monitor_row(path, limit=MONITOR_LOG_TAIL_BYTES):
     return None
 
 
+def _monitor_row_span(row):
+    """Phone-clock span of the row's baseline window, or ``-`` when it is not derivable.
+
+    The baseline samples' epochs come from the phone, so their span is one clock domain.
+    The retired ``prev_observed_gap`` instead subtracted the host ``timestamp_unix`` from
+    the first baseline epoch, which added the phone/host offset and the delivery latency to
+    a number the label read as a gap between observations: the 2026-10-16 03:24:33Z fire
+    rendered 68.6 s for a dark window whose own epochs span 25 s.
+    """
+    samples = row.get("baseline_samples")
+    if not isinstance(samples, list):
+        return "-"
+    epochs = [sample[1] for sample in samples
+              if isinstance(sample, list) and len(sample) >= 2
+              and isinstance(sample[1], (int, float))]
+    if len(epochs) < 2:
+        return "-"
+    return f"{max(epochs) - min(epochs):.0f}s"
+
+
 def _monitor_row_text(row):
     if row is None:
         return "none (no resumption claimed in the retained detector log)"
-    gap = "-"
-    if (isinstance(row.get("timestamp_unix"), (int, float)) and
-            isinstance(row.get("prev_observed_unix"), (int, float))):
-        gap = f"{row['timestamp_unix'] - row['prev_observed_unix']:.0f}s"
+    # The count of consumed light samples was written as ``poll`` before 2026-10-16, colliding
+    # with the heartbeat's ``poll`` (the tail-check index, a different quantity) in one block.
+    # A row that also predates the per-node rule has neither, and its ``poll`` was the check
+    # index, so it is labelled as stored.
+    if "samples" in row or "threshold_lux" in row:
+        count = f"samples={row.get('samples', row.get('poll'))}"
+    else:
+        count = f"poll={row.get('poll')}"
     return (f"lux={row.get('lux')} prev_lux={row.get('prev_lux')} "
-            f"threshold_lux={row.get('threshold_lux')} poll={row.get('poll')} "
-            f"prev_observed_gap={gap}")
+            f"threshold_lux={row.get('threshold_lux')} {count} "
+            f"baseline_span_s={_monitor_row_span(row)}")
 
 
 #: Why the detector has no resumption to claim yet, derived from its own heartbeat.
@@ -1302,6 +1326,10 @@ def light_resumption_view(now, stale, compact=False):
     if row is not None and "threshold_lux" not in row:
         lines.append("  last_row predates the current rule (no threshold_lux field); it is "
                      "retained historical evidence, not an admissible resumption")
+    if row is not None and "samples" not in row and "threshold_lux" in row:
+        lines.append("  last_row predates the 2026-10-16 field rename: its stored poll is the "
+                     "sample count, and its stored prev_observed_unix is the baseline start "
+                     "(both rendered above under their current names)")
     lines.append("  resumption rows are scored by research-methods' pre-registered milestone-5 "
                  "rule; this view reports the fields verbatim and does not rescore them")
     return "\n".join(lines)

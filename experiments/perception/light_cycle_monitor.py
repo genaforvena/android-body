@@ -33,6 +33,23 @@ The heartbeat is the detector's own liveness and armed state, published atomical
 consumer can distinguish "armed, nothing yet" from "detector silent"; a stale heartbeat is
 the only honest signal that the detector stopped. ``lux`` is null when the newest sample is
 older than ``--stale-seconds``: then the *source* is stale, not the detector.
+
+A resumption row names each quantity it carries (the renderer in ``watch.py`` reports them
+verbatim):
+
+* ``samples`` -- light samples consumed this run at the fire instant, the same quantity the
+  heartbeat publishes under ``samples``. It was written as ``poll`` before 2026-10-16, which
+  collided with the heartbeat's ``poll`` (the tail-check index, a different quantity) in one
+  rendered block: a reader saw ``poll=557`` (heartbeat) beside ``poll=3284`` (row) and could
+  infer a restart that never happened.
+* ``prev_lux``/``prev_observed_unix`` -- the sample immediately before the fire: its lux and
+  its phone epoch, so the pair describes one observation. For the dark-dwell rule this was
+  previously the *first* dark sample's epoch paired with the *last* dark sample's lux, and
+  the view rendered the resulting span as ``prev_observed_gap``, which read as the gap to
+  the previous observation (43.6 s) when it was the baseline span (68.6 s).
+* ``baseline_first_unix`` -- the first baseline sample's phone epoch, i.e. where the
+  ``baseline_samples`` window starts; the view derives ``baseline_span_s`` from it. It was
+  written as ``prev_observed_unix`` (a name the corrected ``prev_observed_unix`` now owns).
 """
 import argparse
 import json
@@ -115,6 +132,7 @@ class ResumptionDetector:
         self.prev_lux = None
         self.prev_epoch = None
         self.last_seq = None
+        self.prev_seq = None
         self.samples = 0
         self.dark_run = 0
         self.dark_samples = []  # (seq, epoch, lux) of the current consecutive dark run
@@ -150,12 +168,14 @@ class ResumptionDetector:
             if (self.prev_lux is not None and lux >= threshold and
                     self.prev_lux < threshold):
                 event = self._event(seq, epoch, lux,
-                                    [(self.last_seq, self.prev_epoch, self.prev_lux)])
+                                    [(self.prev_seq, self.prev_epoch, self.prev_lux)])
         self.prev_lux = lux
         self.prev_epoch = epoch
+        self.prev_seq = seq
         return event
 
     def _event(self, seq, epoch, lux, baseline_samples):
+        """One resumption row. Field meanings are documented in the module docstring."""
         first = baseline_samples[0] if baseline_samples else None
         return {
             "event": "light-cycle-resumed",
@@ -164,12 +184,13 @@ class ResumptionDetector:
             "rule_constants": {key: self.rule[key] for key in self.rule if key != "rule"},
             "lux": lux,
             "prev_lux": self.prev_lux,
-            "prev_observed_unix": first[1] if first else None,
+            "prev_observed_unix": self.prev_epoch,
             "baseline_samples": [list(sample) for sample in baseline_samples],
+            "baseline_first_unix": first[1] if first else None,
             "threshold_lux": self.rule["resume_lux_min"],
             "seq": seq,
             "epoch": epoch,
-            "poll": self.samples,
+            "samples": self.samples,
             "timestamp_unix": time.time(),
         }
 
@@ -208,8 +229,8 @@ def run(args):
             if event is not None:
                 with open(LOG_FILE, "a") as stream:
                     stream.write(json.dumps(event, sort_keys=True) + "\n")
-                print("RESUMED node=%s lux=%s seq=%s baseline=%s poll=%s" %
-                      (args.node, lux, seq, event["prev_lux"], event["poll"]))
+                print("RESUMED node=%s lux=%s seq=%s baseline=%s samples=%s" %
+                      (args.node, lux, seq, event["prev_lux"], event["samples"]))
         now = time.time()
         age = None if detector.prev_epoch is None else now - detector.prev_epoch
         fresh = age is not None and age <= args.stale_seconds

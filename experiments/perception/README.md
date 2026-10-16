@@ -241,13 +241,28 @@ provenance and never take part in the dedup identity.
 
 ## Light-cycle resumption detector
 
-`light_cycle_monitor.py` is a separate bounded host-side process that polls the Note3 light
-channel, publishes a heartbeat to
-`SITE/body/runtime/artifacts/light-cycle-monitor-state.json`, and appends a row to
-`light-cycle-resumed.jsonl` only when a resumption is claimed. Both views render a
-`Light-cycle resumption detector` section: liveness (`status`, heartbeat age against the
-30 s stale bound), the heartbeat fields verbatim, and the last retained row verbatim. A
-missing or stale heartbeat is UNKNOWN/stale, never calm.
+`light_cycle_monitor.py` is a separate bounded host-side process that polls the live node's
+light channel (per-node frozen rules; the Note3 rule stays dormant while it is collect-only),
+publishes a heartbeat to `SITE/body/runtime/artifacts/light-cycle-monitor-state.json`, and
+appends a row to `light-cycle-resumed.jsonl` only when a resumption is claimed. Both views
+render a `Light-cycle resumption detector` section: liveness (`status`, heartbeat age against
+the 30 s stale bound), the heartbeat fields verbatim, and the last retained row. A missing or
+stale heartbeat is UNKNOWN/stale, never calm.
+
+A resumption row names each quantity it carries, and the view renders those names:
+
+| row field | quantity |
+|---|---|
+| `samples` | light samples consumed this run at the fire instant — the heartbeat's own `samples`, not its `poll` (the tail-check index) |
+| `prev_lux` / `prev_observed_unix` | the sample immediately before the fire: its lux and its phone epoch |
+| `baseline_first_unix` | the first baseline sample's phone epoch; the view derives `baseline_span_s` from `baseline_samples`, whose epochs are all phone-clock, so the span is one clock domain |
+
+Until 2026-10-16 the row wrote the sample count as `poll` and the baseline start as
+`prev_observed_unix`, and the view subtracted the host `timestamp_unix` from the baseline
+start as `prev_observed_gap`. That collided with the heartbeat's `poll` in one rendered
+block (a reader saw `poll=557` beside `poll=3284`) and mixed clock domains (68.6 s rendered
+for a 25 s dark window). A row that predates the rename still renders its count as
+`samples` and its span from the baseline epochs, and the view says so.
 
 The heartbeat's `armed` is only "a fresh baseline exists this run": it does not say the
 baseline is below the threshold, nor that the current poll read anything fresh. The view
@@ -263,9 +278,10 @@ silence carries its own cause instead of one sentence that fits only the fresh-b
 | `baseline-without-current-reading` | a baseline survives from an earlier poll; this poll read nothing fresh |
 | `unknown` | fields missing or disagreeing with `armed`: the armed state is UNKNOWN, not calm |
 
-Rows are reported verbatim and never rescored here; a row without `threshold_lux` predates
-the 7.0-lux rule and is labelled inadmissible. Scoring stays research-methods'
-pre-registered milestone-5 rule.
+Rows are reported verbatim and never rescored here. A row without `threshold_lux` predates
+the per-node rule and is labelled inadmissible; a row whose count and span fields predate
+the 2026-10-16 rename is labelled with their current names and flagged as pre-rename.
+Scoring stays research-methods' pre-registered milestone-5 rule.
 
 ## Host-side node state
 
