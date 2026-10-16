@@ -1876,7 +1876,10 @@ def render_events(state, now, stale, node_state=None, clock=None, spool=None):
         lines.append(f"  scan_state {scan_state_status}")
     lines.extend("  " + event for event in state["events"][-4:])
     if state["actions"]:
-        lines.append("  receipt: " + state["actions"][-1]["raw"])
+        # The last receipt carries the same provenance as the view: a bare raw
+        # line let a days-old exec receipt (collect-only, no fresh delivery)
+        # sit after fresh event lines and read as current.
+        lines.append("  receipt: " + describe(state["actions"][-1], now, stale))
     return "\n".join(lines)
 
 

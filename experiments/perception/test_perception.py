@@ -112,6 +112,23 @@ class PerceptionTests(unittest.TestCase):
         empty = self.state()
         self.assertIn("clock agreement is unverified", watch.render(empty, 1000, 30))
 
+    def test_events_receipt_line_carries_its_freshness(self):
+        """Regression: the events pane printed the last action receipt as a bare
+        raw line, so a receipt days old (collect-only, no fresh delivery) sat
+        after fresh event lines with no date and read as current. The receipt
+        now carries the view's provenance: phone event time, consumer receipt
+        time and the delayed flag.
+        """
+        state = self.state()
+        self.page(state, ["900 action 25 succeeded kind=eval command=env "
+                          "identity=2f94ed status=ok truncated=false output=uid=10225"],
+                   received=1000)
+        events = watch.render_events(state, 1000, 30)
+        self.assertIn("receipt: #1 900 action 25 succeeded kind=eval", events)
+        self.assertIn("phone_sample/event=1970-01-01T00:15:00+00:00", events)
+        self.assertIn("consumer_receipt=1970-01-01T00:16:40+00:00", events)
+        self.assertIn("delayed_at_receipt=true", events)
+
     def test_restart_preserves_cursor_raw_unknowns_and_no_timestamp_wakes(self):
         state = self.state()
         self.page(state, ["1000 battery level=0.5 charging=true future=kept",
