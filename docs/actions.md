@@ -32,13 +32,21 @@ eval read /proc/self/status
 eval read /proc/self/attr/current
 eval read /proc/meminfo
 eval env
+eval write <path> <content>
+eval exec <path>
 ```
 
 - `identity` — UID/groups from `/proc/self/status` (bounded to 4096 bytes)
 - `clock` — `elapsedRealtime` milliseconds
 - `read <path>` — only the three allowlisted `/proc` paths above; each read bounded to 4096 bytes
 - `env` — `/proc/self/status` (bounded)
+- `write <path> <content>` — persist a bounded file inside the app's own `files/`; only `\n` and `\\` escapes, other escapes rejected; the receipt reports `wrote path=<path> bytes=<n>`
+- `exec <path>` — run the app-written file itself as the direct child of the app process (`ProcessBuilder`, no shell command line); owner-exec is set first
 
-Non-allowlist paths return `failed reason=read_denied path=<path>`. Output is bounded to 1024 bytes per command and 65536 bytes per session, with a 10-second timeout and 128 commands per session; each outcome is emitted as two spool lines, each within the 1,007-byte observation-line budget, and a clamped outcome reports `truncated=true`. The installed Note3 APK (`5e7fa255…`, installed 2026-10-16T13:49Z) carries that clamp, so an over-long outcome is truncated rather than disarming the session; an on-device `truncated=true` observation remains unrecorded (see [verification](verification.md)). Eval is skipped in collect-only mode and is not advertised in hello capabilities. See the [minimal-substrate investigation](../experiments/minimal-substrate/README.md) for the full programme context.
+Non-allowlist paths return `failed reason=read_denied|write_denied|exec_denied path=<path>`. Output is bounded to 1024 bytes per command and 65536 bytes per session, with a 10-second timeout and 128 commands per session; each outcome is emitted as two spool lines, each within the 1,007-byte observation-line budget, and a clamped outcome reports `truncated=true`. Eval is skipped in collect-only mode and is not advertised in hello capabilities. See the [minimal-substrate investigation](../experiments/minimal-substrate/README.md) for the full programme context.
+
+`write` and `exec` are in the published download (source `8dbb324`) but not in the Note3 install (`5e7fa255…`, source `0c83e32`), which answers them `failed reason=invalid_arguments`; write/exec remain unexercised on a device. A `write` receipt echoes the command, so content long enough to push the receipt past 1,007 bytes (measured: 895 bytes with a 7-byte path → 1,008-byte line) is rejected by the spool; ON then stops with a visible storage error, and the next session reports that action `unknown reason=interrupted` even though the file was written. Keep write content well under 800 bytes until a published build clamps the echoed command (see [verification](verification.md)).
+
+`exec` classification arrives inside a `succeeded` eval row's `output=`: `uid=<app uid> exec cmd=<path> output=<merged stdout+stderr, ≤4096 B> exit=<n>`, `exec cmd=<path> unavailable reason=<exception class + message|dac-setup>`, or `exec cmd=<path> timeout reason=no-exit destroyed=<true|false>` (≤5 s, then the child is destroyed and reaped for up to 1 s). **An exec target must not background processes:** `destroyed=` reports whether the direct child was reaped, and `Process#destroy()` signals only that child, so a descendant it spawned is reparented and survives an ON-session stop. Parse the `unavailable`/`timeout`/`destroyed=` tokens rather than the message text; the wording of the over-bound classification (a target emitting more than 4096 B is currently reported `unavailable reason=IOException exec output exceeds probe bound`) is not settled.
 
 Collect-only makes no action requests and executes no remote commands. Returning to sending mode also resumes queued, previously unconsumed vibration commands after the observation backlog drains. There is no command expiry in this small protocol; consumers should not enqueue time-sensitive physical effects for an offline body. Persisted cursors prevent replay of consumed commands, not execution of new commands queued during an outage.
