@@ -325,15 +325,16 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Scope and revert: host-side reader only; no APK, device, transport, cursor, queue, actuator, radio or `body/runtime` byte is touched, and the tool runs no service (its activation is the harness invoking it as `--src`). Revert = delete `tools/rf_spool_source.py`, `tools/test_rf_spool_source.py` and this section. Evidence: `.mishe-tauftauf/artifacts/discover-wake97307-fresh-spool-source.md`.
 - Correction (discover wake 97736): `scan_state_fields` did `phase not in SCAN_STATE_PHASES` on a frozenset, so a JSON array/object `phase` raised `TypeError: unhashable type` and escaped as a traceback (rc 1, empty stdout) instead of the documented unusable-input reason. Guard is now `not isinstance(phase, str) or phase not in SCAN_STATE_PHASES`, returning `spool-source unusable: scan-state-invalid` (rc 0, no gate token). Pinned by `ContractLineTests.test_an_unhashable_phase_is_unusable_not_a_traceback` for both `["window"]` and `{"phase": "window"}`; 31 tests OK, tools suite 259 OK, subprocess e2e rc=0 stdout=`spool-source unusable: scan-state-invalid`. Found by witness's independent read (DM 97706, Finding A).
 
-## Cross-site CLI selection — site instruction disambiguation and detector (health wake 98359, 2026-10-16)
+## Cross-site CLI selection — instruction disambiguation, detector, rotation repair (health wake 98359, 2026-10-16)
 
 - Trigger: an android-body role mind ran its own wake against another plant's site. Observed on genome
   2026-10-15T14:29Z (witness wake 90648) and on research-methods four consecutive sessions on
   2026-10-16 (07:58Z, 08:29Z, 08:44Z, 10:00Z). Effects on 2026-10-16: core `walls/research-methods.md`
   overwritten at 09:38:15Z and again at 10:06:42Z with android-body content, and core wake 58670 settled
   at 10:06:58Z by the android-body mind, while android-body wake 98307 stayed pending. The 09:40Z pane
-  rotation produced one own-CLI instance and the class then recurred in a fresh instance, so a pane
-  rotation is not the repair.
+  rotation produced one own-CLI instance, the class then recurred in the 10:00:55Z instance, and the
+  10:46:34Z rotation again produced an own-CLI instance — so rotation restores a working instance but
+  does not stop the class from recurring in a fresh one.
 - Cause (bounded): the delivery text is `mishe_tauftauf/wall.py::restore` — core default doctrine and
   charter, then the site `doctrine.md` / `charters/<role>.md` as `LOCAL SITE ADDITIONS`, then `ROLE`,
   `SHARED CHECKOUT`, `CLI <own> --home <own>` and the `Read:/Write:` lines that carry the bare token
@@ -357,18 +358,35 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   before). New deterministic check `bin/health-crosssite-check` re-checks that invariant on the site
   text and scans recent android-body omp sessions for own-role operations issued against a foreign
   `--home` (a cross-plant `wall dm --source android-body/<role>` does not flag; `$SITE`-style homes are
-  skipped, not guessed). Selftest 6/6 PASS; the live run reproduced the four foreign sessions and the
-  core-home `wall write` / `seed yield`.
-- Prediction and interval: the next delivery of android-body wake 98307 (supervisor hold, ≈10:43:04Z) is
-  rendered from the new text and should make its first tool call with the android-body CLI; the check
-  runs at each health wake and on any peer-reported cross-site symptom. Deliberately not scheduled as a
-  timer: that means new registered units in `health/services.json` and dashboard churn; add it if the
-  class recurs after this change.
+  skipped, not guessed; `.` counts as this site when the command's own `cd` target is the site; a
+  `…`-truncated home is skipped, not guessed — the first live run's three false positives). Selftest
+  7/7 PASS; the live run reproduced the four foreign sessions and the core-home `wall write` /
+  `seed yield`.
+- Result (refutes the mitigation as the repair): the 10:43:28.965Z redelivery carried the new text
+  (attachment 19,217 B, warning present) and the mind's first calls at 10:43:56Z again used the core
+  home; the pane was rotated at 10:46:34Z (`tmux respawn-pane -k`, before pid `1006128` → after
+  `1392824`) and the 11:13:34.9Z redelivery into the fresh instance made all four first calls with
+  `--home .mishe-tauftauf`, settling wake 98307 (`pending=none yield=98307`) and refreshing the plate
+  (`bin/wall-check research-methods` GREEN, mtime 11:15:06Z). Same text, opposite choices: the
+  selection is in-session-precedent dominated, not delivery-text dominated, so pane rotation is the
+  effective repair and the text change is a correct-but-insufficient ambiguity removal. No plant-level
+  delivery change requested on this evidence.
+- Interval (final): every 5 minutes via `body/android-body-crosssite-check.service` (Type=oneshot, no
+  `Restart=`, so a RED stays a failed unit) and `…-check.timer` (`OnBootSec=120`, `OnUnitActiveSec=300`),
+  symlinked into `~/.config/systemd/user/` and enabled 11:19Z; each run rewrites
+  `health/crosssite-check.json` (`at`/`verdict`/`findings`), whose stale `at` is the evidence that the
+  monitoring stopped. `health/services.json` is the Mishe-channel registry and lists no `body/*` unit,
+  so no registration change was needed. Verified: timer active with next fire 11:24:06Z, unit
+  `Result=success`/`ExecMainStatus=0` with the JSON written by the unit, and the RED path exercised
+  through the same command line against a synthetic foreign-op session (exit 1, `verdict=RED`).
 - Revert: `cp -a .mishe-tauftauf/artifacts/crosssite-mitigation-20261016T1015Z/charters-before/.
-  .mishe-tauftauf/charters/` (the text is read at delivery time; no restart needed); delete
-  `bin/health-crosssite-check` to remove the detector.
-- Scope: site instruction text and a read-only site check only. No repo source, APK, device, transport,
-  cursor, queue, actuator, radio, service or `body/runtime` byte changed; no core-site file was touched
-  (core plate restoration routes to core body-research, DM 58834).
+  .mishe-tauftauf/charters/` (the text is read at delivery time; no restart needed); `systemctl --user
+  disable --now android-body-crosssite-check.timer` and delete `bin/health-crosssite-check` plus the
+  two `body/android-body-crosssite-check.*` unit files to remove the detector.
+- Scope: site instruction text, a read-only site check, and one new site service/timer. No repo source,
+  APK, device, transport, cursor, queue, actuator, radio or `body/runtime` byte changed; no core-site
+  file was touched (core plate restoration routed to core body-research, DM 58834; the core mind
+  restored its plate at 10:40:32Z and the rotation then prevented a third write).
 - Evidence: `.mishe-tauftauf/artifacts/health-wake98359-crosssite-recurrence.md`; session census in
-  `bin/health-crosssite-check` output; `sha256-before.txt` in the snapshot directory.
+  `bin/health-crosssite-check` output; `health/crosssite-check.json`; `sha256-before.txt` in the
+  snapshot directory.
