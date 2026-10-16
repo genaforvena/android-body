@@ -39,6 +39,7 @@ The document (exactly these keys, never the endpoint or the node secret):
      "samples": 7,
      "quantization_s": 1.0,
      "rtt_max_s": 0.059,
+     "device_serial": "4d00553d61ab90b7", "device_model": "SM-N900",
      "offset_min_s": 24.175, "offset_max_s": 25.175, "offset_nominal_s": 24.675,
      "host_ntp_synchronized": false,
      "jump": null,
@@ -55,6 +56,17 @@ The document (exactly these keys, never the endpoint or the node secret):
 - ``jump`` is ``null`` or the bounded record of a wall-clock step against the
   previously published reading; it is the detector for the hazard a stable-offset
   assumption hides (a phone NTP correction invalidates the retained span bound).
+- ``device_serial``/``device_model`` are the *measured* device's own ``getprop
+  ro.serialno``/``ro.product.model``, read in one tagged round trip and ``null``
+  when that read fails (never guessed). They name the device the offset came from,
+  independently of the ``--label`` the operator passed.
+- A run whose measured serial is recorded for a *different* node in the site's
+  activation record publishes ``status="unavailable"`` with
+  ``reason="label-serial-mismatch: ..."`` instead of an ``ok`` reading. The label is
+  the operator's assertion and the serial is the device's; a document that
+  contradicts itself is not a reading. The record is
+  ``<site>/body/activation.json`` (its ``<node>_serial`` keys) and an absent or
+  unreadable one only narrows the check, never fabricates a match.
 - Written atomically (temp file + rename, 0600) to
   ``<site>/body/clock-domain-<node>.json`` -- deliberately *outside*
   ``body/perception/``: the consumer globs that directory for its own perception
@@ -67,6 +79,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -80,11 +93,19 @@ STATUSES = frozenset({"ok", "unavailable"})
 QUANTIZATION_S = 1.0
 #: The smallest step reported as a jump: above the whole-second quantization.
 JUMP_THRESHOLD_S = 2.0
+#: The device properties the document names its measurement with.
+SERIAL_PROP = "ro.serialno"
+MODEL_PROP = "ro.product.model"
+#: Bounded shape of an identity value copied off the device: anything else (a
+#: wrapper banner, an empty property) is dropped instead of entering the document.
+SERIAL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{3,63}\Z")
+MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._()/-]{0,63}\Z")
 ALLOWED_KEYS = frozenset(
     {
         "node", "source", "method", "status", "observed_at_epoch_s",
         "validity_seconds", "samples", "quantization_s", "rtt_max_s",
         "offset_min_s", "offset_max_s", "offset_nominal_s",
+        "device_serial", "device_model",
         "host_ntp_synchronized", "jump", "reason",
     }
 )
@@ -132,6 +153,64 @@ def sample_offset(argv, serial, samples, interval, timeout):
     return pairs
 
 
+def _identity_value(text, pattern):
+    """``text`` when it is a plausible identity value, else ``None``."""
+    return text if text and pattern.match(text) else None
+
+
+def sample_identity(argv, serial, timeout):
+    """The measured device's own serial and model, or nulls when unreadable.
+
+    One tagged ``getprop`` round trip on the same ``--serial`` the clock is read
+    from, so the document can name the device it measured instead of only the label
+    it was handed. The tags keep a wrapper's banner out of the values, and a value
+    that is not a plausible identity stays ``None`` rather than entering the
+    document verbatim. A failed identity read never costs the offset reading: it is
+    provenance, so it degrades to ``null``.
+    """
+    command = f"echo S=$(getprop {SERIAL_PROP}); echo M=$(getprop {MODEL_PROP})"
+    try:
+        result = subprocess.run(
+            [*argv, "-s", serial, "shell", command],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
+        # ValueError covers the strict-UTF-8 decode of a wrapper's or the device's
+        # non-UTF-8 bytes: provenance degrades to null, the offset reading stands.
+        result = None
+    values = {}
+    if result is not None and result.returncode == 0:
+        for line in (result.stdout or "").splitlines():
+            for tag, key in (("S=", "device_serial"), ("M=", "device_model")):
+                if line.startswith(tag):
+                    values[key] = line[len(tag):].strip()
+    return {"device_serial": _identity_value(values.get("device_serial"), SERIAL_RE),
+            "device_model": _identity_value(values.get("device_model"), MODEL_RE)}
+
+
+def node_serials(site):
+    """The site's recorded adb serial -> node mapping, or ``{}`` when unavailable.
+
+    ``<site>/body/activation.json`` is the site's own statement of which serial
+    belongs to which node, as ``<node>_serial`` keys. It is read tolerantly: an
+    unreadable or non-dict record and non-string entries only narrow the label
+    check, they never invent a mapping.
+    """
+    try:
+        record = json.loads(
+            (Path(site) / "body" / "activation.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(record, dict):
+        return {}
+    mapping = {}
+    for key, value in record.items():
+        if key.endswith("_serial") and isinstance(value, str) and value.strip():
+            mapping[value.strip()] = key[: -len("_serial")]
+    return mapping
+
+
 def host_ntp_synchronized(run=subprocess.run):
     """The host's own NTP verdict, or ``None`` when it cannot be read.
 
@@ -157,13 +236,17 @@ def host_ntp_synchronized(run=subprocess.run):
     return None
 
 
-def offset_document(label, pairs, now, previous=None, ntp=None, validity=3600.0):
+def offset_document(label, pairs, now, previous=None, ntp=None, validity=3600.0,
+                    identity=None):
     """The bounded clock-offset document for ``pairs``, or an unavailable one.
 
     ``pairs`` is ``None`` when the device could not be read; the document then
     carries ``status="unavailable"`` and null offsets rather than a stale number.
+    ``identity`` is the measured device's ``device_serial``/``device_model`` or
+    ``None`` when the device did not name itself.
     """
     observed = float(time.time() if now is None else now)
+    identity = identity or {}
     if not pairs:
         return {
             "node": label, "source": SOURCE, "method": METHOD,
@@ -171,8 +254,10 @@ def offset_document(label, pairs, now, previous=None, ntp=None, validity=3600.0)
             "validity_seconds": float(validity), "samples": 0,
             "quantization_s": QUANTIZATION_S, "rtt_max_s": None,
             "offset_min_s": None, "offset_max_s": None, "offset_nominal_s": None,
-            "host_ntp_synchronized": ntp, "jump": None,
+            "device_serial": identity.get("device_serial"),
+            "device_model": identity.get("device_model"),
             "reason": "no clock sample" if pairs is not None else "device unreadable",
+            "host_ntp_synchronized": ntp, "jump": None,
         }
     uppers = sorted(pair["host_mid"] - pair["phone_epoch"] for pair in pairs)
     tight_upper = uppers[0]
@@ -191,6 +276,8 @@ def offset_document(label, pairs, now, previous=None, ntp=None, validity=3600.0)
         "offset_max_s": round(tight_upper, 3),
         "offset_nominal_s": round(nominal, 3),
         "host_ntp_synchronized": ntp,
+        "device_serial": identity.get("device_serial"),
+        "device_model": identity.get("device_model"),
         "jump": jump_record(nominal, previous, observed),
         "reason": None,
     }
@@ -296,13 +383,27 @@ def run_once(args):
         publish(output, document)
         print(f"clock-domain {args.label}: unavailable ({document['reason']}) -> {output}")
         return 0
+    identity = sample_identity(adb_argv(args.adb), args.serial, args.timeout)
+    owner = node_serials(args.site).get(identity["device_serial"])
+    if owner is not None and owner != args.label:
+        document = offset_document(args.label, None, None, ntp=host_ntp_synchronized(),
+                                   validity=args.validity, identity=identity)
+        document["reason"] = (
+            f"label-serial-mismatch: serial {identity['device_serial']} is {owner}"
+        )[:MAX_REASON_CHARS]
+        publish(output, document)
+        print(f"clock-domain {args.label}: unavailable ({document['reason']}) -> {output}")
+        return 0
     document = offset_document(args.label, pairs, None, previous=previous,
-                               ntp=host_ntp_synchronized(), validity=args.validity)
+                               ntp=host_ntp_synchronized(), validity=args.validity,
+                               identity=identity)
     publish(output, document)
     line = (f"clock-domain {args.label}: phone {document['offset_nominal_s']:+.3f}s behind host "
             f"(bounds {document['offset_min_s']:+.3f}..{document['offset_max_s']:+.3f}s, "
             f"n={document['samples']}, rtt_max={document['rtt_max_s']}s, "
-            f"host_ntp_synchronized={document['host_ntp_synchronized']})")
+            f"host_ntp_synchronized={document['host_ntp_synchronized']}, "
+            f"device={document['device_model'] or 'unknown'}/"
+            f"{document['device_serial'] or 'unknown'})")
     if document["jump"]:
         line += f" JUMP delta={document['jump']['delta_s']:+.3f}s"
     print(f"{line} -> {output}")
@@ -314,7 +415,9 @@ def main(argv=None):
     parser.add_argument("--site", required=True,
                         help="site root (writes body/clock-domain-<node>.json)")
     parser.add_argument("--serial", required=True, help="adb serial of the node")
-    parser.add_argument("--label", default="note3")
+    parser.add_argument("--label", default="note3",
+                        help="node the reading is for; must be the node the "
+                             "activation record attributes --serial to")
     parser.add_argument("--adb", default="adb", help="adb command; may be multi-word")
     parser.add_argument("--samples", type=int, default=3, help="paired samples per run")
     parser.add_argument("--interval", type=float, default=0.5, help="seconds between samples")

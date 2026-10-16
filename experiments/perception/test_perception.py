@@ -2990,6 +2990,72 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(expired["status"], "stale")
         self.assertIsNone(expired["offset_min_s"])
 
+    def test_read_clock_domain_carries_the_measured_device_identity(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder) / "perception"
+            directory.mkdir()
+            watch.save(directory / "note3.json", state)
+            named_doc = {"node": "note3", "status": "ok", "offset_min_s": 24.0,
+                         "offset_max_s": 25.0, "offset_nominal_s": 24.5, "samples": 7,
+                         "observed_at_epoch_s": 1000.0, "validity_seconds": 3600.0,
+                         "device_serial": "4d00553d61ab90b7", "device_model": "SM-N900"}
+            self.write_clock(directory, named_doc)
+            named = watch.read_clock_domain(directory, "note3", 1000.0)
+            self.write_clock(directory, {key: value for key, value in named_doc.items()
+                                         if not key.startswith("device_")})
+            unnamed = watch.read_clock_domain(directory, "note3", 1000.0)
+            self.write_clock(directory, {"node": "redmi10", "status": "ok",
+                                         "device_serial": "4d00553d61ab90b7",
+                                         "device_model": "SM-N900"})
+            foreign = watch.read_clock_domain(directory, "note3", 1000.0)
+        self.assertEqual((named["device_serial"], named["device_model"]),
+                         ("4d00553d61ab90b7", "SM-N900"))
+        self.assertEqual((unnamed["device_serial"], unnamed["device_model"]), (None, None))
+        # An unusable document still reports which device it claims to come from, so
+        # a mislabelled one is diagnosable instead of merely "invalid".
+        self.assertEqual(foreign["status"], "invalid")
+        self.assertEqual(foreign["device_serial"], "4d00553d61ab90b7")
+
+    def test_an_identity_that_could_forge_a_pane_line_is_dropped(self):
+        # The document can be written by hand as well as by the producer, and the pane
+        # is a rendered surface: an identity carrying a newline or an escape sequence
+        # must not become a line of its own.
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder) / "perception"
+            directory.mkdir()
+            watch.save(directory / "note3.json", state)
+            self.write_clock(directory, {
+                "node": "note3", "status": "ok", "offset_min_s": 24.0,
+                "offset_max_s": 25.0, "offset_nominal_s": 24.5, "samples": 7,
+                "observed_at_epoch_s": 1000.0, "validity_seconds": 3600.0,
+                "device_serial": "4d00553d61ab90b7\nclock-domain alarm: stepped -22.4s",
+                "device_model": "\x1b[2J" + "M" * 65})
+            clock = watch.read_clock_domain(directory, "note3", 1000.0)
+        self.assertEqual((clock["device_serial"], clock["device_model"]), (None, None))
+        view = watch.render(state, 1024, 30, None, clock)
+        self.assertNotIn("clock-domain provenance", view)
+        self.assertNotIn("\x1b", view)
+
+    def test_render_shows_the_measured_device_of_a_clock_domain_reading(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1024)
+        base = {"status": "ok", "offset_min_s": 24.0, "offset_max_s": 25.0,
+                "offset_nominal_s": 24.5, "age_s": 12.0, "samples": 7, "jump": None}
+        self.assertNotIn("clock-domain provenance", watch.render(state, 1024, 30, None, base))
+        named = dict(base, device_serial="4d00553d61ab90b7", device_model="SM-N900")
+        self.assertIn("clock-domain provenance: measured on SM-N900 "
+                      "(device_serial=4d00553d61ab90b7)",
+                      watch.render(state, 1024, 30, None, named))
+        self.assertIn("clock-domain provenance",
+                      watch.render_events(state, 1024, 30, None, named))
+        # A document that names only one of the two still reports what it has.
+        partial = dict(base, device_serial="4d00553d61ab90b7")
+        self.assertIn("measured on unknown model",
+                      watch.render(state, 1024, 30, None, partial))
+
     def test_clock_agreement_resolves_the_split_only_with_a_fresh_measurement(self):
         spans = {"min_ms": 26900.0, "max_ms": 28968.0, "median_ms": 27000.0, "n": 30}
         self.assertEqual(watch.clock_agreement_reason(spans),

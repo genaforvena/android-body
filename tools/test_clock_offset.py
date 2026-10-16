@@ -189,6 +189,64 @@ class SampleTests(unittest.TestCase):
         self.assertEqual(clock_offset.adb_argv("rtk proxy adb"), ["rtk", "proxy", "adb"])
 
 
+
+class IdentityTests(unittest.TestCase):
+    def sample(self, result):
+        with mock.patch.object(clock_offset.subprocess, "run", return_value=result):
+            return clock_offset.sample_identity(["adb"], SERIAL, 5.0)
+
+    def test_reads_the_tagged_properties_and_ignores_a_wrapper_banner(self):
+        result = mock.Mock(returncode=0,
+                           stdout="proxy banner\nS=4d00553d61ab90b7\r\nM=SM-N900\r\n")
+        self.assertEqual(self.sample(result),
+                         {"device_serial": "4d00553d61ab90b7", "device_model": "SM-N900"})
+
+    def test_a_failed_or_empty_identity_read_stays_null(self):
+        self.assertEqual(self.sample(mock.Mock(returncode=1, stdout="S=x\nM=y\n")),
+                         {"device_serial": None, "device_model": None})
+        self.assertEqual(self.sample(mock.Mock(returncode=0, stdout="")),
+                         {"device_serial": None, "device_model": None})
+        with mock.patch.object(clock_offset.subprocess, "run", side_effect=OSError("no adb")):
+            self.assertEqual(clock_offset.sample_identity(["adb"], SERIAL, 5.0),
+                             {"device_serial": None, "device_model": None})
+        # A non-UTF-8 byte in a wrapper's or the device's output is a decode error,
+        # not an OSError: it must not escape and cost the cycle's offset reading.
+        decode_error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        with mock.patch.object(clock_offset.subprocess, "run", side_effect=decode_error):
+            self.assertEqual(clock_offset.sample_identity(["adb"], SERIAL, 5.0),
+                             {"device_serial": None, "device_model": None})
+
+    def test_an_implausible_value_does_not_enter_the_document(self):
+        # A value that is not a device identity (a banner tail, a secret, a
+        # multi-word blob) is dropped rather than published verbatim.
+        self.assertIsNone(self.sample(mock.Mock(
+            returncode=0, stdout=f"S={SECRET} {SECRET}\nM=SM-N900\n"))["device_serial"])
+        self.assertIsNone(self.sample(mock.Mock(
+            returncode=0, stdout="S=4d00553d61ab90b7\nM=\n"))["device_model"])
+
+
+class NodeSerialsTests(unittest.TestCase):
+    def record(self, text):
+        with tempfile.TemporaryDirectory() as folder:
+            body = Path(folder) / "body"
+            body.mkdir()
+            (body / "activation.json").write_text(text, encoding="utf-8")
+            return clock_offset.node_serials(folder)
+
+    def test_maps_each_serial_key_to_its_node(self):
+        self.assertEqual(self.record(json.dumps(
+            {"note3_serial": "4d00553d61ab90b7", "redmi10": "NOT_CONNECTED",
+             "redmi10_serial": "  abc123  "})),
+            {"4d00553d61ab90b7": "note3", "abc123": "redmi10"})
+
+    def test_an_unusable_record_narrows_the_check_instead_of_inventing_a_mapping(self):
+        self.assertEqual(self.record("not json"), {})
+        self.assertEqual(self.record("[1, 2]"), {})
+        self.assertEqual(self.record(json.dumps({"note3_serial": 7, "other_serial": ""})), {})
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(clock_offset.node_serials(folder), {})
+
+
 class RunOnceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -198,6 +256,12 @@ class RunOnceTests(unittest.TestCase):
             site=str(self.site), serial=SERIAL, label="note3", adb="adb",
             samples=3, interval=0.0, timeout=5.0, validity=3600.0, output=None,
         )
+        # The identity read is a device call: never let a unit test make one.
+        patcher = mock.patch.object(
+            clock_offset, "sample_identity",
+            return_value={"device_serial": SERIAL, "device_model": "SM-N900"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_run_once_publishes_and_prints_one_bounded_line(self):
         with mock.patch.object(clock_offset, "sample_offset", return_value=pairs([25.9, 25.2, 25.7])):
@@ -228,6 +292,45 @@ class RunOnceTests(unittest.TestCase):
         doc = json.loads(output.read_text(encoding="utf-8"))
         self.assertIsNotNone(doc["jump"])
         self.assertGreater(abs(doc["jump"]["delta_s"]), clock_offset.JUMP_THRESHOLD_S)
+
+    def test_run_once_publishes_the_measured_device_with_the_reading(self):
+        with mock.patch.object(clock_offset, "sample_offset", return_value=pairs([25.2])):
+            with mock.patch.object(clock_offset, "host_ntp_synchronized", return_value=None):
+                clock_offset.run_once(self.args)
+        doc = json.loads((self.site / "body" / "clock-domain-note3.json").read_text(encoding="utf-8"))
+        self.assertEqual(doc["status"], "ok")
+        self.assertEqual(doc["device_serial"], SERIAL)
+        self.assertEqual(doc["device_model"], "SM-N900")
+
+    def test_run_once_refuses_a_label_the_activation_record_contradicts(self):
+        body = self.site / "body"
+        body.mkdir(parents=True)
+        (body / "activation.json").write_text(json.dumps(
+            {"note3_serial": SERIAL, "redmi10": "NOT_CONNECTED"}), encoding="utf-8")
+        self.args.label = "redmi10"
+        with mock.patch.object(clock_offset, "sample_offset", return_value=pairs([25.2])):
+            with mock.patch.object(clock_offset, "host_ntp_synchronized", return_value=None):
+                status = clock_offset.run_once(self.args)
+        self.assertEqual(status, 0)
+        doc = json.loads((body / "clock-domain-redmi10.json").read_text(encoding="utf-8"))
+        self.assertEqual(doc["status"], "unavailable")
+        self.assertIsNone(doc["offset_nominal_s"])
+        self.assertEqual(doc["device_serial"], SERIAL)
+        self.assertIn(f"serial {SERIAL} is note3", doc["reason"])
+
+    def test_run_once_still_publishes_a_serial_the_record_does_not_name(self):
+        # The record is an authority on the serials it lists, not a whitelist: a
+        # device it does not name is published with its identity instead of refused.
+        body = self.site / "body"
+        body.mkdir(parents=True)
+        (body / "activation.json").write_text(json.dumps(
+            {"note3_serial": "some-other-serial"}), encoding="utf-8")
+        with mock.patch.object(clock_offset, "sample_offset", return_value=pairs([25.2])):
+            with mock.patch.object(clock_offset, "host_ntp_synchronized", return_value=None):
+                clock_offset.run_once(self.args)
+        doc = json.loads((body / "clock-domain-note3.json").read_text(encoding="utf-8"))
+        self.assertEqual(doc["status"], "ok")
+        self.assertEqual(doc["device_serial"], SERIAL)
 
 
 if __name__ == "__main__":

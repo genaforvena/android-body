@@ -1706,6 +1706,9 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
     alarm = clock_domain_line(clock)
     if alarm is not None:
         lines.append(alarm)
+    provenance = clock_domain_provenance_line(clock)
+    if provenance is not None:
+        lines.append(provenance)
     spool_line = spool_view_line(spool, now, clock)
     if spool_line is not None:
         lines.append(spool_line)
@@ -1851,6 +1854,9 @@ def render_events(state, now, stale, node_state=None, clock=None, spool=None):
     alarm = clock_domain_line(clock)
     if alarm is not None:
         lines.append("  " + alarm)
+    provenance = clock_domain_provenance_line(clock)
+    if provenance is not None:
+        lines.append("  " + provenance)
     spool_line = spool_view_line(spool, now, clock)
     if spool_line is not None:
         lines.append("  " + spool_line)
@@ -2203,12 +2209,20 @@ def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS
     current one. The document's own ``validity_seconds`` bounds the reading, capped
     by ``max_age``, so a long-past measurement cannot keep resolving the
     skew/latency split.
+
+    ``device_serial``/``device_model`` are carried through verbatim (``None`` when
+    the document does not name one). They are the *device's* own answer, not the
+    producer's ``--label``, so the caller can show which device the offset came from
+    instead of only which node it was filed under; the reader does not adjudicate
+    the two.
     """
+    identity = {"device_serial": None, "device_model": None}
+
     def unknown(status, reason):
         return {"status": status, "offset_min_s": None, "offset_max_s": None,
                 "offset_nominal_s": None, "observed_at_epoch_s": None, "age_s": None,
                 "validity_seconds": None, "samples": 0, "jump": None,
-                "source": None, "reason": reason}
+                "source": None, "reason": reason, **identity}
 
     path = directory.parent / f"{CLOCK_DOMAIN_PREFIX}{node}.json"
     try:
@@ -2217,8 +2231,16 @@ def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS
         return unknown("absent", "no-clock-domain-file")
     except (OSError, ValueError):
         return unknown("invalid", "clock-domain-unreadable")
-    if (not isinstance(document, dict) or document.get("node") != node
-            or document.get("status") != "ok"):
+    if not isinstance(document, dict):
+        return unknown("invalid", "clock-domain-invalid")
+    for key in identity:
+        value = document.get(key)
+        # Bounded and printable: the pane is a rendered surface and this document can
+        # be written by hand as well as by the producer, so a value carrying a newline
+        # or a terminal escape is dropped rather than printed as if it were the pane's.
+        identity[key] = (value if isinstance(value, str) and 0 < len(value) <= 64
+                         and value.isprintable() else None)
+    if document.get("node") != node or document.get("status") != "ok":
         return unknown("invalid", "clock-domain-invalid")
 
     def finite(key):
@@ -2252,7 +2274,7 @@ def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS
             "samples": samples if isinstance(samples, int) and not isinstance(samples, bool) else 0,
             "jump": jump if isinstance(jump, dict) else None,
             "source": source if isinstance(source, str) else None,
-            "reason": None}
+            "reason": None, **identity}
 
 
 def clock_domain_line(clock):
@@ -2269,6 +2291,24 @@ def clock_domain_line(clock):
             f"(previous {previous:+.1f}s, threshold {jump.get('threshold_s')}s) - "
             f"retained span bounds and offset-derived freshness are not comparable "
             f"across the step; re-measure before relying on either")
+
+
+def clock_domain_provenance_line(clock):
+    """Which device a clock-domain reading was measured on, or None without one.
+
+    The reading's ``node`` is the producer's ``--label``; ``device_serial`` and
+    ``device_model`` are what the device itself answered. Printing them next to the
+    reading makes a mislabelled document visible in the pane instead of only in the
+    file, and prints nothing at all when the document names no device.
+    """
+    if not clock:
+        return None
+    serial = clock.get("device_serial")
+    model = clock.get("device_model")
+    if not serial and not model:
+        return None
+    return (f"clock-domain provenance: measured on {model or 'unknown model'} "
+            f"(device_serial={serial or 'unknown'})")
 
 
 def read_spool_summary(directory, node, now, max_age=SPOOL_SUMMARY_MAX_AGE_SECONDS):

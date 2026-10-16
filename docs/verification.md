@@ -444,8 +444,10 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   conflict" followed from comparing Note3 clock data against Redmi10 network spans. Witness
   (DM 101605) and health (DM 101800) each spent a wake on the identity contradiction. Root cause:
   nothing linked `--label` to the device that actually answered `adb shell date +%s`.
-- Change (commit `__COMMIT__`): `tools/clock_offset.py` now publishes `device_serial`/`device_model`
-  — the device's own `getprop ro.serialno`/`ro.product.model`, read in one *tagged* round trip
+- Change (repo sources `tools/clock_offset.py` and `experiments/perception/watch.py`; deployed sha256
+  and recorded source commit in the activation bullet below):
+  `tools/clock_offset.py` publishes `device_serial`/`device_model` — the device's own
+  `getprop ro.serialno`/`ro.product.model`, read in one *tagged* round trip
   (`echo S=…; echo M=…`, so a wrapper banner cannot be mistaken for a value), bounded to a plausible
   identity shape, and `null` when that read fails; a failed identity read never costs the offset
   reading. It refuses to publish `status="ok"` when the measured serial is recorded for a *different*
@@ -453,26 +455,39 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   `status="unavailable"`, `reason="label-serial-mismatch: serial <s> is <node>"`, null offsets
   instead. A serial the record does not name is still published with its identity; an unreadable
   record only narrows the check. `experiments/perception/watch.py` carries the two fields through
-  `read_clock_domain` (verbatim, `null` when absent, on every verdict branch) and prints
+  `read_clock_domain` (bounded to a printable ≤ 64-character value, `null` when absent or unusable,
+  on every verdict branch) and prints
   `clock-domain provenance: measured on <model> (device_serial=<serial>)` in the pane and the
   compact events view when the document names a device. The reader still does not adjudicate label
   against identity: it shows both.
-- Checks. `python3 -m unittest discover -s tools` 267 OK (8 new: tagged read, banner/secret
+- Independent review before commit (reviewer subagent, read-only, on the working-tree diff): two
+  defects found and fixed. (a) `subprocess.run(..., text=True)` decodes strictly, so a non-UTF-8
+  byte in a wrapper's or the device's output raised `UnicodeDecodeError` — a `ValueError`, not an
+  `OSError` — and escaped `sample_identity`, costing the cycle's offset reading and violating the
+  documented degrade-to-null contract; `ValueError` is now caught, with a regression case in
+  `test_a_failed_or_empty_identity_read_stays_null`. (b) `read_clock_domain` carried
+  `device_serial`/`device_model` verbatim into the pane, so a *hand-written* document could inject a
+  forged `clock-domain alarm` line or a terminal escape into the dashboard; the reader now accepts
+  only a printable value of ≤ 64 characters and drops the rest
+  (`test_an_identity_that_could_forge_a_pane_line_is_dropped`). Both defects were reproduced before
+  the fix and the reviewer's remaining assessment is that the refusal, the document contract and the
+  degradation paths are correct.
+- Checks. `python3 -m unittest discover -s tools` 267 OK (new: tagged read, banner/secret/decode
   rejection, failed read → null, mapping parse incl. junk, mismatch refusal, unrecorded serial still
-  published, identity in the document); `-s experiments/perception` 219 OK (2 new: identity carried
-  through every verdict branch, provenance line rendered/omitted); `rendezvous/minimal-server` 21,
-  `experiments/light-vibrate` 8, `experiments/minimal-substrate` 24, `experiments/trial-eval` 10,
-  all OK; `tools/test-protocol.sh` and `tools/test-spool.sh` OK. Unit tests make no device call
-  (identity sampling is mocked; suite runtime 0.03 s). No Java, resource or protocol byte changed,
-  so the gradle suites were not re-run.
-- Live, activated. Deployed `body/runtime/clock_offset.py` sha256 `2a935cd1…` (predecessor
+  published, identity in the document); `-s experiments/perception` 220 OK (new: identity carried
+  through every verdict branch, pane-line injection dropped, provenance line rendered/omitted);
+  `rendezvous/minimal-server` 21, `experiments/light-vibrate` 8, `experiments/minimal-substrate` 24,
+  `experiments/trial-eval` 10, all OK; `tools/test-protocol.sh` and `tools/test-spool.sh` OK. Unit
+  tests make no device call (identity sampling is mocked). No Java, resource or protocol byte
+  changed, so the gradle suites were not re-run.
+- Live, activated. Deployed `body/runtime/clock_offset.py` sha256 `8433b62c…` (predecessor
   `b7c840f7…` kept as `clock_offset.py.pre-deploy-20261016T1829Z`) and `body/runtime/watch.py`
-  sha256 `3f0e32cb…` (predecessor `63a0526c…` kept as `watch.py.pre-deploy-20261016T1830Z`);
+  sha256 `57498649…` (predecessor `63a0526c…` kept as `watch.py.pre-deploy-20261016T1830Z`);
   `android-body-node-state.service` re-run and `android-body-perception.service` restarted
-  18:30:20Z. Published document carries `device_serial` `4d00553d61ab90b7`, `device_model` `SM-N900`
-  (offset 25.085 inside 24.585..25.585, samples 3); the pane gained
+  18:45:55Z. Published document carries `device_serial` `4d00553d61ab90b7`, `device_model` `SM-N900`
+  (offset 25.142 inside 24.642..25.642, samples 3); the pane gained
   `clock-domain provenance: measured on SM-N900 (device_serial=4d00553d61ab90b7)` and the Note3
-  skew/latency split still resolves (+25.1s, age 30s, n=3, implied transport latency 1.3–4.4s).
+  skew/latency split still resolves (+25.1s, age 23s, n=3, implied transport latency 1.3–4.3s).
 - Controlled failure exercised end to end against the real device, writing only to `/tmp`:
   `clock_offset.py --serial 4d00553d61ab90b7 --label redmi10 --output /tmp/…` →
   `clock-domain redmi10: unavailable (label-serial-mismatch: serial 4d00553d61ab90b7 is note3)`,

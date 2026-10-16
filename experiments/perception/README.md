@@ -400,18 +400,35 @@ own. A missing document is `unknown/no-clock-domain-file` — never a zero-offse
 assumption — and the node's readings stay labelled `fresh-clock-conditional`
 until it exists.
 
+The document also names the device it measured: `device_serial`/`device_model` are
+the device's own `getprop ro.serialno`/`ro.product.model`, read in the same run and
+`null` when that read fails. They are the device's answer, not the `--label` the
+operator passed, and the pane prints them (`clock-domain provenance: measured on …`),
+so a document filed under the wrong node is visible where it is read instead of only
+in the file. The producer additionally refuses to publish an `ok` reading whose
+measured serial the site's activation record (`SITE/body/activation.json`,
+`<node>_serial` keys) attributes to a *different* node: it publishes
+`status="unavailable"`, `reason="label-serial-mismatch: serial <s> is <node>"` and
+null offsets instead. A serial the record does not name is published with its
+identity rather than refused, and an unreadable record only narrows the check.
+
 - **Note3**: the producer measures a paired round trip over adb
   (`adb shell date +%s` against the host wall clock; 1 s quantization,
-  `rtt_max_s/2` extra uncertainty). Live 2026-10-16T15:03Z:
-  `offset_nominal_s` 25.37 inside `24.87..25.87`, `samples` 3,
-  `validity_seconds` 3600.
+  `rtt_max_s/2` extra uncertainty). Live 2026-10-16T18:30:10Z:
+  `offset_nominal_s` 25.085 inside `24.585..25.585`, `samples` 3,
+  `validity_seconds` 3600, `device_serial` `4d00553d61ab90b7`, `device_model`
+  `SM-N900`.
 - **Redmi10**: no document, so `unknown/no-clock-domain-file`. Cause: the
   producer's only method is an adb round trip, and Redmi10 is not on USB (tailnet
   HTTPS only); the protocol exposes no phone wall-clock request surface — the
   action grammar's `clock` is `elapsedRealtime`, and an observation row carries
   the phone wall clock only at collection time, so a receipt time bounds the
   offset from above alone (backlog residence is unbounded, protocol README:108).
-  No two-sided reading is derivable from the current surfaces.
+  No two-sided reading is derivable from the current surfaces. A hand-annotated
+  `clock-domain-redmi10.json` carrying Note3's own offset (measured 2026-10-16 and
+  mislabelled) sat in the site until it was retired to `SITE/artifacts/`; the
+  producer's label/serial refusal above is what keeps that mislabelling from
+  recurring, and the identity fields are what make it visible if it does.
 - **Retry condition**: an adb path to the node, or a validated transport-paired
   measurement. A candidate (not implemented, not validated) is to bracket a phone
   wall-clock reading between host send and receipt, or to pair a same-session row
