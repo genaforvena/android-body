@@ -77,10 +77,13 @@ Supported bounded text requests (while ON; nothing executes in collect-only mode
 - `eval identity | clock | read <allowlisted /proc path> | env` — fixed allowlist, output
   bounded to 1024 B/command and 64 KiB/session, 10 s timeout, 128 commands/session;
   non-allowlist paths return `failed reason=read_denied`. Eval is not advertised in the
-  hello capabilities and is skipped in collect-only mode. Exercised on Note3 (2026-10-13):
-  identity/clock/read/env receipts retained, uid=10225. This install predates the
-  consumer `eval write`/`eval exec` verbs, which the current published download
-  carries, and answers them `failed reason=invalid_arguments`.
+  hello capabilities and is skipped in collect-only mode. Exercised on Note3 (2026-10-13,
+  prior install `5e7fa255…`): identity/clock/read/env receipts retained, uid=10225. The
+  current Note3 install (`87b36024…`, source `e0ea84d`, installed 2026-10-16T16:16:48Z)
+  carries the consumer `eval write`/`eval exec` verbs; write/exec remain unexercised on
+  Note3 (no write/exec action posted; collect-only freezes delivery). The post-install
+  session-start class-4 `probe exec` row — the same write-then-exec machinery — is
+  retained collection-side only (spool counts, not delivered).
 
 Limits: no camera, microphone, location, contacts or audio; no arbitrary code, URLs,
 intents or shell; spool bounded (2 MiB / 24,576 lines, oldest evicted with a persisted
