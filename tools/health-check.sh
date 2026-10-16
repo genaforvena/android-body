@@ -15,6 +15,11 @@
 # probe, write recency); a device that is not connected reads UNKNOWN.
 # Section 9 checks the published candidate APK (downloads/) against the committed
 # SHA256SUMS record; the install itself stays gated on device transport.
+# Section 1b reads each unit's systemd LOAD state (tools/service_units.py): a
+# fragment systemd refuses to load still reads `active (running)` from an
+# earlier generation, so `is-active` alone passes while the core replant holds
+# on the refused restart and restarts every channel with it. Section 1c bounds
+# the whole-hour channel restart count, which is how that retry loop reads.
 # Exits 0 if all invariants hold, 1 otherwise.
 set -u
 cd "$(dirname "$0")/.."
@@ -33,6 +38,48 @@ for svc in android-body-rendezvous android-body-perception android-body-usb; do
     fail "service $svc NOT active"
   fi
 done
+
+# 1b. Unit load state (wake 95926): `is-active` in §1 cannot see a fragment
+# systemd refuses to load. On 2026-10-16 `android-body-silence.service` loaded
+# `bad-setting` (its core-generated fragment had lost `[Unit]` and `[Service]`)
+# while still reading `active (running)` from an earlier valid generation, so
+# every check here stayed GREEN while the core replant held on the refused
+# restart (`plant.py` `reconcile_services` raises `CalledProcessError`) and
+# restarted every channel service with it. The LOAD column is the fact that
+# separates the two; an unreadable dump is UNKNOWN, never a pass.
+if command -v python3 >/dev/null 2>&1 && [ -x "$PWD/tools/service_units.py" ]; then
+  UNITS_OUT=$(env XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user list-units \
+    'android-body-*.service' --all --full --plain --no-legend 2>/dev/null \
+    | python3 "$PWD/tools/service_units.py" 2>&1)
+  UNITS_RC=$?
+  printf '%s\n' "$UNITS_OUT"
+  case "$UNITS_RC" in
+    0) ;;
+    1) FAIL=1 ;;
+    *) ;;
+  esac
+else
+  echo "UNKNOWN unit load state (python3 or tools/service_units.py unavailable)"
+fi
+
+# 1c. Channel restart churn (wake 95926): the hold above restarts every
+# android-body channel service on each retry. Measured 2026-10-16 during the
+# hold: 10 restarts per channel per hour, against one per channel for a normal
+# pin-advance replant — so an hour's total above RESTART_BOUND separates a
+# retry loop from replant churn, while two legitimate replants (~24) stay under
+# it. A single service crash-looping is caught here too, with no bad fragment.
+RESTART_BOUND=40
+JOURNAL=$(env XDG_RUNTIME_DIR=/run/user/$(id -u) journalctl --user --since '60 min ago' \
+  --no-pager 2>/dev/null)
+JOURNAL_RC=$?
+RESTARTS=$(printf '%s\n' "$JOURNAL" | grep -c 'Stopping android-body-.*\.service' || true)
+if [ "$JOURNAL_RC" -ne 0 ]; then
+  echo "UNKNOWN channel restart churn (user journal unreadable)"
+elif [ "$RESTARTS" -le "$RESTART_BOUND" ]; then
+  pass "channel restarts $RESTARTS/h (bound $RESTART_BOUND)"
+else
+  fail "channel restarts $RESTARTS/h over bound $RESTART_BOUND"
+fi
 
 # 2. Panes
 EXPECTED_PANES="senses docs genome research-methods permissions operator witness discover health"
