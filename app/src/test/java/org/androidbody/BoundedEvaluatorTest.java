@@ -4,6 +4,10 @@ package org.androidbody;
 import java.io.File;
 import java.io.IOException;
 import java.io.FileInputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 /** Zero-dependency JVM tests for BoundedEvaluator: run tools/test-protocol.sh. */
 public final class BoundedEvaluatorTest {
@@ -42,6 +46,25 @@ public final class BoundedEvaluatorTest {
             }
             return new String(buf, 0, off, "US-ASCII");
         } finally { in.close(); }
+    }
+
+    /**
+     * A child that reports "still running" until the wall clock passes
+     * {@code deadlineMs}, then exits. Models an exit that lands in the final
+     * poll window of a bounded wait, which no poll loop may skip.
+     */
+    private static final class DeadlineProcess extends Process {
+        private final long deadlineMs;
+        DeadlineProcess(long deadlineMs) { this.deadlineMs = deadlineMs; }
+        @Override public OutputStream getOutputStream() { return new ByteArrayOutputStream(); }
+        @Override public InputStream getInputStream() { return new ByteArrayInputStream(new byte[0]); }
+        @Override public InputStream getErrorStream() { return new ByteArrayInputStream(new byte[0]); }
+        @Override public int waitFor() { return 0; }
+        @Override public int exitValue() {
+            if (System.currentTimeMillis() < deadlineMs) throw new IllegalThreadStateException("still running");
+            return 0;
+        }
+        @Override public void destroy() { }
     }
 
     public static void main(String[] ignored) throws IOException {
@@ -244,6 +267,22 @@ public final class BoundedEvaluatorTest {
         }
         ok(to.ok, "exec timeout is an observed outcome, not a command error");
         ok(to.output.contains("timeout reason=no-exit destroyed=true"), "timeout row: " + to.output);
+
+        // waitForExit must poll at or after its deadline: an exit that lands in
+        // the final window is observed, not reported as a timeout
+        // (regression: checking the deadline before a full-length sleep first).
+        BoundedExec.POLL_MS = 10;
+        boolean finalWindowObserved;
+        try {
+            finalWindowObserved = BoundedExec.waitForExit(
+                    new DeadlineProcess(System.currentTimeMillis() + 30), 30);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("poll-window wait interrupted: " + e);
+        } finally {
+            BoundedExec.POLL_MS = 50;
+        }
+        ok(finalWindowObserved, "waitForExit must observe an exit in the final poll window");
 
         // exec missing target: truthful unavailable reason
         BoundedEvaluator.Result missing = body.execute(BoundedEvaluator.parse("exec nope.sh", bodyDir), clock);

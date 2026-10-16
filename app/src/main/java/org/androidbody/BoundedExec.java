@@ -28,6 +28,7 @@ final class BoundedExec {
     static int TIMEOUT_MS = 5000;
     static int DESTROY_WAIT_MS = 1000;
     static int READ_JOIN_MS = 1000;
+    static int POLL_MS = 50;
     private static final Charset ASCII = Charset.forName("US-ASCII");
 
     /** Bounded exec result; exactly one of ok / timedOut / reason is set. */
@@ -121,17 +122,25 @@ final class BoundedExec {
      * API-1-safe bounded wait: polls {@link Process#exitValue()} until the
      * deadline. Returns true once the child has exited, false on timeout.
      * {@code waitFor(long, TimeUnit)} is API 26 and cannot be used at minSdk 18.
+     *
+     * <p>The deadline is checked only after a poll, and the final sleep is
+     * capped to the remaining time, so a poll always happens at or after the
+     * deadline. Checking the deadline before sleeping instead (and sleeping a
+     * full {@link #POLL_MS}) returns false without ever observing an exit that
+     * lands in the last poll window — {@code destroyed=false} for a child that
+     * was in fact reaped.
      */
     static boolean waitForExit(Process process, long timeoutMs) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMs;
-        while (System.currentTimeMillis() < deadline) {
+        while (true) {
             try {
                 process.exitValue();
                 return true;
             } catch (IllegalThreadStateException e) {
-                Thread.sleep(50);
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) return false;
+                Thread.sleep(Math.min(POLL_MS, remaining));
             }
         }
-        return false;
     }
 }
