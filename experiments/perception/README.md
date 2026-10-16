@@ -387,6 +387,34 @@ scored samples; host receipt time is unusable for label correlation (observed
 17–25 s transport lag). The APK emission side is discover's lane; this consumer
 parses the field on arrival without further change.
 
+## Node clock-domain reading, and why Redmi10 stays unknown
+
+Each node's `clock_domain` in the `space` snapshot resolves
+`SITE/body/clock-domain-<node>.json`, published by `tools/clock_offset.py`. That
+reading is what separates the two terms of an acquisition span (`transport latency
++ host wall − phone wall`), which this consumer can only bound from above on its
+own. A missing document is `unknown/no-clock-domain-file` — never a zero-offset
+assumption — and the node's readings stay labelled `fresh-clock-conditional`
+until it exists.
+
+- **Note3**: the producer measures a paired round trip over adb
+  (`adb shell date +%s` against the host wall clock; 1 s quantization,
+  `rtt_max_s/2` extra uncertainty). Live 2026-10-16T15:03Z:
+  `offset_nominal_s` 25.37 inside `24.87..25.87`, `samples` 3,
+  `validity_seconds` 3600.
+- **Redmi10**: no document, so `unknown/no-clock-domain-file`. Cause: the
+  producer's only method is an adb round trip, and Redmi10 is not on USB (tailnet
+  HTTPS only); the protocol exposes no phone wall-clock request surface — the
+  action grammar's `clock` is `elapsedRealtime`, and an observation row carries
+  the phone wall clock only at collection time, so a receipt time bounds the
+  offset from above alone (backlog residence is unbounded, protocol README:108).
+  No two-sided reading is derivable from the current surfaces.
+- **Retry condition**: an adb path to the node, or a validated transport-paired
+  measurement. A candidate (not implemented, not validated) is to bracket a phone
+  wall-clock reading between host send and receipt, or to pair a same-session row
+  with a later `elapsedRealtime` reading; either must handle the wall-clock-step
+  hazard (`jump`) before it may publish an interval.
+
 ## Per-session excursion log (phone-clock windows)
 
 Each finalized hello session yields one append-only line in
