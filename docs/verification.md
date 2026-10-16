@@ -375,8 +375,13 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   `Restart=`, so a RED stays a failed unit) and `…-check.timer` (`OnBootSec=120`, `OnUnitActiveSec=300`),
   symlinked into `~/.config/systemd/user/` and enabled 11:19Z; each run rewrites
   `health/crosssite-check.json` (`at`/`verdict`/`findings`), whose stale `at` is the evidence that the
-  monitoring stopped. `health/services.json` is the Mishe-channel registry and lists no `body/*` unit,
-  so no registration change was needed. Verified: timer active with next fire 11:24:06Z, unit
+  monitoring stopped. **Deliberately not registered in `health/services.json`**: that registry is walked
+  by the core coordinator (`coordination/site_sync.py:200-215`), which requires every listed unit's
+  `Environment` to carry the pinned `PYTHONPATH`; a listed unit without it makes `site_sync` hold the
+  whole linked site and restart every channel unit on each retry — observed this wake on
+  `android-body-dash-stall-detector.service` (holds 10:45:53Z, 10:50:19Z, 10:56:54Z; `tools/health-check.sh`
+  §1c then read `RED channel restarts 46/h over bound 40`, 0 restarts since the 10:59:55Z sync, RED a
+  window artefact clearing ≈11:44Z). Verified: timer active with next fire 11:24:06Z, unit
   `Result=success`/`ExecMainStatus=0` with the JSON written by the unit, and the RED path exercised
   through the same command line against a synthetic foreign-op session (exit 1, `verdict=RED`).
 - Revert: `cp -a .mishe-tauftauf/artifacts/crosssite-mitigation-20261016T1015Z/charters-before/.
