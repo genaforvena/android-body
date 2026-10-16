@@ -181,10 +181,20 @@ transition lines, not every polled snapshot. Exit zero means rendered evidence,
 deviation of acceleration magnitude, light lux and connected-link Wi-Fi RSSI
 over a bounded history window. `status=still` requires all three standard
 deviations within thresholds (accel ≤ 0.5 m/s², light ≤ 0.1 lux, RSSI ≤ 2.0 dBm);
-any single term exceeding its threshold yields `status=moving`. Insufficient
-samples yield `status=unknown/insufficient-samples`. The composite is a
+any single term exceeding its threshold yields `status=moving`. The composite is a
 space-perception programme output, not a human-presence or occupancy claim.
 If any required sensor's latest sample is stale, the composite reports `status=unknown/frozen` regardless of historical window contents; stale evidence cannot authorize a current stillness or moving claim.
+When a required input is absent from the window (`missing_inputs`) or its most
+recent observation carries no usable value (`unavailable_inputs`, e.g.
+redmi10's `wifi_link_rssi_dbm unavailable reason=disconnected` while the phone
+is on mobile data), the composite reports `status=unknown/no-available-input`
+and names the input: it cannot support a current verdict, and calling it a
+sample-count shortfall would name the wrong cause. The check is on the most
+recent observation, symmetric with the stale gate, so window values that
+predate a link loss cannot authorize a verdict about now.
+`status=unknown/insufficient-samples` is reserved for the case where every
+input's latest observation carries a value but the window holds fewer than two
+usable values for some input.
 
 The light term is quantized: at a near-constant baseline its readings can swing
 enough to exceed the light threshold while acceleration and RSSI stay flat,

@@ -1208,6 +1208,111 @@ class PerceptionTests(unittest.TestCase):
         recovered = watch.stillness_snapshot(state, 1063, 30)
         self.assertNotEqual(recovered["status"], "unknown/frozen")
 
+    def test_stillness_names_an_unavailable_required_input(self):
+        """An observed input with no usable value is not a sample-count shortfall.
+
+        Redmi10's Wi-Fi link read is ``unavailable reason=disconnected`` on every
+        row while the phone is on mobile data. Accel and light carry plenty of
+        values, so ``unknown/insufficient-samples`` named the wrong cause and a
+        consumer would wait for RSSI samples that cannot arrive.
+        """
+        state = self.state()
+        self.page(state, [
+            "1000 light lux=1.0 accuracy=3 age_ms=10",
+            "1000 acceleration x=0 y=0 z=9.8 age_ms=10",
+            "1000 wifi_link_rssi_dbm unavailable reason=disconnected source=androidbody_wifi_api observed_at=1000",
+            "1001 light lux=1.1 accuracy=3 age_ms=10",
+            "1001 acceleration x=0 y=0 z=9.8 age_ms=10",
+            "1001 wifi_link_rssi_dbm unavailable reason=disconnected source=androidbody_wifi_api observed_at=1001",
+        ], received=1001)
+        result = watch.stillness_snapshot(state, 1001, 30)
+        self.assertEqual(result["status"], "unknown/no-available-input")
+        self.assertEqual(result["unavailable_inputs"], ["wifi_link_rssi_dbm"])
+        self.assertEqual(result["missing_inputs"], [])
+        self.assertEqual(result["accel"]["count"], 2)
+        self.assertEqual(result["light"]["count"], 2)
+        self.assertIsNone(result["wifi_rssi"])
+        view = watch.render(state, 1001, 30)
+        self.assertIn("status=unknown/no-available-input", view)
+        self.assertIn("unavailable_inputs=wifi_link_rssi_dbm", view)
+
+    def test_stillness_names_a_missing_required_input(self):
+        """An input absent from the window is missing, not undersampled."""
+        state = self.state()
+        self.page(state, [
+            "1000 light lux=1.0 accuracy=3 age_ms=10",
+            "1000 acceleration x=0 y=0 z=9.8 age_ms=10",
+            "1001 light lux=1.1 accuracy=3 age_ms=10",
+            "1001 acceleration x=0 y=0 z=9.8 age_ms=10",
+        ], received=1001)
+        result = watch.stillness_snapshot(state, 1001, 30)
+        self.assertEqual(result["status"], "unknown/no-available-input")
+        self.assertEqual(result["missing_inputs"], ["wifi_link_rssi_dbm"])
+        self.assertEqual(result["unavailable_inputs"], [])
+        self.assertIn("missing_inputs=wifi_link_rssi_dbm",
+                      watch.render(state, 1001, 30))
+
+    def test_stillness_insufficient_samples_is_reserved_for_short_value_lists(self):
+        """Every input carries a value; there are just too few of them."""
+        state = self.state()
+        self.page(state, [
+            "1000 light lux=1.0 accuracy=3 age_ms=10",
+            "1000 acceleration x=0 y=0 z=9.8 age_ms=10",
+            "1000 wifi_link_rssi_dbm=-10 source=androidbody_wifi_api observed_at=1000",
+        ], received=1000)
+        result = watch.stillness_snapshot(state, 1000, 30)
+        self.assertEqual(result["status"], "unknown/insufficient-samples")
+        self.assertNotIn("missing_inputs", result)
+        self.assertNotIn("unavailable_inputs", result)
+
+    def test_stillness_gates_on_the_most_recent_observation_not_the_window(self):
+        """A window value that predates a link loss cannot authorize a verdict about now.
+
+        An older usable RSSI sample is still in the window when the link drops,
+        so a window-scoped availability test would let the composite report a
+        current verdict from a value taken before the disconnection.
+        """
+        state = self.state()
+        self.page(state, [
+            "1000 light lux=1.0 accuracy=3 age_ms=10",
+            "1000 acceleration x=0 y=0 z=9.8 age_ms=10",
+            "1000 wifi_link_rssi_dbm=-40 source=androidbody_wifi_api observed_at=1000",
+            "1001 light lux=1.1 accuracy=3 age_ms=10",
+            "1001 acceleration x=0 y=0 z=9.8 age_ms=10",
+            "1001 wifi_link_rssi_dbm unavailable reason=disconnected source=androidbody_wifi_api observed_at=1001",
+        ], received=1001)
+        result = watch.stillness_snapshot(state, 1001, 30)
+        self.assertEqual(result["status"], "unknown/no-available-input")
+        self.assertEqual(result["unavailable_inputs"], ["wifi_link_rssi_dbm"])
+
+    def test_stillness_frozen_still_names_a_missing_input(self):
+        """The freeze verdict is the strongest statement, but it is not the only fact."""
+        state = self.state()
+        self.page(state, [
+            "1000 light lux=1.0 accuracy=3 age_ms=10",
+            "1000 acceleration x=0 y=0 z=9.8 age_ms=10",
+        ], received=1000)
+        result = watch.stillness_snapshot(state, 1060, 30)
+        self.assertEqual(result["status"], "unknown/frozen")
+        self.assertEqual(result["stale_sensors"], ["acceleration", "light"])
+        self.assertEqual(result["missing_inputs"], ["wifi_link_rssi_dbm"])
+        self.assertEqual(result["unavailable_inputs"], [])
+
+    def test_stillness_names_a_light_row_without_lux_as_unavailable(self):
+        state = self.state()
+        self.page(state, [
+            "1000 light lux=1.0 accuracy=3 age_ms=10",
+            "1000 acceleration x=0 y=0 z=9.8 age_ms=10",
+            "1000 wifi_link_rssi_dbm=-10 source=androidbody_wifi_api observed_at=1000",
+            "1001 light lux=null accuracy=3 age_ms=10",
+            "1001 acceleration x=0 y=0 z=9.8 age_ms=10",
+            "1001 wifi_link_rssi_dbm=-11 source=androidbody_wifi_api observed_at=1001",
+        ], received=1001)
+        result = watch.stillness_snapshot(state, 1001, 30)
+        self.assertEqual(result["status"], "unknown/no-available-input")
+        self.assertEqual(result["unavailable_inputs"], ["light"])
+        self.assertEqual(result["missing_inputs"], [])
+
     def test_ble_sighting_and_scan_lifecycle_are_readable_evidence_without_presence_claim(self):
         state = self.state()
         self.page(state, ["1000 hello node=note3 protocol=1 session=s1",

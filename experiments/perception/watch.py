@@ -1038,6 +1038,9 @@ STILLNESS_ACCEL_STD = 0.5
 STILLNESS_LIGHT_STD = 0.1
 STILLNESS_RSSI_STD = 2.0
 STILLNESS_MIN_SAMPLES = 2
+#: The composite's required inputs, in the order the pane names them. A joint
+#: verdict needs one usable value for every one of them.
+STILLNESS_INPUTS = ("acceleration", "light", "wifi_link_rssi_dbm")
 
 
 def stillness_snapshot(state, now, stale):
@@ -1047,12 +1050,27 @@ def stillness_snapshot(state, now, stale):
     history window contains only pre-frozen samples.  Computing std over
     them would report a misleading still/moving verdict, so return
     unknown/frozen instead.
+
+    A required input can also fail to support the verdict without being stale:
+    absent from the window, or with a *most recent* observation that carries no
+    usable value (a ``wifi_link_rssi_dbm`` row whose link read is
+    ``unavailable``, a ``light`` row with no ``lux``). Those are named in
+    ``missing_inputs`` / ``unavailable_inputs`` with
+    ``status=unknown/no-available-input``: the input cannot support a current
+    claim, and calling it a sample-count shortfall would name the wrong cause
+    and invite a consumer to wait for samples that will never arrive. The check
+    is on the most recent observation, symmetric with the stale gate: window
+    values that predate a link loss must not authorize a verdict about *now*.
+    ``unknown/insufficient-samples`` is reserved for the case where every
+    input's latest observation carries a value but the window holds too few of
+    them.
     """
     history = state.get("history", [])
     accel_values = []
     light_values = []
     rssi_values = []
     latest = {}
+    latest_value = {}
     for item in history:
         kind = item["kind"]
         if kind == "acceleration":
@@ -1060,37 +1078,31 @@ def stillness_snapshot(state, now, stale):
             if value is not None:
                 accel_values.append(value)
             latest["acceleration"] = item
+            latest_value["acceleration"] = value
         elif kind == "light":
             value = number(item["fields"], "lux")
             if value is not None:
                 light_values.append(value)
             latest["light"] = item
+            latest_value["light"] = value
         elif kind == "wifi_link_rssi_dbm":
             value = number(item["fields"], "wifi_link_rssi_dbm")
             if value is not None:
                 rssi_values.append(value)
             latest["wifi_link_rssi_dbm"] = item
+            latest_value["wifi_link_rssi_dbm"] = value
 
     stale_sensors = []
-    for kind in ("acceleration", "light", "wifi_link_rssi_dbm"):
+    missing_inputs = []
+    unavailable_inputs = []
+    for kind in STILLNESS_INPUTS:
         item = latest.get(kind)
         if item is None:
-            continue
-        if freshness(item, now, stale) == "stale":
+            missing_inputs.append(kind)
+        elif freshness(item, now, stale) == "stale":
             stale_sensors.append(kind)
-    if stale_sensors:
-        return {
-            "status": "unknown/frozen",
-            "basis": "joint std of accel magnitude + light + wifi RSSI over history window",
-            "thresholds": {"accel_std_m_s2": STILLNESS_ACCEL_STD,
-                           "light_std_lux": STILLNESS_LIGHT_STD,
-                           "rssi_std_dbm": STILLNESS_RSSI_STD},
-            "accel": None,
-            "light": None,
-            "wifi_rssi": None,
-            "stale_sensors": stale_sensors,
-            "consumer": "space-perception programme (not human presence)",
-        }
+        elif latest_value.get(kind) is None:
+            unavailable_inputs.append(kind)
 
     def stats(vals):
         if len(vals) < STILLNESS_MIN_SAMPLES:
@@ -1103,6 +1115,35 @@ def stillness_snapshot(state, now, stale):
     accel_stats = stats(accel_values)
     light_stats = stats(light_values)
     rssi_stats = stats(rssi_values)
+    basis = "joint std of accel magnitude + light + wifi RSSI over history window"
+    thresholds = {"accel_std_m_s2": STILLNESS_ACCEL_STD,
+                  "light_std_lux": STILLNESS_LIGHT_STD,
+                  "rssi_std_dbm": STILLNESS_RSSI_STD}
+    if stale_sensors:
+        return {
+            "status": "unknown/frozen",
+            "basis": basis,
+            "thresholds": thresholds,
+            "accel": None,
+            "light": None,
+            "wifi_rssi": None,
+            "stale_sensors": stale_sensors,
+            "missing_inputs": missing_inputs,
+            "unavailable_inputs": unavailable_inputs,
+            "consumer": "space-perception programme (not human presence)",
+        }
+    if missing_inputs or unavailable_inputs:
+        return {
+            "status": "unknown/no-available-input",
+            "basis": basis,
+            "thresholds": thresholds,
+            "accel": accel_stats,
+            "light": light_stats,
+            "wifi_rssi": rssi_stats,
+            "missing_inputs": missing_inputs,
+            "unavailable_inputs": unavailable_inputs,
+            "consumer": "space-perception programme (not human presence)",
+        }
     if accel_stats is None or light_stats is None or rssi_stats is None:
         status = "unknown/insufficient-samples"
     elif (accel_stats["std"] <= STILLNESS_ACCEL_STD and
@@ -1113,10 +1154,8 @@ def stillness_snapshot(state, now, stale):
         status = "moving"
     return {
         "status": status,
-        "basis": "joint std of accel magnitude + light + wifi RSSI over history window",
-        "thresholds": {"accel_std_m_s2": STILLNESS_ACCEL_STD,
-                       "light_std_lux": STILLNESS_LIGHT_STD,
-                       "rssi_std_dbm": STILLNESS_RSSI_STD},
+        "basis": basis,
+        "thresholds": thresholds,
         "accel": accel_stats,
         "light": light_stats,
         "wifi_rssi": rssi_stats,
@@ -1807,6 +1846,13 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
     if stillness.get("stale_sensors"):
         lines.append(f"  stale_sensors={','.join(stillness['stale_sensors'])} "
                      "(history window contains pre-frozen samples; std not computed)")
+    if stillness.get("missing_inputs"):
+        lines.append(f"  missing_inputs={','.join(stillness['missing_inputs'])} "
+                     "(no observation of this kind in the retained window)")
+    if stillness.get("unavailable_inputs"):
+        lines.append(f"  unavailable_inputs={','.join(stillness['unavailable_inputs'])} "
+                     "(the most recent observation carries no usable value: this input "
+                     "cannot support a current verdict)")
     lines.append(f"  consumer={stillness['consumer']}")
     guard = accel_guard(state.get("history", []))
     median_text = ("null" if guard["magnitude_median"] is None

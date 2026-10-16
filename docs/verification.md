@@ -518,3 +518,55 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Evidence: `SITE/artifacts/senses-wake102180-clock-domain-provenance.md`;
   `SITE/artifacts/senses-wake102180-clock-domain-redmi10-provenance-error.json`;
   `SITE/body/clock-domain-note3.json`; `SITE/body/perception/view.txt:8`; `SITE/body/space.json`.
+
+## Composite stillness — an unavailable input is named, not called undersampled (senses wake 102482, 2026-10-16)
+
+- Trigger: the live redmi10 composite reported `status=unknown/insufficient-samples` with
+  `accel_std=0.084 m/s² (n=8)` and `light_std=0.000 lux (n=8)`, while every `wifi_link_rssi_dbm`
+  row in the window was `unavailable reason=disconnected` (the phone is on mobile data). The sample
+  counts were fine; a required *input* had no usable value. `unknown/insufficient-samples` named the
+  wrong cause and hid which input was missing, inviting a consumer to wait for RSSI samples that
+  cannot arrive. A required kind absent from the window was silently skipped and reported the same
+  way. This is the role's stated requirement ("define missing/stale input behavior and show UNKNOWN
+  when remaining evidence cannot support the claim") unmet in a live reading.
+- Change (repo source `experiments/perception/watch.py`; deployed sha256 in the activation bullet
+  below): `stillness_snapshot` classifies each input in the new `STILLNESS_INPUTS` tuple as absent
+  from the window (`missing_inputs`), stale latest observation (`stale_sensors`, unchanged), or a
+  latest observation with no usable value (`unavailable_inputs`, e.g. an RSSI row read
+  `unavailable`, a `light` row with no `lux`, an accel row with no axes). Precedence: stale →
+  `unknown/frozen`; then missing/unavailable → new `status=unknown/no-available-input`; then
+  `unknown/insufficient-samples`, now reserved for "every input's latest observation carries a value
+  but the window holds fewer than two". The availability check is on the *most recent* observation,
+  symmetric with the stale gate, so window values that predate a link loss cannot authorize a
+  verdict about now. `missing_inputs`/`unavailable_inputs` are carried on the freeze branch too, and
+  the pane gained two lines mirroring `stale_sensors=`.
+- Independent review before commit (reviewer subagent, read-only, on the working-tree diff): **NO
+  DEFECT FOUND**, five test gaps flagged; three closed in the commit (latest-observation scope,
+  frozen-vs-missing precedence, `light lux=null`), the other two covered by the guard test and the
+  precedence case.
+- Tests: five new cases in `experiments/perception/test_perception.py` (226 total, was 220). A
+  throwaway discrimination run with the pre-change bytes (`git show HEAD:experiments/perception/watch.py`
+  in a temp dir with the new test file) produced 4 failures + 1 error, 0 on the new code — the tests
+  are change-detectors, not tautologies. perception 226 OK, tools 267 OK, rendezvous 21 OK,
+  light-vibrate 8 OK, minimal-substrate 24 OK, trial-eval 10 OK; `tools/test-protocol.sh` (Protocol
+  81, BoundedEvaluatorTest 105, BleScanEvents 17, EvalOutcome 48) and `tools/test-spool.sh`
+  (ObservationSpool 2788) pass. No Java/resource/protocol byte changed, so gradle was not re-run.
+- Live, activated. Deployed `body/runtime/watch.py` sha256 `9ef0bb5489262745…` (predecessor
+  `57498649…` kept as `watch.py.pre-deploy-20261016T1917Z`); `android-body-perception.service`
+  restarted 19:17:55Z. Live redmi10 pane: `status=unknown/no-available-input`,
+  `accel_std=0.000 m/s² (n=3)`, `light_std=2.165 lux (n=8)`,
+  `unavailable_inputs=acceleration,wifi_link_rssi_dbm`; live note3 pane unchanged
+  (`unknown/frozen`, `stale_sensors=acceleration,light,wifi_link_rssi_dbm`); `space.json` carries
+  the keys for both nodes.
+- Revert path exercised: restore `watch.py.pre-deploy-20261016T1917Z`, restart — the pane returned to
+  `unknown/insufficient-samples` with the cause invisible and `runtime_manifest check` RED; the new
+  bytes restored `unknown/no-available-input` with `unavailable_inputs=acceleration,wifi_link_rssi_dbm`.
+- Adjacent, already on the record: redmi10's accelerometer is chronically intermittent
+  (`Sensors.java:128` emits `acceleration unavailable reason=stale` after >15 s with no new sample;
+  12,358 retained rows, 37 runs of ≥3, longest 2,494 rows ≈3.5 h; known from
+  `NOTES-senses-wake93653.md`). The composite now reports it rather than hiding it.
+- Scope: one repo source, its tests, the perception README, this record, one deployed runtime copy
+  with a backup, one service restart. No device mode, transport, cursor, queue, actuator, radio, APK
+  or protocol byte changed; no device access. No `adb reverse --list`.
+- Evidence: `SITE/artifacts/senses-wake102482-stillness-input-availability.md`;
+  `SITE/body/perception/view.txt`; `SITE/body/space.json`.
