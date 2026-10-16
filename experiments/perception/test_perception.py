@@ -3198,6 +3198,39 @@ class SpoolScanStateTests(unittest.TestCase):
         self.assertIn("row_age=unknown(row-epoch-in-future)",
                       watch.spool_scan_state_segment(True, self.ROW, now, self.CLOCK))
 
+    def test_row_lag_names_how_long_before_the_summary_the_row_was_written(self):
+        # The sampler lane re-stamps the row every 5 s, so a live lane leaves the
+        # row only seconds older than the summary; the lag is what separates the
+        # reader cadence from a stopped sampler (2026-10-16 correction).
+        live = watch.spool_scan_state_segment(
+            True, self.ROW, 1792061943 + 25.6 + 300.0, self.CLOCK, 298.0)
+        self.assertIn("row_age=300s (row written 2s before the summary)", live)
+        stopped = watch.spool_scan_state_segment(
+            True, self.ROW, 1792061943 + 25.6 + 1200.0, self.CLOCK, 298.0)
+        self.assertIn("row_age=1200s (row written 902s before the summary)", stopped)
+
+    def test_row_lag_degrades_to_the_bare_row_age_without_a_usable_summary_age(self):
+        # A missing or malformed summary age must not invent a lag, and a huge
+        # int must not raise OverflowError out of math.isfinite.
+        for bad in (None, -1.0, True, "5", float("nan"), float("inf"), 10 ** 400):
+            segment = watch.spool_scan_state_segment(
+                True, self.ROW, 1792061943 + 25.6 + 4.0, self.CLOCK, bad)
+            self.assertIn("row_age=4s", segment, bad)
+            self.assertNotIn("before the summary", segment, bad)
+
+    def test_view_line_carries_the_row_lag(self):
+        spool = {"status": "ok", "spool_bytes": 3130966,
+                 "retention_window_s": 20431.0,
+                 "counts": {kind: 100 for kind in watch.SPOOL_COVERAGE_KINDS},
+                 "light_buckets": {"dark_exact": 1, "faint_0_1": 0,
+                                   "dim_0_9": 1, "moderate_10_99": 0,
+                                   "bright_100_999": 0,
+                                   "very_bright_1000_plus": 0},
+                 "overflow": {"dropped": 0, "notice_epoch_s": None},
+                 "scan_state": self.ROW, "scan_state_present": True, "age_s": 5.0}
+        line = watch.spool_view_line(spool, 1792061943 + 25.6 + 4.0, self.CLOCK)
+        self.assertIn("row_age=4s (row written 0s before the summary)", line)
+
     def test_view_line_keeps_the_summary_age_and_the_row_age_distinct(self):
         spool = {"status": "ok", "spool_bytes": 3130966,
                  "retention_window_s": 20431.0,

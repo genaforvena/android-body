@@ -2380,7 +2380,29 @@ def spool_scan_state_row_age(scan_state, now, clock):
     return max(age, 0.0), None
 
 
-def spool_scan_state_segment(present, scan_state, now=None, clock=None):
+def _row_lag_behind_summary(age, summary_age_s):
+    """How long before the summary's own read the scan-state row was written.
+
+    ``row_age`` is bounded by the spool-read cycle, not the phone: the sampler
+    lane re-stamps the row every 5 s while it runs, so the row a summary carries
+    is only as old as the reader's last run. Subtracting the summary's own age
+    makes the two cadences separable on the pane -- a small lag means the sampler
+    lane was writing rows when the summary was read; a lag that grows with the
+    row age means it had already stopped. ``None`` when the summary age is
+    unusable, so the field degrades to the bare ``row_age`` instead of inventing
+    a lag.
+    """
+    if (not isinstance(summary_age_s, (int, float))
+            or isinstance(summary_age_s, bool)
+            or abs(summary_age_s) > 1e308
+            or not math.isfinite(summary_age_s)
+            or summary_age_s < 0):
+        return None
+    return max(age - float(summary_age_s), 0.0)
+
+
+def spool_scan_state_segment(present, scan_state, now=None, clock=None,
+                             summary_age_s=None):
     """The latest collection-side ``ble_scan_state`` row as one labelled segment.
 
     The row is the app's own per-cycle scan-loop state, read from the spool
@@ -2404,7 +2426,13 @@ def spool_scan_state_segment(present, scan_state, now=None, clock=None):
     domain, resolved through the published clock-domain offset. The enclosing
     ``age=`` on the collection-side line is the summary document's own age (one
     spool-read cycle, up to ``SPOOL_SUMMARY_MAX_AGE_SECONDS``), so it measures
-    the reader cadence, not how old the phone's row is.
+    the reader cadence, not how old the phone's row is. ``summary_age_s`` (that
+    same ``age=``) makes the bound explicit: the sampler lane re-stamps the row
+    every 5 s, so while it runs the row is only a few seconds older than the
+    summary and the segment reads ``row_age=<n>s (row written <m>s before the
+    summary)``. A lag that grows with the row age is the stopped-sampler signal;
+    a stopped scan *loop* does not show here at all -- it re-stamps the row with
+    ``phase=none`` -- so ``phase`` is the loop-stopped field (2026-10-16).
     """
     if not present:
         return " scan_state=unknown/field-absent"
@@ -2427,8 +2455,13 @@ def spool_scan_state_segment(present, scan_state, now=None, clock=None):
             or not isinstance(scan_state.get("last_error"), str)):
         return " scan_state=invalid"
     age, reason = spool_scan_state_row_age(scan_state, now, clock)
-    row_age = (f" row_age={age:.0f}s" if age is not None
-               else f" row_age=unknown({reason})")
+    if age is None:
+        row_age = f" row_age=unknown({reason})"
+    else:
+        row_age = f" row_age={age:.0f}s"
+        lag = _row_lag_behind_summary(age, summary_age_s)
+        if lag is not None:
+            row_age += f" (row written {lag:.0f}s before the summary)"
     return (f" scan_state(windows={scan_state['windows']} "
             f"phase={scan_state['phase']} "
             f"last_error={scan_state['last_error']} "
@@ -2460,7 +2493,8 @@ def spool_view_line(spool, now=None, clock=None):
         loss = (f"overflow=cumulative-dropped={dropped:,}"
                 if dropped is not None else "overflow=unknown")
         scan_segment = spool_scan_state_segment(spool.get("scan_state_present"),
-                                               spool.get("scan_state"), now, clock)
+                                               spool.get("scan_state"), now, clock,
+                                               spool.get("age_s"))
         return (f"collection-side spool evidence (NOT delivered; source=app-private-spool): "
                 f"status=ok spool={spool['spool_bytes']:,}B window={window_hours:.1f}h "
                 f"rows={total:,} light={light:,} "
