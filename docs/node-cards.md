@@ -1,8 +1,10 @@
 # Node cards — owned Android bodies
 
-Self-declared capability cards for the owned phones, per the 2026-10-07 node-cards
-mandate. The shared wire surface stays human-readable text; JSON is deliberately excluded.
-The machine-readable observation layer is the perception consumer
+Capability cards for the owned phones, per the 2026-10-07 node-cards mandate. They record
+the shipped surface each installed build actually emits; the later 2026-10-07
+minimal-substrate direction supersedes capability-card-first architecture as the plan. The
+shared wire surface stays human-readable text; JSON is deliberately excluded. The
+machine-readable observation layer is the perception consumer
 (`body/perception/*.json` + the pane) owned by senses — humans read this file.
 
 Each card states: implemented capability, local owner enablement, Android permission,
@@ -10,8 +12,9 @@ present availability, supported bounded text requests, limits. Declaration is no
 a working sensor. "Present availability" always carries its observation instant; staleness
 is a property of the channel, never a silent default.
 
-Last updated 2026-10-16 ~02:24Z by android-body discover. Availability stamps below are
-from the read-only deployed view at 02:23:13Z and can go stale.
+Last updated 2026-10-16 ~02:24Z by android-body discover; the `cap`/BLE attribution was
+corrected 2026-10-16 ~09:28Z by docs. Availability stamps below are from the read-only
+deployed view at 02:23:13Z and can go stale.
 
 ## Note3 node card
 
@@ -20,17 +23,21 @@ plugged in over ADB to this host and reached through the loopback rendezvous bri
 (`http://127.0.0.1:8765/node/note3`). It is not a tailnet peer; it is a node over the ADB
 transport, in the LTE Workstation junk-drawer-phone sense.
 
-Implemented capabilities (app `cap` block, all `present`):
+Implemented capabilities — five `cap` rows at session start (`cap battery`, `cap light`,
+`cap accelerometer`, `cap wifi_link_rssi`, `cap vibration`), all `present`:
 
 - battery — level fraction plus charging state.
 - light — ambient lux; consumer buckets dark/faint/dim/moderate/bright for transitions.
 - accelerometer — x/y/z in m/s² including gravity; magnitude is not motion proof.
 - wifi_link_rssi — connected-link RSSI from the Android Wi-Fi API; not room proximity.
 - vibration (actuator) — see bounded requests.
-- bluetooth_le — bounded scan for the allowlisted `MISHE-BEACON` only. The API-21 adapter
-  reports `advertiser_supported=unsupported`: the phone can scan but cannot advertise, which
-  is why the space-perception advertiser trial runs on the host dongle. No tracking of
-  other people's devices.
+
+BLE is a per-cycle observation, not a `cap` row: the sampler emits `ble_status` (a
+`BluetoothAdapter` snapshot) every five seconds, plus the bounded `ble_scan` lifecycle rows
+and the per-cycle `ble_scan_state` row while scanning. Scan is bounded to the allowlisted
+`MISHE-BEACON` only. The API-21 adapter reports `advertiser_supported=unsupported`: the
+phone can scan but cannot advertise, which is why the space-perception advertiser trial runs
+on the host dongle. No tracking of other people's devices.
 
 Local owner enablement (persisted phone-side, emitted at each session start):
 
@@ -79,9 +86,9 @@ over the tailnet HTTPS front (`https://mesh-home.tail3e4555.ts.net/node/redmi10`
 ADB; no host USB channel yet (operator-gated, health lane).
 
 Implemented capabilities (session-start `cap` block): battery, light, accelerometer,
-wifi_link_rssi present; vibration (actuator) present. bluetooth_le is declared but its
-installed build emits `ble_scan error reason=SecurityException` (API 33 scan-permission
-regime) — declared, currently failing, not a working scanner on this build.
+wifi_link_rssi present; vibration (actuator) present. The installed build emits no
+`ble_status` row, and its only BLE row is `ble_scan error reason=SecurityException` (API 33
+scan-permission regime) — not a working scanner on this build.
 
 Local owner enablement: UNKNOWN. The installed APK predates the `owner_checkboxes`
 emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side
