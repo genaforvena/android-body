@@ -338,13 +338,41 @@ fi
 # the consumer accepts the file for 300s (watch.py NODE_STATE_MAX_AGE_SECONDS),
 # so 120s is the tighter liveness bound for the publisher itself: past it the
 # consumer would already be rendering mode=unknown, and the publisher is RED.
-NODE_STATE="$SITE/body/perception/node-state-note3.json"
+# node_state.py catches its own adb error and publishes a *fresh* document
+# carrying mode=UNKNOWN and the reason, so the mtime bound alone would read
+# GREEN on every tick that reported the device unreadable. A fresh UNKNOWN
+# document is RED while the phone is attached (§3 ATTACHED) and UNKNOWN when
+# it is not, mirroring §7f's mapping rule; the stale branch still wins, since
+# a stopped publisher is the more specific fact.
+# NODE_STATE is overridable so a controlled failure routes through this section
+# without touching the live published document.
+NODE_STATE=${NODE_STATE:-$SITE/body/perception/node-state-note3.json}
 if [ -f "$NODE_STATE" ]; then
   NS_AGE=$(( $(date +%s) - $(stat -c%Y "$NODE_STATE") ))
-  if [ "$NS_AGE" -le 120 ]; then
-    pass "node-state note3 fresh (${NS_AGE}s)"
+  NS_LINE=$(python3 -c "
+import json, sys
+try:
+    document = json.load(open(sys.argv[1]))
+    print('%s\t%s' % (document.get('mode') or 'missing',
+                      str(document.get('reasons') or 'none').replace('\n', ' ')))
+except Exception:
+    print('unreadable\tnone')" "$NODE_STATE" 2>/dev/null)
+  NS_MODE=$(printf '%s\n' "$NS_LINE" | cut -f1)
+  NS_REASONS=$(printf '%s\n' "$NS_LINE" | cut -f2)
+  if [ "$NS_AGE" -gt 120 ]; then
+    fail "node-state note3 stale ${NS_AGE}s (>120s; publisher stopped)"
+  elif [ "$NS_MODE" = "ON_SENDING" ] || [ "$NS_MODE" = "ON_COLLECT_ONLY" ] || [ "$NS_MODE" = "ON_NOT_RUNNING" ] || [ "$NS_MODE" = "OFF" ]; then
+    pass "node-state note3 fresh (${NS_AGE}s) mode=$NS_MODE"
+  elif [ "$NS_MODE" = "UNKNOWN" ]; then
+    if [ "${ATTACHED:-}" = "yes" ]; then
+      fail "node-state note3 UNKNOWN (${NS_REASONS}) while note3 is attached; ${NS_AGE}s old"
+    else
+      echo "UNKNOWN node-state note3 UNKNOWN (${NS_REASONS}); ${NS_AGE}s old, note3 not attached"
+    fi
+  elif [ -z "$NS_MODE" ]; then
+    echo "UNKNOWN node-state note3 mode (python3 unavailable)"
   else
-    fail "node-state note3 stale ${NS_AGE}s (>120s)"
+    fail "node-state note3 mode=$NS_MODE (${NS_REASONS}); expected a known state, ${NS_AGE}s old"
   fi
 else
   fail "node-state note3 MISSING"

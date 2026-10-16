@@ -296,6 +296,15 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Verification: `sh -n` OK. Live: `GREEN clock-domain note3 fresh (37s)`. Controlled failures through the real §7f: fresh-unavailable document with the phone attached → `RED clock-domain note3 unavailable (device unreadable) while note3 is attached; 1s old`; backdated mtime 402 s → `RED clock-domain note3 stale 402s (>300s; publisher stopped)`; missing path → `RED clock-domain note3 MISSING`; malformed JSON → `RED clock-domain note3 status=unreadable (none); expected ok, 1s old`. `python3 -m unittest discover -s tools` → 267 OK.
 - Revert: `git checkout -- tools/health-check.sh`; it is not service- or timer-driven, and the exercise wrote only `/tmp` paths.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake102190-clock-domain-status-detector.md`.
+## Node-state mode detector — closing the failed-adb-read blind spot (health wake 102380, 2026-10-16)
+
+- Trigger: §7 checked only the mtime of `body/perception/node-state-note3.json`. `tools/node_state.py` catches its own adb error (`observe()` at line 100-103), publishes a *fresh* document carrying `mode=UNKNOWN` and the reason, and exits 0. The mtime bound alone would read GREEN on every tick that reported the device unreadable — the same false-coverage pattern as §7d (wake 102050) and §7f (wake 102190).
+- Failing-before: a controlled `mode=UNKNOWN` document with a fresh mtime would read GREEN through §7 while the device was actually unreadable.
+- Fix: §7 now reads the document's `mode` field: `ON_SENDING`/`ON_COLLECT_ONLY`/`ON_NOT_RUNNING`/`OFF` → GREEN; `UNKNOWN` → RED while Note3 is attached (§3 `ATTACHED`), UNKNOWN when it is not; unreadable/missing mode → RED. `NODE_STATE` is now `${NODE_STATE:-…}` so a controlled failure routes through the section without touching the live published document.
+- Verification: `sh -n` OK. Live: `GREEN node-state note3 fresh (41s) mode=ON_COLLECT_ONLY`. Controlled failures through the real §7: fresh UNKNOWN + attached → `RED node-state note3 UNKNOWN (['adb error']) while note3 is attached; 26s old`; stale mtime 241s → `RED node-state note3 stale 241s (>120s; publisher stopped)`; missing path → `RED node-state note3 MISSING`; malformed JSON → `RED node-state note3 mode=unreadable (none); expected a known state, 41s old`. `python3 -m unittest discover -s tools` → 267 OK.
+- Revert: `git checkout -- tools/health-check.sh`; it is not service- or timer-driven, and the exercise wrote only `/tmp` paths.
+- Evidence: `.mishe-tauftauf/artifacts/health-wake102380-node-state-mode-detector.md`.
+
 
 
 ## Perception consumer view liveness detector (health wake 90622, 2026-10-15)
