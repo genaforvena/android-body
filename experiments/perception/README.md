@@ -108,6 +108,10 @@ this surface.
 only while fresh; stale and unavailable statuses remain visible without a value.
 Sequence and timestamp churn with unchanged RSSI or BLE evidence does not repeat an
 event. No occupancy claim is made.
+An allowlisted-beacon observation adds `sighting_phone_sample=<phone UTC>` to the
+compact event line; it is omitted without an observation. A frozen stamp beside an
+advancing `scan_state` (windows/phase advancing, `sightings` flat) is the readable
+cessation signal during and after an advertiser window.
 
 When two adjacent retained light observations in the same phone session are both
 fresh, not delayed at receipt, within the configured freshness interval, neither
@@ -130,9 +134,13 @@ and connected-link `wifi_link_rssi` status,
 sequence, dBm, source, protocol event time, API `observed_at`, and consumer receipt.
 RSSI acquisition age and its unavailable reason are explicit; no room-proximity
 claim is made. `last_light_transition` includes stable event ID and both endpoint
-readings as historical evidence. Additive `ble_sighting` and `ble_scan` snapshots
+`readings as historical evidence. Additive `ble_sighting` and `ble_scan` snapshots
 mirror the `ble_status` convention: measured values only when fresh-clock-conditional,
-honest unknown when absent, values dropped when stale.
+honest unknown when absent, values dropped when stale. Both RF projections also publish
+raw `phone_sample_epoch_s` and `consumer_receipt_epoch_s` even when stale, so a core
+consumer can state "beacon last seen at phone-time T" and measure cessation age against
+the node's `clock_domain` reading; the consumer computes no host-derived age, which would
+conflate phone/host clock skew.
 Additive `node_state` carries the host-side verdict for the node
 (`tools/node_state.py`): status, mode, desired_on, collect_only,
 `observed_at_epoch_s`, reason and bounded reasons. It is what lets a consumer name

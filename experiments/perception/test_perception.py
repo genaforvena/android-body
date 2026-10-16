@@ -767,6 +767,55 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(view["status"], "unknown/no-observation")
         self.assertIsNone(view["feature_ble"])
 
+    def test_ble_sighting_projection_carries_sample_and_receipt_epochs(self):
+        state = self.state()
+        initial = watch.space_snapshot([state], 1000, 30)["nodes"][0]["ble_sighting"]
+        self.assertIsNone(initial["phone_sample_epoch_s"])
+        self.assertIsNone(initial["consumer_receipt_epoch_s"])
+        self.page(state, ["1000 ble_sighting name=MISHE-BEACON rssi=-23"],
+                 received=1000)
+        view = watch.space_snapshot([state], 1001, 30)["nodes"][0]["ble_sighting"]
+        self.assertEqual(view["phone_sample_epoch_s"], 1000)
+        self.assertEqual(view["consumer_receipt_epoch_s"], 1000)
+        # Stale keeps the raw epochs: cessation age is computed against
+        # clock_domain by the consumer, never hidden by the validity verdict.
+        stale = watch.space_snapshot([state], 1040, 30)["nodes"][0]["ble_sighting"]
+        self.assertEqual(stale["status"], "stale")
+        self.assertIsNone(stale["rssi_dbm"])
+        self.assertEqual(stale["phone_sample_epoch_s"], 1000)
+        self.assertEqual(stale["consumer_receipt_epoch_s"], 1000)
+
+    def test_ble_scan_state_projection_carries_sample_and_receipt_epochs(self):
+        state = self.state()
+        initial = watch.space_snapshot([state], 1000, 30)["nodes"][0]["ble_scan_state"]
+        self.assertIsNone(initial["phone_sample_epoch_s"])
+        self.assertIsNone(initial["consumer_receipt_epoch_s"])
+        self.page(state, ["1000 ble_scan_state windows=3 phase=gap "
+                          "last_error=none sightings=0 window_ms=60000 gap_ms=60000"],
+                 received=1000)
+        view = watch.space_snapshot([state], 1001, 30)["nodes"][0]["ble_scan_state"]
+        self.assertEqual(view["sightings"], 0)
+        self.assertEqual(view["phone_sample_epoch_s"], 1000)
+        self.assertEqual(view["consumer_receipt_epoch_s"], 1000)
+        stale = watch.space_snapshot([state], 1040, 30)["nodes"][0]["ble_scan_state"]
+        self.assertEqual(stale["status"], "stale")
+        self.assertEqual(stale["phone_sample_epoch_s"], 1000)
+
+    def test_summary_line_shows_sighting_phone_sample_with_observation_only(self):
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 ble_sighting name=MISHE-BEACON rssi=-23"],
+                 received=1000)
+        self.assertTrue(watch.update_events(state, 1000, 30))
+        self.assertIn("sighting_phone_sample=1970-01-01T00:16:40",
+                      state["events"][-1])
+        quiet = self.state()
+        self.page(quiet, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 battery level=0.5 charging=true"], received=1000)
+        self.assertTrue(watch.update_events(quiet, 1000, 30))
+        self.assertFalse(any("sighting_phone_sample=" in event
+                             for event in quiet["events"]))
+
     def test_wifi_rssi_rejects_invalid_sentinels_and_out_of_range_values(self):
 
         for value in ("0", "1", "-127", "-128", "nan", "inf"):

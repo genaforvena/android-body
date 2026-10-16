@@ -1391,21 +1391,20 @@ def ble_scan_snapshot(item, now, stale, consecutive_errors=None):
 def ble_scan_state_snapshot(item, now, stale):
     """Per-cycle scan-loop state: windows, phase, last error, sightings.
 
-    Sample/receipt epochs are published with the same rationale as
-    ``ble_sighting_snapshot``: the boundary consumer reads "scan loop updated
-    at phone-time T" from raw epochs, never a host-derived age.
+    Emitted by the app on the sampler lane (5 s cadence), so it is retained
+    alongside the five per-cycle kinds and answers "is the scan loop alive"
+    for the current session. Absent in documents published by a predating
+    APK: unknown, never a fabricated zero. Sample/receipt epochs are
+    published with the same rationale as ``ble_sighting_snapshot``: the
+    boundary consumer reads "scan loop updated at phone-time T" from raw
+    epochs, never a host-derived age.
     """
-    if item is None:
-        return {"status": "unknown/no-observation", "sequence": None,
-                "windows": None, "phase": None, "last_error": None,
-                "sightings": None, "window_ms": None, "gap_ms": None,
-                "phone_sample_epoch_s": None, "consumer_receipt_epoch_s": None}
-    status = freshness(item, now, stale)
+    status = freshness(item, now, stale) if item else "unknown/no-observation"
     current = status == "fresh-clock-conditional"
     windows = phase = last_error = sightings = None
     window_ms = gap_ms = None
-    if current:
-        match = SCAN_STATE_BRE.search(item["raw"])
+    if current and item is not None:
+        match = SCAN_STATE_BRE.fullmatch(item["raw"])
         if match:
             windows = int(match[1])
             phase = match[2]
@@ -1413,11 +1412,11 @@ def ble_scan_state_snapshot(item, now, stale):
             sightings = int(match[4])
             window_ms = int(match[5])
             gap_ms = int(match[6])
-    return {"status": status, "sequence": item["sequence"],
-            "windows": windows, "phase": phase, "last_error": last_error,
-            "sightings": sightings, "window_ms": window_ms, "gap_ms": gap_ms,
-            "phone_sample_epoch_s": item["collected"],
-            "consumer_receipt_epoch_s": item["received"]}
+    return {"status": status, "windows": windows, "phase": phase,
+            "last_error": last_error, "sightings": sightings,
+            "window_ms": window_ms, "gap_ms": gap_ms,
+            "phone_sample_epoch_s": item["collected"] if item else None,
+            "consumer_receipt_epoch_s": item["received"] if item else None}
 
 
 
