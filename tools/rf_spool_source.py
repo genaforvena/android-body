@@ -225,7 +225,10 @@ def scan_state_fields(summary):
     phase = row.get("phase")
     windows = row.get("windows")
     last_error = row.get("last_error")
-    if phase not in SCAN_STATE_PHASES:
+    # ``phase`` is an arbitrary JSON value; membership in a frozenset raises TypeError on an
+    # unhashable one (a JSON array/object), which would escape scan_state_fields as a traceback
+    # (rc 1, empty stdout) instead of the documented unusable-input reason.
+    if not isinstance(phase, str) or phase not in SCAN_STATE_PHASES:
         return None, "scan-state-invalid"
     if not isinstance(windows, int) or isinstance(windows, bool) or windows < 0:
         return None, "scan-state-invalid"

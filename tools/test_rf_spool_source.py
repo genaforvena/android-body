@@ -161,6 +161,21 @@ class ContractLineTests(SourceTestCase):
         self.assertEqual(fields["windows"], "146")
         self.assertEqual(fields["row_age_s"], "2.0")
 
+    def test_an_unhashable_phase_is_unusable_not_a_traceback(self):
+        # A JSON array/object phase is unhashable; ``phase not in frozenset`` raised
+        # TypeError (rc 1, empty stdout, reason discarded), violating the documented
+        # unusable-input contract (docs/verification.md:320).
+        for phase in (["window"], {"phase": "window"}):
+            document = summary_document()
+            document["scan_state"]["phase"] = phase
+            write_json(self.summary, document)
+            rc, out = self.run_tool("--no-refresh")
+            self.assertEqual(rc, 0)
+            self.assertIn("spool-source unusable: scan-state-invalid", out)
+            self.assertNotIn("row_age_s=", out)
+            self.assertNotIn("last_error=", out)
+            self.assertNotIn("Traceback", out)
+
 
 class RefreshTests(SourceTestCase):
     def test_a_stale_row_forces_one_publication_and_reports_the_fresh_row(self):
