@@ -100,7 +100,7 @@ predates 2026-10-12T22:05Z). The vibration grammar is the app's own; whether thi
 carries it is unverified.
 
 Limits: Redmi10 is preparation, not a wired node: no USB window, no owner checkboxes,
-BLE scan erroring, Wi-Fi RSSI verdict ambiguous. The APK update (candidate `9a9af7af…`,
+BLE scan erroring, Wi-Fi RSSI verdict ambiguous. The APK update (candidate `a17829c7…`,
 containing the ACCESS_NETWORK_STATE fix) needs an operator USB window before any card
 claim about this phone can be re-declared truthfully.
 
