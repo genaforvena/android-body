@@ -82,8 +82,21 @@ HEARTBEAT_FILE = LOG_FILE.parent / "light-cycle-monitor-state.json"
 
 
 def default_site():
-    """The ``.mishe-tauftauf`` site that owns this checkout (source-copy layout)."""
-    return Path(__file__).resolve().parents[2] / ".mishe-tauftauf"
+    """The site that owns this file, in either layout this module runs in.
+
+    The module runs from its checkout path ``experiments/perception/`` and, once frozen
+    and deployed, from ``<site>/body/runtime/``. ``parents[2]`` is the checkout root in
+    the first layout and the site root in the second, so a single expression cannot serve
+    both: the deployed copy used to carry a hand-adjusted line, and on 2026-10-16 a deploy
+    froze the unadjusted source instead and the unit exited at startup. Check the two
+    candidate roots this file can sit under, nearest site first, and fall back to the
+    checkout layout so the caller's ``no body/queues directory`` error still names a path.
+    """
+    here = Path(__file__).resolve()
+    for candidate in (here.parents[2] / ".mishe-tauftauf", here.parents[2]):
+        if (candidate / "body" / "queues").is_dir():
+            return candidate
+    return here.parents[2] / ".mishe-tauftauf"
 
 
 def initial_offset(path):

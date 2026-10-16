@@ -4,6 +4,7 @@ The monitor tails a node's retained ``light`` rows and applies that node's froze
 the tests cover the rule state machine, the tail reader and the run wiring separately.
 """
 import argparse
+import importlib.util
 import json
 import sys
 import tempfile
@@ -134,6 +135,47 @@ class TestHeartbeat(unittest.TestCase):
             self.assertTrue(json.loads(heartbeat.read_text())["armed"] is False)
             self.assertEqual([p.name for p in Path(folder).iterdir() if p.name.endswith(".pending")],
                              [])
+
+class TestDefaultSite(unittest.TestCase):
+    """The frozen module must find the same site from either layout it runs in.
+
+    These tests copy this module's real bytes into a throwaway checkout rather than
+    re-implementing the lookup, because the bug being pinned is the deployed copy's own
+    ``__file__`` resolving to a different depth.
+    """
+
+    CHECKOUT = Path("experiments/perception/light_cycle_monitor.py")
+    DEPLOYED = Path(".mishe-tauftauf/body/runtime/light_cycle_monitor.py")
+
+    def _default_site_of(self, relative_path, with_queues=True):
+        with tempfile.TemporaryDirectory() as folder:
+            repo = Path(folder) / "repo"
+            site = repo / ".mishe-tauftauf"
+            if with_queues:
+                (site / "body" / "queues").mkdir(parents=True)
+            copy = repo / relative_path
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_bytes(Path(light_cycle_monitor.__file__).read_bytes())
+            spec = importlib.util.spec_from_file_location("lcm_copy", copy)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module.default_site(), site
+
+    def test_checkout_layout_resolves_to_the_checkout_site(self):
+        resolved, site = self._default_site_of(self.CHECKOUT)
+        self.assertEqual(resolved, site)
+
+    def test_deployed_layout_resolves_to_the_same_site(self):
+        # Byte-identical deployed copy. The unadjusted parents[2] expression resolved to
+        # <site>/.mishe-tauftauf here, so a restart exited with "no body/queues directory"
+        # on 2026-10-16 and the resumption detector stopped without a new row.
+        resolved, site = self._default_site_of(self.DEPLOYED)
+        self.assertEqual(resolved, site)
+
+    def test_absent_queue_directory_still_names_the_checkout_site(self):
+        resolved, site = self._default_site_of(self.CHECKOUT, with_queues=False)
+        self.assertEqual(resolved, site)
+
 
 class TestRun(unittest.TestCase):
     def _run(self, log_text, node="redmi10", stale_seconds=30.0, max_polls=1):
