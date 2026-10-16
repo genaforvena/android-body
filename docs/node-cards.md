@@ -79,8 +79,8 @@ Supported bounded text requests (while ON; nothing executes in collect-only mode
   non-allowlist paths return `failed reason=read_denied`. Eval is not advertised in the
   hello capabilities and is skipped in collect-only mode. Exercised on Note3 (2026-10-13):
   identity/clock/read/env receipts retained, uid=10225. This install predates the
-  consumer `eval write`/`eval exec` verbs (published download `3b6dcf7a…`, source
-  `8dbb324`) and answers them `failed reason=invalid_arguments`.
+  consumer `eval write`/`eval exec` verbs, which the current published download
+  carries, and answers them `failed reason=invalid_arguments`.
 
 Limits: no camera, microphone, location, contacts or audio; no arbitrary code, URLs,
 intents or shell; spool bounded (2 MiB / 24,576 lines, oldest evicted with a persisted
