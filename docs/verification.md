@@ -660,7 +660,8 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 
 - Trigger: a routine sweep of the health-owned units found `android-body-crosssite-check.service` at
   `loaded failed` for over nine hours (journal: `Failed with result 'exit-code'` on every 5-minute
-  tick from 12:41:40Z to 22:04:40Z) while `tools/health-check.sh` §1b read it `GREEN` and the
+  tick from 12:41:40Z to 22:04:40Z; the first verdict was `RED role=discover … op=pain read discover`
+  at 12:39:01.549Z against the core home) while `tools/health-check.sh` §1b read it `GREEN` and the
   dashboard read `SERVICES: GREEN — 12 listed units active/running, 0 restarts`.
 - Cause (two independent defects, each observed):
   1. `tools/service_units.py` read only the LOAD column. The cross-site unit is deliberately left
@@ -685,18 +686,24 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   unparseable-timestamp case. Live `service_units.py` on the real dump: `RED unit
   android-body-crosssite-check.service active state failed sub failed (last start failed)` after the
   fix, `GREEN … loads` before it. Live `bin/health-crosssite-check --minutes 30 --out …` after the
-  fix: `GREEN … foreign_ops=0 foreign_reads=0` (the 21:09 episode aged out), where the pre-fix run
-  re-reported it; `systemctl --user start android-body-crosssite-check.service` → `Result=success`,
+  fix: `GREEN … foreign_ops=0 foreign_reads=0` (both episodes aged out), where the pre-fix run
+  re-reported them; `systemctl --user start android-body-crosssite-check.service` → `Result=success`,
   `ActiveState=inactive`, and `sh tools/health-check.sh` then read
   `GREEN unit android-body-crosssite-check.service loads active=inactive sub=dead` with the only RED
-  remaining the known §2c witness frame cycle.
-- Not fixed here, deliberately: the underlying RED verdict is a real (self-corrected) label
-  deviation — the 21:09:08.781Z `wall dm --source senses --to body-research` was re-issued 14 s later
-  with the canonical `--source android-body/senses` — and the core plant has a role named `senses`,
-  so an unprefixed source in the core tape is ambiguous between the two plants. The detector keeps it
-  RED; only the staleness was repaired.
-- Revert: `git checkout -- tools/service_units.py tools/test_service_units.py`; restore
-  `bin/health-crosssite-check` from `.mishe-tauftauf/artifacts/` (site file, not versioned) and
+  remaining the known §2c witness frame cycle. Controlled failure through the repaired detector:
+  `--minutes 600` re-reports both in-window episodes (`RED role=discover … pain read discover` at
+  12:39:01.549Z, `RED role=senses … wall dm --source senses` at 21:09:08.781Z), so the detector
+  still catches a violation inside the window.
+- Not fixed here, deliberately: both RED verdicts are real episodes — the 12:39:01.549Z
+  `pain read discover` against the core home is the regression class the detector exists for, and the
+  21:09:08.781Z `wall dm --source senses --to body-research` was re-issued 14 s later with the
+  canonical `--source android-body/senses`; the core plant has a role named `senses`, so an
+  unprefixed source in the core tape is ambiguous between the two plants. Both are kept RED inside
+  the window; only the staleness was repaired.
+- Revert: `git checkout -- tools/service_units.py tools/test_service_units.py`; for the site file,
+  restore the snapshotted fixed bytes from
+  `.mishe-tauftauf/artifacts/health-wake103721-crosssite-check-window-fixed.py` (the pre-fix bytes
+  were not snapshotted; the pre-fix semantics are reproducible with a large `--minutes`) and
   `systemctl --user reset-failed android-body-crosssite-check.service`. Neither repair is
   service- or timer-driven beyond the check's own timer; no device, transport, cursor, queue,
   actuator, radio, APK or `body/runtime` byte is touched.
