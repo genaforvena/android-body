@@ -128,8 +128,8 @@ build carries it is unverified.
 Limits: Redmi10 is preparation, not a wired node: no USB window, no owner checkboxes,
 BLE scan structurally dead on the installed build, Wi-Fi RSSI verdict ambiguous, spool
 contents unread. The remedy is an APK update to the current candidate
-`downloads/android-body-debug.apk` = `5e7fa255…` (70,796 B, source `0c83e32`, published
-`d69082b`), which carries `e131909` (BLUETOOTH_SCAN plus runtime request), `556049c`
+`downloads/android-body-debug.apk` = `3b6dcf7a…` (72,914 B, source `8dbb324`, published
+`8dbb324`), which carries `e131909` (BLUETOOTH_SCAN plus runtime request), `556049c`
 (ACCESS_NETWORK_STATE / `network_id_unavailable`) and `0c83e32` (class-4 ExecProbe); it
 supersedes `a17829c7…` (70,631 B, source `a201891`). The update needs the human on the
 phone (no ADB channel): either `adb install -r` in a USB window or copying the APK across
