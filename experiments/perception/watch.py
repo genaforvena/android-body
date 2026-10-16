@@ -1337,6 +1337,12 @@ def ble_sighting_snapshot(item, now, stale):
         "sequence": item["sequence"] if item else None,
         "name": fields.get("name") if item else None,
         "rssi_dbm": number(fields, "rssi") if current else None,
+        #: Raw sample/receipt epochs, published even when stale: the core boundary
+        #: needs the beacon's phone-sample time to state "last seen at T" and to
+        #: measure cessation age against clock_domain; freshness above stays the
+        #: validity verdict. None without an observation.
+        "phone_sample_epoch_s": item["collected"] if item else None,
+        "consumer_receipt_epoch_s": item["received"] if item else None,
     }
 
 
@@ -1385,17 +1391,21 @@ def ble_scan_snapshot(item, now, stale, consecutive_errors=None):
 def ble_scan_state_snapshot(item, now, stale):
     """Per-cycle scan-loop state: windows, phase, last error, sightings.
 
-    Emitted by the app on the sampler lane (5 s cadence), so it is retained
-    alongside the five per-cycle kinds and answers "is the scan loop alive"
-    for the current session. Absent in documents published by a predating
-    APK: unknown, never a fabricated zero.
+    Sample/receipt epochs are published with the same rationale as
+    ``ble_sighting_snapshot``: the boundary consumer reads "scan loop updated
+    at phone-time T" from raw epochs, never a host-derived age.
     """
-    status = freshness(item, now, stale) if item else "unknown/no-observation"
+    if item is None:
+        return {"status": "unknown/no-observation", "sequence": None,
+                "windows": None, "phase": None, "last_error": None,
+                "sightings": None, "window_ms": None, "gap_ms": None,
+                "phone_sample_epoch_s": None, "consumer_receipt_epoch_s": None}
+    status = freshness(item, now, stale)
     current = status == "fresh-clock-conditional"
     windows = phase = last_error = sightings = None
     window_ms = gap_ms = None
-    if current and item is not None:
-        match = SCAN_STATE_BRE.fullmatch(item["raw"])
+    if current:
+        match = SCAN_STATE_BRE.search(item["raw"])
         if match:
             windows = int(match[1])
             phase = match[2]
@@ -1403,9 +1413,11 @@ def ble_scan_state_snapshot(item, now, stale):
             sightings = int(match[4])
             window_ms = int(match[5])
             gap_ms = int(match[6])
-    return {"status": status, "windows": windows, "phase": phase,
-            "last_error": last_error, "sightings": sightings,
-            "window_ms": window_ms, "gap_ms": gap_ms}
+    return {"status": status, "sequence": item["sequence"],
+            "windows": windows, "phase": phase, "last_error": last_error,
+            "sightings": sightings, "window_ms": window_ms, "gap_ms": gap_ms,
+            "phone_sample_epoch_s": item["collected"],
+            "consumer_receipt_epoch_s": item["received"]}
 
 
 
@@ -1601,6 +1613,14 @@ def update_events(state, now, stale):
                     f"advertiser_getter={advertiser_getter or 'unknown'} "
                     f"advertiser_supported={supported or 'unknown'} "
                     f"errors={dict(errors)}")
+        #: The beacon's phone-sample time on the event line: cessation reads as a
+        #: frozen sample stamp beside an advancing scan_state, without a
+        #: host-derived age that would conflate clock skew. Omitted without an
+        #: observation; the ble_sighting status already carries that verdict.
+        sighting_item = state["latest"].get("ble_sighting")
+        sighting_sample = (stamp(sighting_item["collected"])
+                           if sighting_item and sighting_item.get("collected")
+                           is not None else None)
         summary = (f"{stamp(now)} {state['node']} phone={key[0]} transport={key[1]} "
                    f"battery={key[4][0][1:]} light={key[4][1][1:]} "
                    f"acceleration={key[4][2][1:]} {rssi_text} {ble_text} "
@@ -1609,7 +1629,10 @@ def update_events(state, now, stale):
                    + (f" windows={key[8][7]} phase={key[8][8]} "
                       f"last_error={key[8][9]} sightings={key[8][10]}"
                       if key[8][7] is not None else "") + " "
-                   f"caps={state['capabilities']} action_receipts={len(state['actions'])}")
+
+                   + (f"sighting_phone_sample={sighting_sample} "
+                      if sighting_sample else "")
+                   + f"caps={state['capabilities']} action_receipts={len(state['actions'])}")
         state["events"].append(summary)
     transitions = new_light_transitions(state, now, stale)
     for event in transitions:
