@@ -39,6 +39,27 @@ timeout), runs in every session including collect-only, and is one observed exec
 rather than a general execution capability. Evidence and limits: [verification
 record](../../docs/verification.md).
 
+Row shapes and consumer semantics (recorded 2026-10-16, genome DM 99948 handoff):
+
+- ALLOW: `probe exec uid=<app uid> cmd=<app-private path> output=<bounded> exit=0
+  session=<id>`. `cmd=` names the app-written probe file — a constant the APK rewrites
+  every session; no client input reaches it. Consumers MUST NOT render it as a
+  client-reachable command.
+- DENY: `probe exec unavailable reason=<exception class + message> session=<id>` —
+  e.g. `IOException Cannot run program "/data/data/org.androidbody/files/probe.txt":
+  error=13, Permission denied`. `reason=` is variable-length and may carry a quoted
+  path; never assume the old single-token shape when parsing.
+- DAC-setup: `probe exec unavailable reason=dac-setup session=<id>` — probe-setup
+  failure (`setExecutable` could not set 0700 before the run), distinct from a MAC
+  denial; never collapse the two when classifying.
+- TIMEOUT: `probe exec timeout reason=no-exit destroyed=<true|false> session=<id>`
+  (unchanged).
+
+All four observed shapes are ≤~130 B, far under the 1,007 B spool-line bound
+(`ObservationSpool.MAX_LINE_BYTES`, epoch prefix included). The bound constrains any
+future write receipt exactly as eval outcomes are clamped (`EvalOutcome.java`): the
+receipt line must fit the budget or be truncated with `truncated=true`, never silently.
+
 Bounds (env-overridable): per-command timeout with child kill (default 10s),
 per-line output cap (default 1024 bytes, matching the text-delivery per-line
 limit), total output cap (default 64 KiB), artifact retention (newest 20;
