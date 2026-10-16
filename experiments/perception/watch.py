@@ -1371,6 +1371,8 @@ def light_resumption_view(now, stale, compact=False):
                      "(both rendered above under their current names)")
     lines.append("  resumption rows are scored by research-methods' pre-registered milestone-5 "
                  "rule; this view reports the fields verbatim and does not rescore them")
+    lines.append("  motion-covariate: Redmi10 fires are motion-associated (p=7e-7); "
+                 "rate is a handling rate, not a lighting rate")
     return "\n".join(lines)
 
 
