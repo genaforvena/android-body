@@ -68,6 +68,11 @@ fi
 # pin-advance replant — so an hour's total above RESTART_BOUND separates a
 # retry loop from replant churn, while two legitimate replants (~24) stay under
 # it. A single service crash-looping is caught here too, with no bad fragment.
+# This is a trailing-60-min count, so it decays on its own once a burst ages out
+# and a GREEN here is not evidence that the render cost behind the bursts went
+# away (the bursts follow pin advances, not the frame cycle); §2c measures the
+# frame cycle directly. The decomposition line names which units the count is
+# made of, so a mind-initiated activation of a managed unit is visible as such.
 RESTART_BOUND=40
 JOURNAL=$(env XDG_RUNTIME_DIR=/run/user/$(id -u) journalctl --user --since '60 min ago' \
   --no-pager 2>/dev/null)
@@ -79,6 +84,12 @@ elif [ "$RESTARTS" -le "$RESTART_BOUND" ]; then
   pass "channel restarts $RESTARTS/h (bound $RESTART_BOUND)"
 else
   fail "channel restarts $RESTARTS/h over bound $RESTART_BOUND"
+fi
+
+if [ "$JOURNAL_RC" -eq 0 ] && [ -n "$RESTARTS" ] && [ "$RESTARTS" -gt 0 ]; then
+  RESTART_UNITS=$(printf '%s\n' "$JOURNAL" | grep -o 'Stopping android-body-[a-z0-9-]*\.service' \
+    | sed 's/Stopping //' | sort | uniq -c | sort -rn)
+  echo "INFO   channel restart decomposition: $(printf '%s\n' "$RESTART_UNITS" | awk '{printf "%s=%s ", $2, $1}')"
 fi
 
 # 2. Panes
@@ -115,6 +126,36 @@ if [ -z "$RECENT_CRASH" ]; then
   pass "no renderer crash in last 2 min"
 else
   fail "renderer stderr written in last 2 min:$RECENT_CRASH"
+fi
+
+# 2c. Pane lease advance (wake 103031): the core sync reads every mind pane's
+# `-- pane live` footer before it records a linked site, and holds the replant
+# when a footer is older than 20 s (one retry after RENDERER_FRAME = 27 s, so a
+# pane already stale that stays silent is held) or when the leases do not
+# advance within 3 x 6 s -- an advance check with no retry, which a frame cycle
+# over 18 s fails (pinned core `coordination/site_sync.py` `_leases`/`_verify`);
+# the retry then restarts every channel service (§1c). Measured 2026-10-16T20:28Z
+# and 21:05Z: witness 19.6-20.1 s per frame, discover/permissions 12-13 s, the
+# other minds 5.6-6.6 s, while §1c had already decayed to 0/h. This check reads
+# the frame cycle from the footer history tmux retains -- the same artifact the
+# core parses -- so it costs no wait and does not decay; each line carries load1,
+# which separates a pane's own render cost from a host-load episode (20:15-20:23Z:
+# every pane 22-53 s at load1 ~22 with no channel restarts). Panes are the site's
+# own health/windows.json intersected with the core's ROLES; `operator` is outside
+# that set because the core's own dash-stall detector covers it. RED is the newest
+# frame interval over the 18 s advance window or a lease age over the 20 s stale
+# bound; UNKNOWN never passes.
+if command -v python3 >/dev/null 2>&1 && [ -x "$PWD/tools/pane_lease.py" ]; then
+  PL_OUT=$(python3 "$PWD/tools/pane_lease.py" --site "$SITE" 2>&1)
+  PL_RC=$?
+  printf '%s\n' "$PL_OUT"
+  case "$PL_RC" in
+    0) ;;
+    1) FAIL=1 ;;
+    *) ;;
+  esac
+else
+  echo "UNKNOWN pane lease advance (python3 or tools/pane_lease.py unavailable)"
 fi
 
 # 3. Transport. Two independent facts: the rendezvous server answers the

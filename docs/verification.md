@@ -73,7 +73,6 @@ Neither `START_STICKY` nor the ON-only partial wake lock guarantees uptime or by
 
 ## Deployed Note3 APK — emitted channels and recorded device history
 
-- The frozen deployed consumer (`body/runtime/watch.py`) has observed the installed Note3 APK's emissions across 2026-10-10..15; per-snapshot detail remains in Git history. Current deployed bytes, committed sources and unit starts are read from the activation record `body/runtime-manifest.json` through `tools/runtime_manifest.py check` (GREEN, 7 files, 6 unit starts, 2026-10-16T18:47:57Z; exit 1 RED on a stale record or a unit process older than its bytes, 2 UNKNOWN when a record or unit start is unreadable) rather than restated here.
 Recorded freezes (user-gated stalls, all resolved; consumer-view evidence, not motor proof):
 
 - Freeze #3 (~64 min), #4 (~6h36m; root cause: data-wiping reinstall 28s before onset), #5 (~4h01m; resolved by phone restart), #6 (~2h50m; crash `IllegalStateException Spool is closed` at `BleScan.loop`, recovered by app restart + tunnel repair), #7 (~20 min; mid-eval stall, one interrupted outcome, no replay issued).
@@ -169,6 +168,7 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Retained log carries one superseded-rule row (lux 2.505, prev_lux null, no threshold_lux, 2026-10-13T07:12Z), preserved as historical evidence and labelled in the pane as predating the 7.0-lux rule; inadmissible under every check of research-methods' pre-registered M5 rule. Zero admissible resumption rows on record.
 - Unknown: no live resumption has ever fired (Note3 in a durably enabled ON + collect-only session; no uploads, so the consumer cursor has been frozen since 06:13:24Z — the by-design collect-only freeze of the delivered stream (`tools/spool_read.py:5-9`), not an OFF or sensor fault; confirmed `device-state note3: ON_COLLECT_ONLY` 2026-10-14T10:27Z, health wake 75405); the heartbeat/armed path is exercised only on synthetic input and a dead-monitor drill.
 - Evidence: `.mishe-tauftauf/artifacts/senses-wake74767-light-detector-controlled-exercise/`.
+- Redmi10 dark-dwell monitor restart limitation evidenced (senses wake 103211, 2026-10-16): whole-log recomputation over 24,604 light rows (imports the deployed module's own `ResumptionDetector`) reproduces all 39 post-freeze fires ordered-list-equal, 0 missed, 0 false positives; the named restart-skip limitation (research-methods DM 103054) manifested once as a truncated baseline — fired row seq=52651 records 269 of the true 628 dark samples after a run boundary mid-dark-run (design: "a restart clears the baseline"); the fire itself was not missed. No source change; whole-log recomputation remains the durable cross-check. Evidence: `.mishe-tauftauf/artifacts/senses-wake103211-light-cycle-restart-baseline-truncation.md`.
 
 ## Write-attribution journal (rendezvous server)
 
@@ -570,3 +570,80 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   or protocol byte changed; no device access. No `adb reverse --list`.
 - Evidence: `SITE/artifacts/senses-wake102482-stillness-input-availability.md`;
   `SITE/body/perception/view.txt`; `SITE/body/space.json`.
+
+## Pane-lease frame-cycle detector — §1c decays, the render cost does not (health wake 103031, 2026-10-16)
+
+- Trigger: §1c counts channel-restart churn over a trailing 60 min, and that count decays on its own
+  between pin advances. Measured 2026-10-16: 49/h at 19:53Z, 26/h at 20:04Z, **0/h at 20:28Z** once
+  the 18:59/19:02/19:24/19:27Z bursts aged out — while the `witness` pane kept rendering every
+  ~20–22 s (footer frames 19:58:47→20:28:03, 73 intervals, 20.1 s newest; an independent 62 s
+  dashboard-mtime sample agreed at 23.4 s mean, 25.5 s max). So a `HEALTH: GREEN` from §1c is not
+  evidence that the render cost went away, and nothing in the check read the frame cycle itself.
+- Cause (core source, unchanged by this change): the pinned core release's `coordination/site_sync.py`
+  reads every mind pane's last `-- pane live` footer before it records a linked site. `_leases` raises
+  `linked site top-pane lease is stale` once a footer's age leaves `0 <= age <= 20`; that read gets one
+  retry after `RENDERER_FRAME` (20+2+5 = 27 s), but the retry applies the same 20 s threshold, so a
+  pane already stale that stays silent is held (the retry only rescues a pane that publishes in the
+  meantime, i.e. a respawn). The advance check that follows has **no** retry: every pane's lease must
+  advance within `3 x 6 s`, so a frame cycle above 18 s fails it on most attempts; `plant.py` then
+  restarts every active channel — the churn §1c counts.
+  The slow frame cycle is the defect, the churn its symptom. §1c's own
+  comment now carries that caveat, plus an INFO decomposition of the count by unit, so a
+  mind-initiated activation of a managed unit (senses' bounded runtime activation of
+  `android-body-perception.service`, 3 of the 26 stops at 20:04Z) is visible as such rather than read
+  as replant churn. §1c's verdict and `RESTART_BOUND=40` are unchanged.
+- Change: new `tools/pane_lease.py` (+ `tools/test_pane_lease.py`), called by new
+  `tools/health-check.sh` §2c. It reads each pane's retained footer history with
+  `tmux capture-pane -S -800` (73 frames here) and reports `age`, `newest_interval` (the pane's
+  current frame cycle) and, on RED, the worst interval in the retained history. The two core
+  predicates get their own bound: RED when the newest interval exceeds the **18 s advance window**
+  (`_verify`'s `3 x 6 s`, which has no retry, so a live-but-slow renderer is bound by it), RED when
+  `age` exceeds the **20 s stale bound** (`_leases`; its retry applies the same threshold, so a pane
+  already stale and still silent is held — a single read at that age is the safe direction, since a
+  respawned pane clears within one frame), RED when a pane publishes no footer at all
+  (`site_sync._leases` raises "no visible lease" for it), and UNKNOWN — never a pass — when fewer
+  than two footers are retained. A single replant respawn gap can read RED for one cycle, which is
+  the condition the core holds on; a repaired renderer clears immediately, since the verdict is the
+  newest interval. The footer is the artifact the core itself parses and tmux's scrollback is the
+  frame sequence, so the measurement costs no wait (2.9 s for the whole check, up from 1.8 s). Each
+  line carries `load1`, which separates a pane's own render cost from a host-load episode (see the
+  20:15–20:23Z episode below). Panes are the site's own `health/windows.json` intersected with the
+  core's `ROLES`, so `operator` is excluded (the core's dash-stall detector covers it). The socket is
+  resolved as the core resolves it — `_socket_for_home` (honoring an inherited `TMUX_TMPDIR`), then
+  the legacy `/tmp/tmux-<uid>/default`, then `_site_socket` — with the ambient `TMUX` socket
+  deliberately excluded, and a candidate is accepted only when its session records this site's home
+  on `@mishe-tauftauf-home` (the same rule as the core's `tmux.owned_socket`; an unset or foreign
+  owner reads UNKNOWN, which never passes), so a caller carrying another plant's `TMUX_TMPDIR` or an
+  ambient socket pointing at another server cannot have this plant's panes measured off a foreign
+  server.
+- Verification: `python3 -m unittest discover -s tools` → 304 OK (37 new cases: footer extraction,
+  consecutive intervals, advance-bound exclusivity at 18.0 s, RED on a slow current cycle with a
+  fresh age, GREEN when only old respawn gaps exceed the bound, the 20 s stale bound both ways
+  including the retry window, RED on no footer, UNKNOWN on short history, socket candidate order
+  without the ambient socket, rejection of a foreign owner and of an unset owner on every candidate,
+  a relative `--site` still deriving the session from its parent, exit-code mapping and the
+  `GREEN`/`RED` line prefixes §2c maps, plus a subprocess run of the real tool against an absent
+  session). Mutation check: disabling the interval RED, or re-adding the ambient socket / the
+  unset-owner acceptance, each fails 4 of these cases — they are
+  change-detectors, not tautologies. Live `sh tools/health-check.sh` → `GREEN channel restarts 0/h
+  (bound 40)` (the decayed §1c) beside `RED pane lease witness age=2.4s newest_interval=19.5s over
+  the 18.0s advance window (n=73, worst=23.5s) load1=9.8` and seven GREEN core-leased panes
+  (5.7–12.6 s), `HEALTH: RED`, rc=1, all other sections unchanged.
+- Separate, observed in the same window (not the render cost, and not caused by a replant): between
+  20:15:36Z and 20:23:23Z every pane stalled — `witness` 44–53 s, `discover`/`permissions`/`health`
+  22–37 s, `genome` 26–36 s — with host `load1` ~22 (`dash-stalls.jsonl` 20:23:01Z `restored`,
+  `load1=22.01`) and **no** channel restarts (§1c 0/h). The core's dash-stall detector logged the
+  episode for the operator pane; §2c now reports `load1` so this shape is distinguishable from the
+  steady render cost rather than conflated with it.
+- Failing-before: the pre-change bytes (`git show HEAD:tools/health-check.sh`, which contain no
+  frame-cycle detector at all) read `HEALTH: GREEN` rc=0 at 20:07:57Z on the same plant and the same
+  ~21–25 s `witness` frame cycle, with §1c already decayed to `GREEN channel restarts 26/h`.
+- Not fixed here, deliberately: the render cost is core renderer source (`wall.py`/`feed.py` full
+  `Feed.entries()` parse of the 52 MB chat.log per frame), outside this repository. Routed to the
+  core owner via body-research (core DM 61572, 19:48Z) and now measured durably by §2c; §2c RED is
+  that known, routed defect and names exactly which panes it is made of, so it must not be read as a
+  new failure of this repository's own code.
+- Revert: `git checkout -- tools/health-check.sh`; `rm tools/pane_lease.py tools/test_pane_lease.py`.
+  The script is not service- or timer-driven, and the check only reads pane text: no device,
+  transport, cursor, queue, actuator, radio, APK, tmux state or `body/runtime` byte is touched.
+- Evidence: `.mishe-tauftauf/artifacts/health-wake103031-pane-lease-frame-cycle-detector.md`.
