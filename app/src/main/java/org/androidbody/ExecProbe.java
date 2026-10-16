@@ -11,18 +11,25 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Bounded process-creation probe: writes a retained trivial text file, executes
- * a fixed platform binary under the app UID, reads bounded stdout, and reports
- * output/exit/termination. Tests OS process creation, file access, and
- * output/exit under the installed app identity.
+ * Bounded process-creation probe: writes a retained trivial shell script into the
+ * app's own {@code files/}, makes it owner-executable, executes the script itself
+ * (not a platform binary with the script as an argument), reads bounded stdout, and
+ * reports output/exit/termination. Tests OS process creation, app-private file write
+ * and {@code execve} of the app-written file under the installed app identity — the
+ * class-4 in-process case, reachable at session start even while collect-only.
  *
  * <p>Bounds: stdout+stderr ≤ 4096 B (merged via {@code redirectErrorStream}),
  * duration ≤ 5 s, storage ≤ 1 file, child destroyed on timeout/OFF.
- * {@code /system/bin/cat} spawns no descendants, so a process-tree kill is not
+ * {@code /system/bin/sh} spawns no descendants, so a process-tree kill is not
  * required.
  *
  * <p>Attribution: {@code uid=} is the PARENT's {@code Process.myUid()} (inherited
  * by the child, no privilege change), not an independently-read child identity.
+ *
+ * <p>DAC/MAC isolation: the app umask writes the file 0600, so
+ * {@code setExecutable(true, true)} (owner-only {@code x}, API 1 → 0700) runs before
+ * the exec attempt; otherwise a DAC denial would be misattributed to the SELinux MAC
+ * decision this probe exists to measure.
  */
 public final class ExecProbe {
     private static final int MAX_OUTPUT_BYTES = 4096;
@@ -30,20 +37,20 @@ public final class ExecProbe {
     private static final int DESTROY_WAIT_MS = 1000;
     private static final int READ_JOIN_MS = 1000;
     private static final Charset ASCII = Charset.forName("US-ASCII");
-    private static final String PROBE_CONTENT = "hello\n";
+    /** Shebang plus a fixed marker command: one exec measures both {@code app_data_file} and {@code shell_exec}. */
+    private static final String PROBE_CONTENT = "#!/system/bin/sh\necho hello\n";
     private static final String PROBE_FILENAME = "probe.txt";
-    static final String DEFAULT_COMMAND = "/system/bin/cat";
 
     private ExecProbe() { }
 
     /**
-     * Execute the bounded probe with the default command ({@code /system/bin/cat}).
-     * Writes {@code probe.txt} to {@code filesDir}, executes it, and returns the
-     * observation line. Never throws.
+     * Execute the bounded probe against the app-written script itself. Writes
+     * {@code probe.txt} to {@code filesDir}, makes it owner-executable, execs it,
+     * and returns the observation line. Never throws.
      */
     public static String observation(int uid, File filesDir, String sessionId) {
         File probeFile = new File(filesDir, PROBE_FILENAME);
-        return observation(uid, filesDir, sessionId, DEFAULT_COMMAND, probeFile.getAbsolutePath());
+        return observation(uid, filesDir, sessionId, probeFile.getAbsolutePath());
     }
 
     /**
@@ -55,7 +62,7 @@ public final class ExecProbe {
      * @param uid the parent app UID (inherited by the child; inference, not measurement)
      * @param filesDir the app's files directory (writable, bounded storage)
      * @param sessionId the session ID for attribution
-     * @param command the fixed platform binary to execute
+     * @param command the fixed exec target (the app-written script by default)
      * @param args command arguments (typically the probe file path)
      */
     public static String observation(int uid, File filesDir, String sessionId, String command, String... args) {
@@ -67,6 +74,9 @@ public final class ExecProbe {
             FileOutputStream out = new FileOutputStream(probeFile);
             try { out.write(PROBE_CONTENT.getBytes(ASCII)); }
             finally { out.close(); }
+            if (!probeFile.setExecutable(true, true)) {
+                return "probe exec unavailable reason=dac-setup session=" + sessionId;
+            }
 
             List<String> cmd = new ArrayList<>();
             cmd.add(command);
@@ -110,8 +120,21 @@ public final class ExecProbe {
             return "probe exec uid=" + uid + " cmd=" + command + " output=" + output + " exit=" + exit + " session=" + sessionId;
         } catch (IOException | InterruptedException | RuntimeException e) {
             if (process != null) process.destroy();
-            return "probe exec unavailable reason=" + e.getClass().getSimpleName() + " session=" + sessionId;
+            return "probe exec unavailable reason=" + reason(e) + " session=" + sessionId;
         }
+    }
+
+    /**
+     * Bounded, control-char-free failure reason: the exception class plus its
+     * message, so a denial can be told apart from a missing target (EACCES vs
+     * ENOENT) instead of collapsing to one opaque token.
+     */
+    private static String reason(Throwable e) {
+        String message = e.getMessage();
+        if (message == null) return e.getClass().getSimpleName();
+        String cleaned = message.replaceAll("\\p{Cntrl}+", " ").trim();
+        if (cleaned.length() > 160) cleaned = cleaned.substring(0, 160);
+        return e.getClass().getSimpleName() + " " + cleaned;
     }
 
     /**
