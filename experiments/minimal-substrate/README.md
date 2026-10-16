@@ -78,8 +78,8 @@ The minimal-substrate investigation includes a bounded execution evaluator
 (`app/src/main/java/org/androidbody/BoundedEvaluator.java`) for the fixed
 grammar `identity`, `clock`, `read <path>`, `env`, plus the consumer
 `write <path> <content>` and `exec <path>` verbs added by `d54b382` and shipped
-in the published download (not in the Note3 install; row shapes
-and limits in [actions](../../docs/actions.md#bounded-eval-probes)). It was independently
+in the published download (absent from the prior Note3 install
+`5e7fa255…`; row shapes and limits in [actions](../../docs/actions.md#bounded-eval-probes)). It was independently
 reviewed by witness (wake 37709, 2026-10-08) and found "NOT ready for
 phone trial" with truthfulness defects (stub read returning the path string,
 fabricated identity, wall-clock instead of elapsedRealtime, no session state).
