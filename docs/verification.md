@@ -1,6 +1,6 @@
 # Verification record
 
-Checked 2026-10-07; updated through 2026-10-15. Version 0.2 adds persistent ON and durable collect/upload-later behavior. Host/build evidence is separate from Android runtime and physical-device evidence.
+Checked 2026-10-07; updated through 2026-10-16. Version 0.2 adds persistent ON and durable collect/upload-later behavior. Host/build evidence is separate from Android runtime and physical-device evidence.
 
 ## Built artifact
 
@@ -232,6 +232,8 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Revert path tested both directions; the retained `8f0d2fc2` bytes remain on disk.
 - Caveat (delivery): the Note3 phone→host transport is DOWN since 2026-10-14T06:13:52Z; all evidence above was read directly from the phone-local spool, not from host delivery, and no live-delivery claim is made.
 - Evidence: `.mishe-tauftauf/artifacts/genome-wake85882-execprobe-gate.md`.
+
+2026-10-16 source change (`0c83e32`, genome; carried by the published download since `d69082b`): the probe now writes a shell script (`#!/system/bin/sh` plus a fixed `echo hello`) into app-private `files/`, sets owner-only execute (0700) before the run so a DAC denial cannot be misattributed to the SELinux decision it exists to measure, and execs the app-written script itself — the class-4 in-process case, `execve` of an app-written file under the installed app identity, reachable at session start even while collect-only. Bounds are unchanged (≤4,096 B merged output, ≤5 s, one file, child destroyed on timeout/OFF; `uid=` is still the parent app's `Process.myUid()`, inherited, no privilege change). The installed Note3 build (`bb66a3f4`, from `9360b92`) predates this change and still executes the `a1eed4d` `/system/bin/cat` form. The new source first failed tip CI (`38907132720`, "Published download matches the built APK") until the download was republished; the republished APK (70,796 B, SHA-256 `5e7fa25…`) matches `SHA256SUMS` (checked this wake). On-device measurement of the class-4 behavior is tracked by discover and is not recorded here.
 
 ## Redmi10 tailnet reachability predicate — detector false negative (health wake 87607, 2026-10-15)
 
