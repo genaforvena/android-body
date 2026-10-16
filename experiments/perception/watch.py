@@ -1761,10 +1761,17 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
                      describe(sighting, now, stale))
     else:
         lines.append("  status=unknown/no-observation")
-    lines.append("  sightings_in_delivered_history=" +
-                 str(sum(1 for item in state["history"]
-                         if item["kind"] == "ble_sighting")) +
-                 " (delivered-envelope window; collect-only freezes this — see scan_state below for spool-side count)")
+    #: The freeze cause is a node-state fact, not a property of the count: a node
+    #: that is not collect-only is delivering, so naming collect-only here would
+    #: assert a cause that does not hold and point at a spool summary that may
+    #: not exist. Only a live collect-only verdict earns that caveat.
+    sightings = sum(1 for item in state["history"] if item["kind"] == "ble_sighting")
+    if node_state is not None and node_state.get("collect_only") is True:
+        sighting_window = (" (delivered-envelope window; collect-only freezes this — "
+                           "see scan_state below for spool-side count)")
+    else:
+        sighting_window = " (delivered-envelope window; not a rate or duration)"
+    lines.append(f"  sightings_in_delivered_history={sightings}{sighting_window}")
     lines.append(f"  scan_lifecycle status={scan_view['status']} "
                  f"latest={scan_view['subtype'] or 'unknown'} "
                  f"reason={scan_view['reason'] or 'unspecified'}")

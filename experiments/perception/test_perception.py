@@ -1327,6 +1327,31 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(node["ble_scan"]["status"], "unknown/no-observation")
         self.assertIsNone(node["ble_scan"]["subtype"])
 
+    def test_sighting_window_caveat_follows_the_node_state_not_the_node(self):
+        # The freeze cause is a node-state fact. A delivering node (redmi10 is
+        # ON, not collect-only) must not be told its delivered envelope is
+        # frozen by collect-only, nor be pointed at a spool-side count it may
+        # not have; an unknown node state earns neither caveat.
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1"], received=1000)
+
+        def node_state(status, mode, collect):
+            return {"status": status, "mode": mode, "desired_on": True,
+                    "collect_only": collect, "observed_at_epoch_s": 1000,
+                    "age_s": 0.0, "reason": None, "reasons": []}
+
+        collecting = node_state("ok", "ON_COLLECT_ONLY", True)
+        view = watch.render(state, 1000, 30, node_state=collecting)
+        self.assertIn("sightings_in_delivered_history=0 (delivered-envelope window; "
+                      "collect-only freezes this", view)
+
+        unknown_state = node_state("stale", "UNKNOWN", None)
+        for other in (node_state("ok", "ON", False), unknown_state, None):
+            view = watch.render(state, 1000, 30, node_state=other)
+            self.assertIn("sightings_in_delivered_history=0 (delivered-envelope window; "
+                          "not a rate or duration)", view)
+            self.assertNotIn("collect-only freezes this", view)
+
     def test_ble_scan_state_surfaces_quantitative_loop_state_everywhere(self):
         # Discover 83319: the per-session scan status must be quantitative and
         # co-retained with the five per-cycle kinds, not a coarse flag.

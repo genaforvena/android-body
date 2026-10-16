@@ -75,8 +75,11 @@ The `ble_sighting` and `ble_scan` projections render bounded BLE scan evidence:
 sighting name and RSSI (only when fresh-clock-conditional) and scan lifecycle
 subtype (`start`/`stop`/`error`/`unavailable`) with reason, beacon, window and gap.
 The sightings channel is explicitly not presence, occupancy or proximity proof;
-`sightings_in_delivered_history` is a bounded count of the *delivered envelope*
-(frozen under collect-only), not a rate or duration. The
+`sightings_in_delivered_history` is a bounded count of the *delivered envelope*,
+not a rate or duration. The pane names the freeze cause only for a node whose
+host-side state is currently collect-only; a delivering node, or one whose
+node-state read is stale or unknown, gets the bare bounded-window caveat instead
+of a cause the renderer cannot support. The
 installed phone emits scan lifecycle events live (retained evidence: `ble_scan
 start beacon=MISHE-BEACON`, 2026-10-13T09:34Z; other subtypes not yet
 retained-observed). One allowlisted-beacon window has now been retained, in the
