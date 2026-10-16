@@ -143,6 +143,7 @@ else
   fail "rendezvous loopback probe $TUNNEL"
 fi
 
+ATTACHED=""  # §3 attachment verdict; §7d reuses it for its unavailable-status branch
 if command -v adb >/dev/null 2>&1; then
   ATTACHED=$(adb devices 2>/dev/null | awk -v s="$SERIAL" '$1==s && $2=="device"{print "yes"}')
   MAPPING=$(adb -s "$SERIAL" shell cat /proc/net/tcp 2>/dev/null \
@@ -400,22 +401,50 @@ else
   echo "UNKNOWN runtime activation record (python3 or tools/runtime_manifest.py unavailable)"
 fi
 
-# 7d. Spool-summary publisher liveness. android-body-spool-read.timer runs
-# runtime/spool_read.py every 5min (observed 300s cadence, ~9s runtime) and
+# 7d. Spool-summary publisher liveness and status. android-body-spool-read.timer
+# runs runtime/spool_read.py every 5min (observed 300s cadence, ~9s runtime) and
 # publishes body/spool-summary-note3.json; the consumer accepts the file for
 # 600s (watch.py SPOOL_SUMMARY_MAX_AGE_SECONDS). Nothing else supervises the
-# publisher's output: §4 journals only the three long-running services, and a
-# dead oneshot or failed adb read leaves the timer "active" while the file goes
-# stale, so health-check would stay GREEN through stale spool evidence. 450s is
-# one-and-a-half ticks: a missed tick reads RED 150s before the consumer renders
-# the evidence stale.
-SPOOL_SUMMARY="$SITE/body/spool-summary-note3.json"
+# publisher's output: §4 journals only the three long-running services, so the
+# timer reads "active" through both failure shapes:
+# (a) stopped publisher — the file goes stale. 450s is one-and-a-half ticks, so a
+#     missed tick reads RED 150s before the consumer renders the evidence stale.
+# (b) failing publisher — spool_read.py catches its own adb error, publishes a
+#     *fresh* document carrying status="unavailable" and the reason, and exits 0
+#     (reproduced wake 102050 against a bogus serial), so the mtime bound alone
+#     read GREEN on every tick that reported the spool unreadable. A fresh
+#     unavailable document is RED while the phone is attached (§3 ATTACHED) and
+#     UNKNOWN when it is not, mirroring §3's mapping rule; the stale branch above
+#     still wins, since a stopped publisher is the more specific fact.
+# SPOOL_SUMMARY is overridable so a controlled failure routes through this
+# section without touching the live published document.
+SPOOL_SUMMARY=${SPOOL_SUMMARY:-$SITE/body/spool-summary-note3.json}
 if [ -f "$SPOOL_SUMMARY" ]; then
   SS_AGE=$(( $(date +%s) - $(stat -c%Y "$SPOOL_SUMMARY") ))
-  if [ "$SS_AGE" -le 450 ]; then
+  SS_LINE=$(python3 -c "
+import json, sys
+try:
+    document = json.load(open(sys.argv[1]))
+    print('%s\t%s' % (document.get('status') or 'missing',
+                      str(document.get('reason') or 'none').replace('\n', ' ')))
+except Exception:
+    print('unreadable\tnone')" "$SPOOL_SUMMARY" 2>/dev/null)
+  SS_STATUS=$(printf '%s\n' "$SS_LINE" | cut -f1)
+  SS_REASON=$(printf '%s\n' "$SS_LINE" | cut -f2)
+  if [ "$SS_AGE" -gt 450 ]; then
+    fail "spool-summary note3 stale ${SS_AGE}s (>450s; publisher stopped)"
+  elif [ "$SS_STATUS" = "ok" ]; then
     pass "spool-summary note3 fresh (${SS_AGE}s)"
+  elif [ "$SS_STATUS" = "unavailable" ]; then
+    if [ "${ATTACHED:-}" = "yes" ]; then
+      fail "spool-summary note3 unavailable (${SS_REASON}) while note3 is attached; ${SS_AGE}s old"
+    else
+      echo "UNKNOWN spool-summary note3 unavailable (${SS_REASON}); ${SS_AGE}s old, note3 not attached"
+    fi
+  elif [ -z "$SS_STATUS" ]; then
+    echo "UNKNOWN spool-summary note3 status (python3 unavailable)"
   else
-    fail "spool-summary note3 stale ${SS_AGE}s (>450s)"
+    fail "spool-summary note3 status=$SS_STATUS (${SS_REASON}); expected ok, ${SS_AGE}s old"
   fi
 else
   fail "spool-summary note3 MISSING"
