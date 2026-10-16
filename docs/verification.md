@@ -288,6 +288,15 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Verification: `sh -n` OK. Live: `GREEN spool-summary note3 fresh (222s)`, `HEALTH: GREEN`, rc=0. Controlled failures through the real §7d: the fresh-unavailable document with the phone attached → `RED spool-summary note3 unavailable (spool-dir-listing-failed: …) while note3 is attached; 73s old`, `HEALTH: RED`, rc=1; the same document with an `adb` stub on PATH that enumerates no device → `UNKNOWN spool-summary note3 unavailable (…); 74s old, note3 not attached`, rc=0; a copy backdated 486 s → `RED spool-summary note3 stale 486s (>450s; publisher stopped)`, rc=1; a missing path → `RED spool-summary note3 MISSING`, rc=1. `python3 -m unittest discover -s tools` → 259 OK. Independent review (`reviewer`): correct, 0 findings.
 - Revert: `git checkout -- tools/health-check.sh`; it is not service- or timer-driven, and the exercise wrote only `/tmp` paths.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake102050-spool-summary-status-detector.md`.
+## Clock-domain status detector — closing the failed-adb-read blind spot (health wake 102190, 2026-10-16)
+
+- Trigger: `body/clock-domain-note3.json` is published by `android-body-node-state.timer` → `runtime/clock_offset.py` every 60 s (same timer as `node_state.py`) and consumed by `watch.py` (`CLOCK_DOMAIN_MAX_AGE_SECONDS = 3600`). No health-check section supervised the publisher's output: §7a checks the node-state document's mtime, §7b checks the source bytes, but the clock-domain document itself was never read. `clock_offset.py` catches its own adb error, publishes a *fresh* `status:"unavailable"` document and exits 0, so the mtime bound alone would read GREEN on every tick that reported the clock offset unreadable — the same false-coverage pattern as §7d (wake 102050).
+- Failing-before: the pre-change bytes had no §7f section at all. A controlled `status:"unavailable"` document with a fresh mtime would read GREEN through every existing section (§7a node-state fresh, §7b source bytes match) while the clock offset was actually unavailable.
+- Fix: §7f — the file must exist and be ≤300 s old (5 ticks), so a missed tick REDs 240 s before the consumer's 3600 s max age. The document's `status` field is checked: `ok` → GREEN; `unavailable` → RED while the Note3 is attached (§3 `ATTACHED`), UNKNOWN when it is not (mirroring §7d's mapping rule); empty status (python3 unavailable) → UNKNOWN; any other value → RED. `CLOCK_DOMAIN` is now `${CLOCK_DOMAIN:-…}`, so a controlled failure routes through the section without touching the live published document.
+- Verification: `sh -n` OK. Live: `GREEN clock-domain note3 fresh (37s)`. Controlled failures through the real §7f: fresh-unavailable document with the phone attached → `RED clock-domain note3 unavailable (device unreadable) while note3 is attached; 1s old`; backdated mtime 402 s → `RED clock-domain note3 stale 402s (>300s; publisher stopped)`; missing path → `RED clock-domain note3 MISSING`; malformed JSON → `RED clock-domain note3 status=unreadable (none); expected ok, 1s old`. `python3 -m unittest discover -s tools` → 267 OK.
+- Revert: `git checkout -- tools/health-check.sh`; it is not service- or timer-driven, and the exercise wrote only `/tmp` paths.
+- Evidence: `.mishe-tauftauf/artifacts/health-wake102190-clock-domain-status-detector.md`.
+
 
 ## Perception consumer view liveness detector (health wake 90622, 2026-10-15)
 
@@ -424,3 +433,73 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Evidence: `.mishe-tauftauf/artifacts/health-wake98359-crosssite-recurrence.md`; session census in
   `bin/health-crosssite-check` output; `health/crosssite-check.json`; `sha256-before.txt` in the
   snapshot directory.
+
+## Clock-domain provenance — the reading now names the device it measured (senses wake 102180, 2026-10-16)
+
+- Trigger: an operator run of `tools/clock_offset.py --serial 4d00553d61ab90b7 --label redmi10`
+  published `SITE/body/clock-domain-redmi10.json` with `status="ok"`, `offset_nominal_s` 25.008 —
+  the **Note3's** own offset, measured over the Note3's adb, filed under Redmi10 (which has no adb
+  transport at all, `activation.json: redmi10 NOT_CONNECTED`). The dashboard rendered
+  `sense.space.clock-domain.redmi10` VERIFIED from it, and the false "+25.0s vs ≤21.86s span
+  conflict" followed from comparing Note3 clock data against Redmi10 network spans. Witness
+  (DM 101605) and health (DM 101800) each spent a wake on the identity contradiction. Root cause:
+  nothing linked `--label` to the device that actually answered `adb shell date +%s`.
+- Change (commit `__COMMIT__`): `tools/clock_offset.py` now publishes `device_serial`/`device_model`
+  — the device's own `getprop ro.serialno`/`ro.product.model`, read in one *tagged* round trip
+  (`echo S=…; echo M=…`, so a wrapper banner cannot be mistaken for a value), bounded to a plausible
+  identity shape, and `null` when that read fails; a failed identity read never costs the offset
+  reading. It refuses to publish `status="ok"` when the measured serial is recorded for a *different*
+  node in `SITE/body/activation.json` (`<node>_serial` keys) and publishes
+  `status="unavailable"`, `reason="label-serial-mismatch: serial <s> is <node>"`, null offsets
+  instead. A serial the record does not name is still published with its identity; an unreadable
+  record only narrows the check. `experiments/perception/watch.py` carries the two fields through
+  `read_clock_domain` (verbatim, `null` when absent, on every verdict branch) and prints
+  `clock-domain provenance: measured on <model> (device_serial=<serial>)` in the pane and the
+  compact events view when the document names a device. The reader still does not adjudicate label
+  against identity: it shows both.
+- Checks. `python3 -m unittest discover -s tools` 267 OK (8 new: tagged read, banner/secret
+  rejection, failed read → null, mapping parse incl. junk, mismatch refusal, unrecorded serial still
+  published, identity in the document); `-s experiments/perception` 219 OK (2 new: identity carried
+  through every verdict branch, provenance line rendered/omitted); `rendezvous/minimal-server` 21,
+  `experiments/light-vibrate` 8, `experiments/minimal-substrate` 24, `experiments/trial-eval` 10,
+  all OK; `tools/test-protocol.sh` and `tools/test-spool.sh` OK. Unit tests make no device call
+  (identity sampling is mocked; suite runtime 0.03 s). No Java, resource or protocol byte changed,
+  so the gradle suites were not re-run.
+- Live, activated. Deployed `body/runtime/clock_offset.py` sha256 `2a935cd1…` (predecessor
+  `b7c840f7…` kept as `clock_offset.py.pre-deploy-20261016T1829Z`) and `body/runtime/watch.py`
+  sha256 `3f0e32cb…` (predecessor `63a0526c…` kept as `watch.py.pre-deploy-20261016T1830Z`);
+  `android-body-node-state.service` re-run and `android-body-perception.service` restarted
+  18:30:20Z. Published document carries `device_serial` `4d00553d61ab90b7`, `device_model` `SM-N900`
+  (offset 25.085 inside 24.585..25.585, samples 3); the pane gained
+  `clock-domain provenance: measured on SM-N900 (device_serial=4d00553d61ab90b7)` and the Note3
+  skew/latency split still resolves (+25.1s, age 30s, n=3, implied transport latency 1.3–4.4s).
+- Controlled failure exercised end to end against the real device, writing only to `/tmp`:
+  `clock_offset.py --serial 4d00553d61ab90b7 --label redmi10 --output /tmp/…` →
+  `clock-domain redmi10: unavailable (label-serial-mismatch: serial 4d00553d61ab90b7 is note3)`,
+  rc 0, document `status="unavailable"` with null offsets and the reason; the live site kept only
+  `clock-domain-note3.json`.
+- Retired with it: the hand-annotated `SITE/body/clock-domain-redmi10.json` (Note3's offset under a
+  `redmi10` filename, `status="provenance-error"`, authored 2026-10-16T17:38Z) moved verbatim to
+  `SITE/artifacts/senses-wake102180-clock-domain-redmi10-provenance-error.json`. It was a
+  mind-authored file sitting in a tool-output path, claiming `tools/clock_offset.py` as its source
+  while carrying a status the tool's own `assert_bounded` refuses. Redmi10's `clock_domain` verdict
+  is now `absent` / `no-clock-domain-file` (space.json 18:31:36Z) — the standing cause, matching
+  `experiments/perception/README.md`, rather than a broken-reading reason nothing can regenerate.
+- Residual, stated: the guard is producer-side. A *hand-written* document that asserts a plausible
+  `device_serial` for the wrong node is still rendered from its own fields (the pane prints the
+  identity next to it, which is what makes it visible). The reader deliberately does not depend on
+  `activation.json`: a new failure mode in the live pane for a class code cannot really defend
+  against was judged worse than a visible-but-unverified identity.
+- Revert: `install -m 775 body/runtime/clock_offset.py.pre-deploy-20261016T1829Z
+  body/runtime/clock_offset.py`; `install -m 700 body/runtime/watch.py.pre-deploy-20261016T1830Z
+  body/runtime/watch.py`; `systemctl --user restart android-body-perception.service`;
+  `tools/runtime_manifest.py record --file clock_offset.py --file watch.py`; restore
+  `body/clock-domain-redmi10.json` from the artifact if the old verdict is wanted.
+- Scope: two repo sources, their tests, the perception README, this record, two deployed runtime
+  copies with backups, one systemd user unit re-run, one service restart, and one site document
+  retired. No device mode, transport, cursor, queue, actuator, radio, APK or protocol byte changed;
+  the only device access is the same read-only `date +%s`/`getprop` round trips the node-state unit
+  already makes every 60 s. No `adb reverse --list`.
+- Evidence: `SITE/artifacts/senses-wake102180-clock-domain-provenance.md`;
+  `SITE/artifacts/senses-wake102180-clock-domain-redmi10-provenance-error.json`;
+  `SITE/body/clock-domain-note3.json`; `SITE/body/perception/view.txt:8`; `SITE/body/space.json`.

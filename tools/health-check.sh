@@ -470,6 +470,47 @@ if [ -f "$VIEW" ]; then
 else
   fail "perception consumer view.txt MISSING"
 fi
+# 7f. Clock-domain publisher liveness and status. android-body-node-state.timer
+# runs runtime/clock_offset.py every 60s (same timer as node_state.py) and
+# publishes body/clock-domain-note3.json; the consumer accepts the file for
+# 3600s (watch.py CLOCK_DOMAIN_MAX_AGE_SECONDS). clock_offset.py catches its
+# own adb error and publishes a *fresh* document carrying status="unavailable"
+# and the reason, so the mtime bound alone would read GREEN on every tick that
+# reported the clock offset unreadable. A fresh unavailable document is RED
+# while the phone is attached (§3 ATTACHED) and UNKNOWN when it is not,
+# mirroring §7d's mapping rule; the stale branch still wins, since a stopped
+# publisher is the more specific fact.
+CLOCK_DOMAIN=${CLOCK_DOMAIN:-$SITE/body/clock-domain-note3.json}
+if [ -f "$CLOCK_DOMAIN" ]; then
+  CD_AGE=$(( $(date +%s) - $(stat -c%Y "$CLOCK_DOMAIN") ))
+  CD_LINE=$(python3 -c "
+import json, sys
+try:
+    document = json.load(open(sys.argv[1]))
+    print('%s\t%s' % (document.get('status') or 'missing',
+                      str(document.get('reason') or 'none').replace('\n', ' ')))
+except Exception:
+    print('unreadable\tnone')" "$CLOCK_DOMAIN" 2>/dev/null)
+  CD_STATUS=$(printf '%s\n' "$CD_LINE" | cut -f1)
+  CD_REASON=$(printf '%s\n' "$CD_LINE" | cut -f2)
+  if [ "$CD_AGE" -gt 300 ]; then
+    fail "clock-domain note3 stale ${CD_AGE}s (>300s; publisher stopped)"
+  elif [ "$CD_STATUS" = "ok" ]; then
+    pass "clock-domain note3 fresh (${CD_AGE}s)"
+  elif [ "$CD_STATUS" = "unavailable" ]; then
+    if [ "${ATTACHED:-}" = "yes" ]; then
+      fail "clock-domain note3 unavailable (${CD_REASON}) while note3 is attached; ${CD_AGE}s old"
+    else
+      echo "UNKNOWN clock-domain note3 unavailable (${CD_REASON}); ${CD_AGE}s old, note3 not attached"
+    fi
+  elif [ -z "$CD_STATUS" ]; then
+    echo "UNKNOWN clock-domain note3 status (python3 unavailable)"
+  else
+    fail "clock-domain note3 status=$CD_STATUS (${CD_REASON}); expected ok, ${CD_AGE}s old"
+  fi
+else
+  fail "clock-domain note3 MISSING"
+fi
 
 # 8. Own wall plate (bin/wall-check health). A settle whose staged notes still
 # hold an earlier wake's text writes that text over the current plate with no
