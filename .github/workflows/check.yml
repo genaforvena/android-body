@@ -6,7 +6,12 @@ permissions:
   contents: read
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Pinned: GitHub begins migrating the `ubuntu-latest` label to Ubuntu 26 on
+    # 2026-10-19, and an unpinned image would change this old-toolchain Android
+    # build (sdkmanager packages, JDK 17, Gradle 8.11.1) without a source change.
+    # `ubuntu-latest` resolved to ubuntu-24.04 (`ubuntu24/20261012.334`) on
+    # 2026-10-16 in run 38938652837.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
