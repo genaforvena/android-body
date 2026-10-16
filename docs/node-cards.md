@@ -130,10 +130,8 @@ build carries it is unverified.
 Limits: Redmi10 is preparation, not a wired node: no USB window, no owner checkboxes,
 BLE scan structurally dead on the installed build, Wi-Fi RSSI verdict ambiguous, spool
 contents unread. The remedy is an APK update to the current candidate
-`downloads/android-body-debug.apk` = `3b6dcf7a…` (72,914 B, source `8dbb324`, published
-`8dbb324`), which carries `e131909` (BLUETOOTH_SCAN plus runtime request), `556049c`
-(ACCESS_NETWORK_STATE / `network_id_unavailable`) and `0c83e32` (class-4 ExecProbe); it
-supersedes `a17829c7…` (70,631 B, source `a201891`). The update needs the human on the
+`downloads/android-body-debug.apk` = `87b36024…` (73,358 B, source `e0ea84d` (app bytes `697d68a`), published `e0ea84d`), which carries `e131909` (BLUETOOTH_SCAN plus runtime request), `556049c` (ACCESS_NETWORK_STATE / `network_id_unavailable`), `0c83e32` (class-4 ExecProbe) and `697d68a` (`EvalOutcome` write-receipt bound); it supersedes `3b6dcf7a…` (72,914 B, source `8dbb324`) and `a17829c7…` (70,631 B, source `a201891`).
+The update needs the human on the
 phone (no ADB channel): either `adb install -r` in a USB window or copying the APK across
 and opening it. An install alone still leaves the scanner dead — `BLUETOOTH_SCAN` is
 requested only in `MainActivity.startBody()` (`MainActivity.java:129-130`), while
