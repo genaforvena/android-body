@@ -15,6 +15,14 @@ Constraints (from the spool-channel ruling, artifacts/senses-wake79358-spool-cha
   retention window (oldest/newest row timestamps converted to host epoch). No
   full dump, no shared_prefs, no secret/endpoint. The cursor_<sha256> directory
   name is not republished.
+- ``retention_window_s`` / ``oldest_row_epoch_s`` / ``newest_row_epoch_s`` are a
+  PHYSICAL-FILE span, not the app's logical retention. ``commit()`` appends a
+  transaction frame per write and only ``compact()`` rewrites the snapshot from
+  live records, so logically-evicted rows stay physically present until the next
+  compaction. The span therefore overstates logical retention and grows between
+  compactions (measured 2026-10-17: ~3.71 h logical vs ~5.6 h physical; the
+  physical span grows between compactions, so both figures move).
+  Never read it as "how long the app retains rows".
 - Read-only, no mutation of the spool or the app.
 - Never presented as a delivered observation: the document carries
   ``source=app-private-spool`` and the consumer renders it as collection-side.
@@ -55,6 +63,10 @@ The document (exactly these keys, never the endpoint or the node secret):
                     "last_error": "none", "sightings": 0,
                     "window_ms": 60000, "gap_ms": 60000},
      "reason": null}
+
+The retention fields above (``retention_window_s``, ``oldest_row_epoch_s``,
+``newest_row_epoch_s``) are the physical-file span described earlier, not the
+app's logical retention.
 
 Written atomically (temp file + rename, 0600) to
 ``<site>/body/spool-summary-<node>.json`` -- deliberately *outside*
@@ -374,7 +386,13 @@ def _retention_window(argv, serial, spool_path, timeout):
     We extract epoch candidates with ``grep -a -o`` (one per row plus the
     field values that share the 10-digit shape), keep the ones whose trailing
     token is a row kind, then compute min/max in Python, avoiding a full dump.
-    The retention window (~6.5h) bounds the match count (~20K).
+    The window is a PHYSICAL-FILE span, not the app's logical retention: the app
+    appends a transaction frame per write (``commit()``) and only ``compact()``
+    rewrites the snapshot from live records, so logically-evicted rows stay
+    physically present until the next compaction. It therefore overstates logical
+    retention and grows between compactions (measured 2026-10-17: ~3.71 h logical
+    vs ~5.6 h physical; both figures move with the compaction interval). The span
+    also bounds the match count (~20K).
 
     Returns ``(oldest_epoch_host, newest_epoch_host, window_seconds)`` or raises.
     """
@@ -679,7 +697,8 @@ def run_once(args):
                      f"last_error={scan['last_error']} sightings={scan['sightings']}"
                      if scan else ", scan_state=none-retained")
         print(f"spool-summary {args.label}: {total_rows} rows, light={light_total}, "
-              f"{result['spool_bytes']} B, window={result['retention_window_s']}s, "
+              f"{result['spool_bytes']} B, physical-file window="
+              f"{result['retention_window_s']}s (not logical retention), "
               f"overflow dropped={result['overflow']['dropped']}{scan_text} -> {output}")
     return 0
 

@@ -2627,6 +2627,13 @@ def spool_view_line(spool, now=None, clock=None):
     Coverage says the collector is alive; the eviction count says what bounded
     retention already discarded before delivery, so a live collector with a
     stale consumer is not read as a lossless one.
+
+    The window is rendered as ``physical-file-window``, never as
+    ``window``/``retention``: the summary's ``retention_window_s`` is the span of
+    physically-present rows, and the app keeps logically-evicted rows on disk
+    until its next compaction, so it overstates the app's logical retention and
+    grows between compactions. A reader must not read it as "how long the app
+    retains rows".
     """
     if spool is None:
         return None
@@ -2644,7 +2651,8 @@ def spool_view_line(spool, now=None, clock=None):
                                                spool.get("scan_state"), now, clock,
                                                spool.get("age_s"))
         return (f"collection-side spool evidence (NOT delivered; source=app-private-spool): "
-                f"status=ok spool={spool['spool_bytes']:,}B window={window_hours:.1f}h "
+                f"status=ok spool={spool['spool_bytes']:,}B "
+                f"physical-file-window={window_hours:.1f}h "
                 f"rows={total:,} light={light:,} "
                 f"(dark={buckets.get('dark_exact',0):,} "
                 f"faint={buckets.get('faint_0_1',0):,} "

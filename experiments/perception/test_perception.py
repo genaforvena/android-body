@@ -3397,6 +3397,23 @@ class SpoolCoverageVerdictTests(unittest.TestCase):
         self.assertIn("dark=87", line)
         self.assertIn("NOT delivered", line)
 
+    def test_view_line_names_the_window_a_physical_file_span(self):
+        """The summary's ``retention_window_s`` is the span of physically-present
+        rows: the app keeps logically-evicted rows on disk until its next
+        compaction, so the rendered line must name it as such and never as the
+        app's retention (discover DM 108349; ObservationSpool.commit/compact)."""
+        spool = {"status": "ok", "spool_bytes": 2634665,
+                 "retention_window_s": 18180.0,
+                 "counts": self._counts(),
+                 "light_buckets": {"dark_exact": 87, "faint_0_1": 0,
+                                   "dim_0_9": 3500, "moderate_10_99": 0,
+                                   "bright_100_999": 0,
+                                   "very_bright_1000_plus": 0},
+                 "age_s": 12.3}
+        line = watch.spool_view_line(spool)
+        self.assertIn("physical-file-window=5.0h", line)
+        self.assertNotIn(" window=", line)
+
     def test_view_line_without_spool_is_none(self):
         self.assertIsNone(watch.spool_view_line(None))
 
