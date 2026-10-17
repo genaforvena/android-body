@@ -3122,6 +3122,38 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(foreign["status"], "invalid")
         self.assertEqual(foreign["device_serial"], "4d00553d61ab90b7")
 
+    def test_read_clock_domain_carries_the_host_ntp_verdict(self):
+        # tools/clock_offset.py publishes the host's own NTPSynchronized verdict as
+        # provenance; the renderer needs it to name the host side of the offset. A
+        # missing, non-boolean or unusable document stays None, never a verdict.
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder) / "perception"
+            directory.mkdir()
+            watch.save(directory / "note3.json", state)
+            base = {"node": "note3", "status": "ok", "offset_min_s": 24.0,
+                    "offset_max_s": 25.0, "offset_nominal_s": 24.5, "samples": 3,
+                    "observed_at_epoch_s": 1000.0, "validity_seconds": 3600.0}
+            self.write_clock(directory, dict(base, host_ntp_synchronized=True))
+            synchronized = watch.read_clock_domain(directory, "note3", 1000.0)
+            self.write_clock(directory, dict(base, host_ntp_synchronized=False))
+            unsynchronized = watch.read_clock_domain(directory, "note3", 1000.0)
+            self.write_clock(directory, base)
+            omitted = watch.read_clock_domain(directory, "note3", 1000.0)
+            self.write_clock(directory, dict(base, host_ntp_synchronized="yes"))
+            non_boolean = watch.read_clock_domain(directory, "note3", 1000.0)
+            expired = watch.read_clock_domain(directory, "note3", 1000.0 + 3601)
+            self.write_clock(directory, {"node": "note3", "status": "unavailable"})
+            unavailable = watch.read_clock_domain(directory, "note3", 1000.0)
+        self.assertIs(synchronized["host_ntp_synchronized"], True)
+        self.assertIs(unsynchronized["host_ntp_synchronized"], False)
+        self.assertIsNone(omitted["host_ntp_synchronized"])
+        self.assertIsNone(non_boolean["host_ntp_synchronized"])
+        self.assertEqual(expired["status"], "stale")
+        self.assertIsNone(expired["host_ntp_synchronized"])
+        self.assertEqual(unavailable["status"], "invalid")
+        self.assertIsNone(unavailable["host_ntp_synchronized"])
+
     def test_an_identity_that_could_forge_a_pane_line_is_dropped(self):
         # The document can be written by hand as well as by the producer, and the pane
         # is a rendered surface: an identity carrying a newline or an escape sequence
@@ -3167,12 +3199,16 @@ class PerceptionTests(unittest.TestCase):
                          "phone/host clock skew <=26900ms behind host (acquisition span "
                          "26900-28968ms, n=30 retained); skew/latency split unknown")
         clock = {"status": "ok", "offset_min_s": 24.0, "offset_max_s": 25.0,
-                 "offset_nominal_s": 25.4, "age_s": 12.0, "samples": 7}
+                 "offset_nominal_s": 25.4, "age_s": 12.0, "samples": 7,
+                 "host_ntp_synchronized": False}
         self.assertEqual(watch.clock_agreement_reason(spans, clock),
                          "phone/host clock skew <=26900ms behind host (acquisition span "
                          "26900-28968ms, n=30 retained); measured phone/host offset "
-                         "+25.4s behind host (age 12s, n=7, bounds +24.0..+25.0s) "
-                         "resolves the split: implied transport latency 1.9-5.0s")
+                         "+25.4s behind host (age 12s, n=7, bounds +24.0..+25.0s, "
+                         "host_ntp_synchronized=false: the host clock is itself "
+                         "unsynchronized, so part of this offset is host error, not a "
+                         "measured phone error) resolves the split: implied transport "
+                         "latency 1.9-5.0s")
 
     def test_clock_agreement_names_a_measurement_that_conflicts_with_the_span_bound(self):
         spans = {"min_ms": 26900.0, "max_ms": 28968.0, "median_ms": 27000.0, "n": 30}
@@ -3181,6 +3217,51 @@ class PerceptionTests(unittest.TestCase):
         reason = watch.clock_agreement_reason(spans, clock)
         self.assertIn("conflicts with the span bound", reason)
         self.assertIn("split unresolved", reason)
+
+    def test_clock_agreement_names_the_host_side_of_the_measured_offset(self):
+        # The offset is host-minus-phone, so without the producer's own host-NTP
+        # verdict a reader takes the whole number for a phone defect (health DM 105987).
+        spans = {"min_ms": 26900.0, "max_ms": 28968.0, "median_ms": 27000.0, "n": 30}
+        base = {"status": "ok", "offset_min_s": 24.0, "offset_max_s": 25.0,
+                "offset_nominal_s": 24.8, "age_s": 44.0, "samples": 3}
+        synchronized = watch.clock_agreement_reason(
+            spans, dict(base, host_ntp_synchronized=True))
+        self.assertIn("host_ntp_synchronized=true", synchronized)
+        self.assertIn("attributable to the phone", synchronized)
+        unsynchronized = watch.clock_agreement_reason(
+            spans, dict(base, host_ntp_synchronized=False))
+        self.assertIn("host_ntp_synchronized=false", unsynchronized)
+        self.assertIn("part of this offset is host error, not a measured phone error",
+                      unsynchronized)
+        # Absent, unreadable or non-boolean stays unknown, never synchronized.
+        for missing in (base, dict(base, host_ntp_synchronized=None),
+                        dict(base, host_ntp_synchronized="yes"),
+                        dict(base, host_ntp_synchronized=1)):
+            reason = watch.clock_agreement_reason(spans, missing)
+            self.assertIn("host_ntp_synchronized unknown", reason)
+            self.assertNotIn("host_ntp_synchronized=true", reason)
+        # No measurement at all: no offset is claimed, so no host clause is invented.
+        self.assertNotIn("host_ntp_synchronized", watch.clock_agreement_reason(spans))
+
+    def test_the_pane_and_space_publish_the_host_ntp_attribution(self):
+        # Consumer-visible: the same clause reaches the raw-units pane line and the
+        # space.json light status_reason, not only the in-process helper.
+        state = self.state()
+        self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=21"], received=1024)
+        self.page(state, ["1001 light lux=12.5 accuracy=3 age_ms=21"], received=1026)
+        clock = {"status": "ok", "offset_min_s": 24.0, "offset_max_s": 25.0,
+                 "offset_nominal_s": 24.8, "observed_at_epoch_s": 1020.0, "age_s": 12.0,
+                 "samples": 3, "source": "tools/clock_offset.py",
+                 "validity_seconds": 3600.0, "jump": None, "reason": None,
+                 "host_ntp_synchronized": False}
+        view = watch.render(state, 1024, 30, None, clock)
+        self.assertIn("host_ntp_synchronized=false", view)
+        self.assertIn("part of this offset is host error, not a measured phone error",
+                      view)
+        node = watch.space_snapshot([state], 1026, 30,
+                                    clocks={"note3": clock})["nodes"][0]["light"]
+        self.assertIn("host_ntp_synchronized=false", node["status_reason"])
 
     def test_space_snapshot_light_reason_carries_the_resolved_split(self):
         state = self.state()

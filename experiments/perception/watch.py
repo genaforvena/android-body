@@ -1966,6 +1966,30 @@ def acquisition_span_stats(state):
             "median_ms": median, "n": len(spans)}
 
 
+def host_clock_attribution(clock):
+    """The host side of a measured offset, from the producer's own NTP verdict.
+
+    ``measured phone/host offset +24.8s behind host`` is a difference
+    (``host wall - phone wall``), not a verdict on which clock is wrong: an
+    unsynchronized host clock contributes to it exactly as much as the phone does.
+    ``tools/clock_offset.py`` publishes the host's own ``NTPSynchronized`` verdict
+    as ``host_ntp_synchronized`` and deliberately refuses to assume which clock is
+    closer to true UTC; rendering that field beside the offset keeps the pane from
+    reading the whole number as a phone defect. A field that is absent, unreadable
+    or not a boolean renders as unknown, never as synchronized.
+    """
+    ntp = clock.get("host_ntp_synchronized")
+    if ntp is True:
+        return (", host_ntp_synchronized=true: the host clock is the synchronized "
+                "reference, so this offset is attributable to the phone")
+    if ntp is False:
+        return (", host_ntp_synchronized=false: the host clock is itself "
+                "unsynchronized, so part of this offset is host error, not a "
+                "measured phone error")
+    return (", host_ntp_synchronized unknown: the host's own clock state was not "
+            "read, so host-side attribution is unknown")
+
+
 def clock_agreement_reason(span_stats, clock=None):
     """Bound phone/host clock skew from retained receipt spans, or resolve the split.
 
@@ -1974,7 +1998,10 @@ def clock_agreement_reason(span_stats, clock=None):
     and the split itself stays unknown. A measured offset reading
     (tools/clock_offset.py) resolves it: ``latency = span - offset`` over both
     intervals. A reading that conflicts with the span bound is reported as a
-    conflict, not silently averaged away.
+    conflict, not silently averaged away. The measured clause also carries the
+    producer's own ``host_ntp_synchronized`` verdict (``host_clock_attribution``):
+    the offset is a difference, so without it a reader takes the whole number for a
+    phone defect.
     """
     if span_stats is None:
         return "phone/host clock agreement is unverified"
@@ -1985,9 +2012,10 @@ def clock_agreement_reason(span_stats, clock=None):
     if not clock or clock.get("status") != "ok":
         return bound + "; skew/latency split unknown"
     measured = ("measured phone/host offset %+.1fs behind host (age %.0fs, n=%d, "
-                "bounds %+.1f..%+.1fs)"
+                "bounds %+.1f..%+.1fs%s)"
                 % (clock["offset_nominal_s"], clock["age_s"], clock["samples"],
-                   clock["offset_min_s"], clock["offset_max_s"]))
+                   clock["offset_min_s"], clock["offset_max_s"],
+                   host_clock_attribution(clock)))
     low = span_stats["min_ms"] / 1000.0 - clock["offset_max_s"]
     high = span_stats["max_ms"] / 1000.0 - clock["offset_min_s"]
     if low < 0:
@@ -2263,6 +2291,13 @@ def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS
     producer's ``--label``, so the caller can show which device the offset came from
     instead of only which node it was filed under; the reader does not adjudicate
     the two.
+
+    ``host_ntp_synchronized`` is the producer's own verdict on the *host* clock,
+    carried only alongside a usable reading (``None`` when the document is
+    absent/invalid/stale, omits the field, or gives a non-boolean). The offset is a
+    difference, not a verdict on which clock is wrong, so without this field a
+    caller cannot separate phone error from host error; the reader never assumes
+    either clock is the reference.
     """
     identity = {"device_serial": None, "device_model": None}
 
@@ -2270,7 +2305,8 @@ def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS
         return {"status": status, "offset_min_s": None, "offset_max_s": None,
                 "offset_nominal_s": None, "observed_at_epoch_s": None, "age_s": None,
                 "validity_seconds": None, "samples": 0, "jump": None,
-                "source": None, "reason": reason, **identity}
+                "source": None, "host_ntp_synchronized": None,
+                "reason": reason, **identity}
 
     path = directory.parent / f"{CLOCK_DOMAIN_PREFIX}{node}.json"
     try:
@@ -2312,6 +2348,7 @@ def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS
     samples = document.get("samples")
     jump = document.get("jump")
     source = document.get("source")
+    ntp = document.get("host_ntp_synchronized")
     return {"status": "ok",
             "offset_min_s": numbers["offset_min_s"],
             "offset_max_s": numbers["offset_max_s"],
@@ -2322,6 +2359,7 @@ def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS
             "samples": samples if isinstance(samples, int) and not isinstance(samples, bool) else 0,
             "jump": jump if isinstance(jump, dict) else None,
             "source": source if isinstance(source, str) else None,
+            "host_ntp_synchronized": ntp if isinstance(ntp, bool) else None,
             "reason": None, **identity}
 
 

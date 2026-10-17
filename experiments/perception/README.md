@@ -422,6 +422,20 @@ measured serial the site's activation record (`SITE/body/activation.json`,
 null offsets instead. A serial the record does not name is published with its
 identity rather than refused, and an unreadable record only narrows the check.
 
+The document also carries the host's own NTP verdict (`host_ntp_synchronized`,
+from `timedatectl show --property=NTPSynchronized`; `null` when unreadable), and the
+pane renders it beside the offset: `measured phone/host offset +24.8s behind host
+(… host_ntp_synchronized=false: the host clock is itself unsynchronized, so part of
+this offset is host error, not a measured phone error)`. The offset is a difference
+(`host wall − phone wall`), not a verdict on which clock is wrong — on 2026-10-17
+this host ran ~22 s ahead of true UTC while the phone was ~2.7 s behind it (health
+DM 105987) — and the producer refuses to assume either clock is closer to true UTC,
+so the field is published as provenance and the consumer repeats it instead of
+adjudicating. The functional derivation is unaffected (`latency = span − offset`
+cancels the host error); only attribution changes. An absent, unreadable or
+non-boolean field renders as `host_ntp_synchronized unknown`, never as
+synchronized, and a pane with no measured offset at all carries no host clause.
+
 - **Note3**: the producer measures a paired round trip over adb
   (`adb shell date +%s` against the host wall clock; 1 s quantization,
   `rtt_max_s/2` extra uncertainty). Live 2026-10-16T18:30:10Z:
