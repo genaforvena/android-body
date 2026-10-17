@@ -60,8 +60,7 @@ def read_refusals(path):
                     yield json.loads(line), None
                 except ValueError as exc:
                     yield None, f"malformed JSON: {exc}"
-    except OSError as exc:
-        yield None, f"unreadable: {exc}"
+    except (OSError, UnicodeDecodeError) as exc: yield None, f"unreadable: {exc}"
 
 
 def check(site, now=None, window_hours=DEFAULT_WINDOW_HOURS):
@@ -82,7 +81,7 @@ def check(site, now=None, window_hours=DEFAULT_WINDOW_HOURS):
             errors.append(f"entry is {type(entry).__name__}, not an object")
             continue
         ts = parse_ts(entry.get("ts"))
-        if ts is None:
+        if ts is None or ts.tzinfo is None:
             errors.append(f"malformed ts: {entry.get('ts')!r}")
             continue
         age = (now - ts).total_seconds()
@@ -94,7 +93,7 @@ def check(site, now=None, window_hours=DEFAULT_WINDOW_HOURS):
         return 0, [f"{GREEN:<7} binding refusals: 0 in {window_hours:.0f}h "
                    f"({path}, {total} total)"]
     newest_age = min(age for _, age in recent)
-    attempted = sorted({str(entry.get("attempted_home")) for entry, _ in recent})
+    attempted = sorted({str(entry.get("attempted_home", "?")) for entry, _ in recent})
     return 1, [f"{RED:<7} binding refusals: {len(recent)} in {window_hours:.0f}h, "
                f"newest {newest_age / 60:.1f}m ago "
                f"(attempted: {', '.join(attempted)}; {path}, {total} total)"]

@@ -116,6 +116,34 @@ class RefusalCase(unittest.TestCase):
         self.write(entry("not-a-timestamp"))
         rc, _ = binding_refusal.check(self.site)
         self.assertEqual(rc, 2)
+    def test_naive_ts_is_unknown(self):
+        self.write(entry("2026-10-17T09:00:00"))
+        rc, _ = binding_refusal.check(self.site)
+        self.assertEqual(rc, 2)
+
+    def test_errors_take_precedence_over_recent(self):
+        now = datetime.now(timezone.utc)
+        self.write("{not json",
+                   entry((now - timedelta(minutes=5)).isoformat()))
+        rc, _ = binding_refusal.check(self.site)
+        self.assertEqual(rc, 2)
+
+    def test_invalid_utf8_is_unknown(self):
+        self.log.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.log, "wb") as fh:
+            fh.write(b'{"ts": "2026-10-17T09:00:00+00:00", "attempted_home": "\xff\xfe"}')
+        rc, _ = binding_refusal.check(self.site)
+        self.assertEqual(rc, 2)
+
+    def test_missing_attempted_home_renders_question_mark(self):
+        now = datetime.now(timezone.utc)
+        e = entry((now - timedelta(minutes=5)).isoformat())
+        del e["attempted_home"]
+        self.write(e)
+        rc, lines = binding_refusal.check(self.site)
+        self.assertEqual(rc, 1)
+        self.assertIn("?", lines[0])
+        self.assertNotIn("None", lines[0])
 
     def test_non_object_entry_is_unknown(self):
         self.write("[1, 2]")
