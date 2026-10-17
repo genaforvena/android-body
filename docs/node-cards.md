@@ -12,10 +12,10 @@ present availability, supported bounded text requests, limits. Declaration is no
 a working sensor. "Present availability" always carries its observation instant; staleness
 is a property of the channel, never a silent default.
 
-Last updated 2026-10-17T09:52Z by docs: Note3 present-availability numbers re-read from
-the deployed view at 09:51Z (spool, dropped-records and scan-window counts moved since the
-14:00Z reading); restored the subject of the truncated eval write/exec sentence. Availability
-stamps below are from the read-only deployed view at 09:51Z and can go stale.
+Last updated 2026-10-17T10:06Z by docs: Redmi10 present-availability re-read from the deployed
+view at 10:06Z (delivery frozen; the device is offline on the tailnet per health DM 105877);
+Note3 present-availability numbers re-read at 09:51Z. Availability stamps below are from the
+read-only deployed view and can go stale.
 
 ## Note3 node card
 
