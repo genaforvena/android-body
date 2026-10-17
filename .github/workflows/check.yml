@@ -40,6 +40,13 @@ jobs:
         run: |
           tools/test-protocol.sh
           tools/test-spool.sh
+          # The second Gradle module is not on the `:app:` line below, so its
+          # JVM regression test ran nowhere in CI: `ProbeReportTest` had a
+          # registered `:ble-probe:testProbeReport` task and no caller, and the
+          # then app-only check_ci_coverage.py printed GREEN anyway. This
+          # harness compiles the Android-free classes with javac and runs the
+          # test, so the formatter/terminal-result boundary is guarded here.
+          tools/test-ble-probe.sh
           python3 -m unittest discover -s rendezvous/minimal-server
           python3 -m unittest discover -s experiments/light-vibrate
           python3 -m unittest discover -s experiments/perception

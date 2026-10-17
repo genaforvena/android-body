@@ -39,7 +39,7 @@ Persistent-state checks cover endpoint-matching enable markers, failed preferenc
 
 ## Published repository and CI
 
-The public [GitHub repository](https://github.com/genaforvena/android-body) carries the source, CC0 license, third-party notices and the installable debug APK. `.github/workflows/check.yml` runs on every push and pull request: the protocol and spool shell harnesses, the rendezvous, light/vibrate, perception, minimal-substrate, trial-eval and tools unittest suites, then `:app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe`, an `apksigner verify --min-sdk-version 18` check that the built APK and the published download still carry the v1 signature the API 18 install path needs (the payload comparison ignores META-INF and so cannot see a lost v1 signature), a `tools/check_published_apk.py` comparison of the published download's payload against that build (a hand-rebuilt download can silently lag the source, and the download's own `SHA256SUMS` cannot see that), uploading the debug APK (`android-body-debug`) and the lint report.
+The public [GitHub repository](https://github.com/genaforvena/android-body) carries the source, CC0 license, third-party notices and the installable debug APK. `.github/workflows/check.yml` runs on every push and pull request: the protocol, spool and ble-probe shell harnesses, the rendezvous, light/vibrate, perception, minimal-substrate, trial-eval and tools unittest suites, then `:app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe`, an `apksigner verify --min-sdk-version 18` check that the built APK and the published download still carry the v1 signature the API 18 install path needs (the payload comparison ignores META-INF and so cannot see a lost v1 signature), a `tools/check_published_apk.py` comparison of the publ…
 
 CI runs on the pushed tip, so a commit below the tip shares the tip's run. A run is named here only where a change needs one as evidence — the installed-APK payload run under [Built artifact](#built-artifact) is the current example; a tip's CI status is read from GitHub, not recorded here per push. This record is not a per-run ledger, and docs does not create a commit solely to record a CI run.
 
@@ -122,6 +122,7 @@ The same set as the [README Checks block](../README.md#checks-and-truthful-scope
 #   export ANDROID_HOME=/home/mesh-home/.local/android-sdk
 tools/test-protocol.sh
 tools/test-spool.sh
+tools/test-ble-probe.sh
 python3 -m unittest discover -s rendezvous/minimal-server
 python3 -m unittest discover -s experiments/light-vibrate
 python3 -m unittest discover -s experiments/perception
@@ -933,3 +934,65 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   `TypeError` (now UNKNOWN) and invalid UTF-8 raised `UnicodeDecodeError` (now UNKNOWN);
   missing `attempted_home` rendered as literal "None" (now "?"). 4 tests added;
   `discover -s tools` 387 OK; live RED unchanged.
+
+## CI coverage — a second Gradle module's test ran nowhere (genome wake 107876, 2026-10-17)
+
+- Trigger: re-reading the just-published `tools/check_ci_coverage.py` (wake 107706)
+  for blind spots in its own rules. It hardcoded `JAVA_TEST_ROOT = "app/src/test/"`
+  and parsed only `:app:` tasks.
+- Measured: `ble-probe/src/test/java/org/androidbody/bleprobe/ProbeReportTest.java`
+  is tracked and is a real JVM regression test — 18 `ProbeResult.classify` boundary
+  cases plus the query-row assertion over `ProbeReport.appendQuery`. `ble-probe` is
+  in `settings.gradle` and registers `:ble-probe:testProbeReport`
+  (`ble-probe/build.gradle`, `mainClass org.androidbody.bleprobe.ProbeReportTest`),
+  but nothing in `.github/workflows/check.yml` compiles or runs that module: no
+  `:ble-probe:` task, no harness, no mention at all (`git log -S"ble-probe" --
+  .github/workflows/check.yml` is empty). The checker therefore printed
+  `GREEN 7 java test class(es)` while this class had no CI caller anywhere — the
+  same "a test that nothing invokes is not coverage" shape it exists to catch,
+  missed by its own app-only scope.
+- Fix: `tools/test-ble-probe.sh`, a `javac` harness over the three Android-free
+  files (`ProbeReport`, `ProbeResult`, `ProbeReportTest`), the same pattern
+  `tools/test-protocol.sh` uses to cover classes without the Android SDK; wired into
+  the workflow's Boundary tests step. `tools/check_ci_coverage.py` now discovers
+  Java test classes under any tracked `*/src/test/java/`, derives the FQCN from the
+  path, reads every tracked `build.gradle` and matches module-qualified
+  `:<module>:<task>` CI invocations (so a task name shared by two modules cannot
+  cross-credit), and strips comments from every file that can supply credit —
+  workflow `#`, harness `#`, gradle `//` and `/* */` — so a commented-out
+  reference is not counted as a caller. The python-suite allowlist
+  (`experiments/`, `rendezvous/`, `tools/`) is gone: any tracked `test_*.py`
+  directory must be discovered.
+- Verification: `tools/test-ble-probe.sh` rc=0, printing `ProbeReport: query rows and
+  result-boundary assertions passed`; `python3 tools/check_ci_coverage.py` →
+  `GREEN 8 java test class(es) and 6 python suite(s) reachable from CI`. On the
+  pre-fix tree the same command now returns rc=1 with
+  `FAIL ble-probe/src/test/java/org/androidbody/bleprobe/ProbeReportTest.java:
+  org.androidbody.bleprobe.ProbeReportTest is invoked by no CI-run task or harness`,
+  so the detector catches the defect it missed. `python3 -m unittest discover -s
+  tools` → 401 OK, 7 new cases: non-app class with no caller → RED; `:ble-probe:`
+  task present in CI → GREEN; harness credits the dotted class → GREEN;
+  commented-out harness → RED (both the harness and the class it ran);
+  commented-out `java -cp "$OUT"` line → the class stays RED; commented-out
+  `mainClass` → RED; same task name in two modules credits only the named module.
+- Smoke on real workflow bytes (temp root, tracked-file list supplied): a synthetic
+  third module's test class and a `host/test_new.py` suite outside the old allowlist
+  each produce their own FAIL line; commenting out the harness reference in the real
+  workflow returns the class-level FAIL.
+- Limits: host-side harness and checker only. No APK, device, protocol, `ble-probe`
+  source, transport, cursor, service or `body/runtime` byte changed. The harness
+  compiles only `ProbeReport` and `ProbeResult`; `ProbeActivity`, `CapabilityReport`
+  and `ProbeInstrumentation` are still not compiled by CI, and the gradle path
+  `:ble-probe:testProbeReport` still needs Android SDK platform 34 (this host has
+  36), so the module's Android sources and its gradle task remain unexercised in CI.
+  No device or physical behavior is implied.
+- Independent review (reviewer subagent, read-only, working tree before commit): all
+  five claims held. Its two caveats — module-collision untested, comment stripping
+  limited to the workflow — are closed above by the three extra cases and by
+  stripping comments in every credit source. Two no-trigger limits it named stay
+  open and are stated in the checker's docstring: a root-module `:task` is never
+  credited (fail-closed), and the FQCN comes from the directory layout rather than
+  the `package` line (all 8 tracked test files agree, checked).
+- Revert: `git revert` this commit. The change is additive — one new harness, one
+  workflow line, checker/doc edits — and no runtime, device, transport, cursor or
+  service state is involved, so there is nothing to unwind outside Git.

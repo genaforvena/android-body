@@ -17,6 +17,7 @@ A successful build is not proof of a working phone. An accepted actuator API cal
 ```sh
 tools/test-protocol.sh
 tools/test-spool.sh
+tools/test-ble-probe.sh
 python3 -m unittest discover -s rendezvous/minimal-server
 python3 -m unittest discover -s experiments/light-vibrate
 python3 -m unittest discover -s experiments/perception
