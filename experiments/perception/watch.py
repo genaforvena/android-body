@@ -1219,6 +1219,18 @@ def _monitor_row_span(row):
     return f"{max(epochs) - min(epochs):.0f}s"
 
 
+def _monitor_row_event(row):
+    """The row's own fire time, so the row cannot be read as the current reading.
+
+    The heartbeat line above carries *this run's* ``lux``/``prev_lux``; the row's are the
+    event's. One field name for two meanings lets a reader take a stale event lux for a
+    fresh reading -- the collision the retired ``poll`` field caused. Host clock, the
+    heartbeat age's own basis; the value is the row's stored stamp, so the compact view
+    does not churn on it.
+    """
+    return f" event_host_utc={stamp(row.get('timestamp_unix'))}"
+
+
 def _monitor_row_text(row):
     if row is None:
         return "none (no resumption claimed in the retained detector log)"
@@ -1232,7 +1244,7 @@ def _monitor_row_text(row):
         count = f"poll={row.get('poll')}"
     return (f"lux={row.get('lux')} prev_lux={row.get('prev_lux')} "
             f"threshold_lux={row.get('threshold_lux')} {count} "
-            f"baseline_span_s={_monitor_row_span(row)}")
+            f"baseline_span_s={_monitor_row_span(row)}{_monitor_row_event(row)}")
 
 
 #: Why the detector has no resumption to claim yet, derived from its own heartbeat.

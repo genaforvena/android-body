@@ -2666,6 +2666,49 @@ class PerceptionTests(unittest.TestCase):
                       "baseline_span_s=-", view)
         self.assertNotIn("predates the 7.0-lux rule", view)
 
+    def test_light_resumption_view_labels_the_last_row_event_time(self):
+        # The heartbeat line carries this run's lux/prev_lux; last_row's are the event's.
+        # Without the row's own fire time a reader can take a stale event lux for a fresh
+        # reading -- the compact view has no heartbeat line to compare against.
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            state_file = folder / "light-cycle-monitor-state.json"
+            log_file = folder / "light-cycle-resumed.jsonl"
+            state_file.write_text(json.dumps({
+                "poll": 7, "interval_seconds": 30.0, "max_polls": 3300,
+                "threshold_lux": 7.0, "lux": 11.4, "prev_lux": 0.2, "armed": True,
+                "pid": 4242, "started_unix": 900.0, "timestamp_unix": 990.0}))
+            log_file.write_text(json.dumps({
+                "event": "light-cycle-resumed", "lux": 11.4, "prev_lux": 0.2,
+                "prev_observed_unix": 960.0, "baseline_first_unix": 960.0,
+                "baseline_samples": [[12, 960.0, 0.2], [13, 961.0, 0.1]],
+                "threshold_lux": 7.0, "samples": 7,
+                "timestamp_unix": 1792000000.0}) + "\n")
+            with patch.object(watch, "MONITOR_STATE_FILE", state_file), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                view = watch.light_resumption_view(1000, 30)
+                compact = watch.light_resumption_view(1000, 30, compact=True)
+        self.assertIn("event_host_utc=2026-10-14T17:46:40+00:00", view)
+        self.assertIn("event_host_utc=2026-10-14T17:46:40+00:00", compact)
+
+    def test_light_resumption_view_names_a_missing_event_time_as_unknown(self):
+        # A retained row that predates the field is not silently given a time: the
+        # absence is named so the row is still read as an event, never as current.
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            state_file = folder / "light-cycle-monitor-state.json"
+            log_file = folder / "light-cycle-resumed.jsonl"
+            state_file.write_text(json.dumps({
+                "poll": 3, "armed": False, "lux": None, "prev_lux": None,
+                "threshold_lux": 7.0, "timestamp_unix": 900.0}))
+            log_file.write_text(json.dumps({
+                "event": "light-cycle-resumed", "lux": 2.505, "poll": 0,
+                "prev_lux": None}) + "\n")
+            with patch.object(watch, "MONITOR_STATE_FILE", state_file), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                compact = watch.light_resumption_view(1000, 30, compact=True)
+        self.assertIn("event_host_utc=unknown", compact)
+
     def test_light_resumption_view_flags_silent_detector_and_retained_old_row(self):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
