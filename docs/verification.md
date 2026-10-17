@@ -128,6 +128,7 @@ python3 -m unittest discover -s experiments/perception
 python3 -m unittest discover -s experiments/minimal-substrate
 python3 -m unittest discover -s experiments/trial-eval
 python3 -m unittest discover -s tools
+python3 tools/check_docs.py
 ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testBleScanEvents :app:testEvalOutcome :app:testExecProbe
 "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose \
   app/build/outputs/apk/debug/app-debug.apk
