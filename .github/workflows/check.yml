@@ -46,6 +46,11 @@ jobs:
           python3 -m unittest discover -s experiments/minimal-substrate
           python3 -m unittest discover -s experiments/trial-eval
           python3 -m unittest discover -s tools
+          # The reader-facing book is Markdown; a link that does not resolve is a
+          # reader-visible dead end. This also catches the truncation signature
+          # (a `](` with no closing `)`) that a target-resolution scan alone
+          # misses -- the 2026-10-17 README defect. Runs here, not only by hand.
+          python3 tools/check_docs.py
       - name: Build and lint
         run: ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe
       # minSdk 18 (the original Note 3 baseline) cannot install an APK signed
