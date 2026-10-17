@@ -269,6 +269,7 @@ A resumption row names each quantity it carries, and the view renders those name
 | `samples` | light samples consumed this run at the fire instant — the heartbeat's own `samples`, not its `poll` (the tail-check index) |
 | `prev_lux` / `prev_observed_unix` | the sample immediately before the fire: its lux and its phone epoch |
 | `baseline_first_unix` | the first baseline sample's phone epoch; the view derives `baseline_span_s` from `baseline_samples`, whose epochs are all phone-clock, so the span is one clock domain |
+| `timestamp_unix` | the row's own fire time on the host clock, rendered as `event_host_utc` so the row's `lux`/`prev_lux` cannot be read as this run's fresh reading |
 
 Until 2026-10-16 the row wrote the sample count as `poll` and the baseline start as
 `prev_observed_unix`, and the view subtracted the host `timestamp_unix` from the baseline
@@ -276,6 +277,10 @@ start as `prev_observed_gap`. That collided with the heartbeat's `poll` in one r
 block (a reader saw `poll=557` beside `poll=3284`) and mixed clock domains (68.6 s rendered
 for a 25 s dark window). A row that predates the rename still renders its count as
 `samples` and its span from the baseline epochs, and the view says so.
+
+The compact view carries no heartbeat line, so without that name the row's `lux`/`prev_lux`
+could be taken for this run's fresh reading. A row written before the field renders
+`event_host_utc=unknown`, never silently given a time.
 
 The heartbeat's `armed` is only "a fresh baseline exists this run": it does not say the
 baseline is below the threshold, nor that the current poll read anything fresh. The view
