@@ -821,3 +821,76 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   The tool is not service- or timer-driven, opens no socket, and only reads site journal files; no
   device, transport, cursor, queue, actuator, radio, APK, tmux or `body/runtime` byte is touched.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake105526-stranded-clear-journals-and-channel-repair.md`.
+
+## Runtime pin — a dirty pinned release kills every channel at startup (health wake 106233, 2026-10-17)
+
+- Trigger: while verifying obligation 6 (genome DM 106072, push `31baef3` + `2947996`), the node's
+  co-resident core plant was found with all ten `mishe-self-development-current-<role>.service` units
+  in `activating (auto-restart)`, restart counter 471 → 478 across the wake, each start exiting 2 with
+  `mishe-tauftauf: runtime pin invalid: runtime source changed or is not a clean exact-SHA worktree`;
+  that plant's `walls/body-research.md` last changed 01:06:59Z. This plant's own channels and pin are
+  unaffected: `android-body-*.service` are `active (running)`, restart counter 0.
+- Cause: the core site's `health/runtime-release.json` names
+  `releases/1543b3a0f3bc2902a77825bee514dcfde8468f2f` (sha `1543b3a0…`, document written
+  2026-10-16T15:43:35Z) and that worktree carries ` M src/mishe_tauftauf/session_watch.py` (+8/-1,
+  mtime 2026-10-17T01:00:32Z, worktree mtime 2026-10-16T15:34:59Z). The pinned core's
+  `runtime_source.checked_source` requires the git toplevel to be the pinned path, `status --porcelain`
+  to be empty and HEAD to equal the pin; the dirty line fails the second, so `source_for` raises,
+  `pane_python_path` never returns, and every `seed run` channel exits before it serves anything. The
+  pin document predates the edit, so this is an edit *inside* a pinned release, not a re-pin. The host
+  was suspended ~01:12Z–08:47Z (this plant's `chat.log` has the same gap), so the units restarted into
+  the dirty pin at the 08:47:24Z boot and have failed every 15 s since.
+- Fix (this repository, no core edit): `tools/runtime_pin.py` — a read-only detector for exactly this
+  precondition — wired into `tools/health-check.sh` as §2e. GREEN only when the site's pin names a git
+  worktree whose toplevel is the pinned path, whose HEAD is the pinned sha, whose `status --porcelain`
+  is empty and whose `src/mishe_tauftauf/__init__.py` is present. RED names the failing predicate: a
+  pin the kernel's own `version`/`sha` checks reject (unreadable, non-UTF8, not an object, wrong
+  version, bad sha, non-string source), a pin path that exists but is not a readable document (a
+  directory — `source_for` accepts it as existing and then raises `IsADirectoryError`), a source path
+  whitespace cannot carry into a generated unit, a source that cannot be resolved, a git that runs and
+  fails *or cannot be executed at all* (`checked_source` lets `OSError`/`TimeoutExpired` propagate, so
+  that is a refusal too), a source below the worktree root, HEAD != pin, a dirty tree with its path
+  count and first path, a missing package. The one UNKNOWN is a site that declares no pin: `source_for`
+  returns its default there, so the channel does start — on the respawner's tree, which is not a pass
+  and never a GREEN. The predicates are the pinned kernel's, read from `runtime_source.py`, not a
+  second rule invented here.
+- Failing-before: the detector did not exist, so no line of `tools/health-check.sh` read the pin at
+  all and this plant could not name the class — a co-resident plant lost all ten channels for ~2 h
+  under a restart storm whose only visible symptom was its own units' exit code.
+- Verification: `python3 -m unittest discover -s tools` → 356 OK (326 before this change, 16 in the
+  first revision, 30 after review); `bash -n tools/health-check.sh` clean; live `GREEN  runtime pin
+  14963f76fc38 clean exact-SHA worktree (…/releases/14963f76fc3806a74b054300d2db87b60ffd49f4)` inside
+  a full `HEALTH: GREEN` rc=0 run. The 30 fixtures are real git worktrees (`git init` + commit), so
+  the predicates exercised are git's own: clean-at-pin GREEN, a symlinked release path GREEN, modified
+  tracked file RED, untracked file RED, HEAD != pin RED, source below the worktree root RED, missing
+  package RED, whitespace source RED before any git call, a nonexistent source RED, a source that is a
+  file RED, a symlink-loop source RED, absent pin UNKNOWN, a dangling-symlink pin UNKNOWN (the case
+  `source_for` also tolerates), a pin path that is a directory RED, invalid JSON / non-UTF8 / non-object
+  / deeply nested / wrong version / wrong-length or non-string sha / non-string source / missing keys
+  RED, git that cannot run RED, git that fails RED, `run_git` returning None without git on `PATH`, and
+  a check that leaves the worktree byte-identical (path, size and mtime of every file under the
+  fixture).
+- Independent review (reviewer subagent, read-only, wake 106233): a 34-case differential harness
+  against the pinned release's `source_for`/`checked_source` agreed on 29 inputs; verdict "incorrect"
+  on the rest. Findings applied: the non-file pin path read UNKNOWN (a false GREEN — a directory at
+  `health/runtime-release.json` refuses every channel while §2e printed UNKNOWN and the script's final
+  gate consults only `FAIL`), so `is_file()` became `exists()`; a git that cannot be executed read
+  UNKNOWN where the kernel refuses, so it is RED; a symlink-loop source and a deeply nested pin raised
+  tracebacks instead of one-line REDs, so `resolve()` is guarded and `RecursionError` is caught. Two
+  weak tests were strengthened (the writes-nothing test now compares size and mtime, not names only —
+  which is what caught the detector's own git index refresh — and `main` is exercised for rc 0, 1 and
+  2). The `--no-optional-locks` flag above is a consequence: the strengthened test failed against the
+  first revision because `git status` rewrote `.git/index` after a stat change.
+- Not fixed here, deliberately: the dirty worktree, the pin document and the ten units belong to the
+  core plant (`/home/mesh-home/mishe-tauftauf/.mishe-tauftauf`), which this plant does not touch.
+  Reported to core body-research through the sanctioned cross-plant channel with the exact evidence
+  and the two candidate repairs: commit the `session_watch.py` edit to the core source and re-pin a
+  fresh release, or revert the working-tree copy so the pinned sha is clean again. A one-line
+  `git -C <release> checkout -- src/mishe_tauftauf/session_watch.py` clears the storm but discards
+  that edit, so the choice is the owner's.
+- Revert: `git checkout -- tools/health-check.sh && rm tools/runtime_pin.py tools/test_runtime_pin.py`.
+  The tool is not service- or timer-driven, opens no socket and writes nothing: it reads one pin
+  document and runs `git --no-optional-locks rev-parse`/`status --porcelain` (10 s bound each) in the
+  named worktree, so not even git's index refresh touches it. No
+  device, transport, cursor, queue, actuator, radio, APK, tmux or `body/runtime` byte is touched.
+- Evidence: `.mishe-tauftauf/artifacts/health-wake106233-runtime-pin-detector-and-core-plant-pin-outage.md`.

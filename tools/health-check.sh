@@ -190,6 +190,34 @@ else
   echo "UNKNOWN channel clear (python3 or tools/channel_clear.py unavailable)"
 fi
 
+# 2e. Runtime pin (wake 106233): every `seed run` channel resolves the bytes it
+# will import through <site>/health/runtime-release.json and refuses to start
+# unless that document names a clean exact-SHA git worktree
+# (`runtime_source.checked_source`: the toplevel is the pinned path, HEAD is the
+# pinned sha, `status --porcelain` is empty, the package is present). The refusal
+# is a startup failure, not a warning. Measured 2026-10-17: a hand edit inside
+# the pinned release itself (releases/1543b3a0.../src/mishe_tauftauf/
+# session_watch.py, mtime 01:00:32Z) left it dirty, and all ten of the
+# co-resident core plant's channel units exited 2 with `runtime pin invalid:
+# runtime source changed or is not a clean exact-SHA worktree` on every 15 s
+# restart (NRestarts=478 by 10:48Z) while no line in this check read the pin at
+# all. This plant's own pin stayed clean, so the check is what makes the class
+# legible before a restart storm and what names the cause when one starts.
+# tools/runtime_pin.py REDs on each failing predicate; UNKNOWN (a site that
+# declares no pin, a git that cannot be executed) never passes.
+if command -v python3 >/dev/null 2>&1 && [ -x "$PWD/tools/runtime_pin.py" ]; then
+  PIN_OUT=$(python3 "$PWD/tools/runtime_pin.py" --site "$SITE" 2>&1)
+  PIN_RC=$?
+  printf '%s\n' "$PIN_OUT"
+  case "$PIN_RC" in
+    0) ;;
+    1) FAIL=1 ;;
+    *) ;;
+  esac
+else
+  echo "UNKNOWN runtime pin (python3 or tools/runtime_pin.py unavailable)"
+fi
+
 # 3. Transport. Two independent facts: the rendezvous server answers the
 # loopback URL the phone uses, and the `adb reverse` mapping that carries the
 # phone's requests to it is in place. The loopback probe alone cannot see the
