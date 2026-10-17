@@ -122,10 +122,12 @@ emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side 
 file is stale (`mode=UNKNOWN`, `status=stale`, reason `node-state-stale`; unknown is never
 OFF). No persisted owner choices exist yet to honor.
 
-Present availability (2026-10-17T09:52Z, read-only deployed view): delivery is frozen —
-cursor=98466, last delivered sample 2026-10-16T20:17:19Z, channel silence ~48,909 s
-(~13.6 h); the phone is flagged `stale/phone-silent-or-delayed` while the tailnet front
-answers (`transport=reachable`). Cause UNKNOWN from this view. `wifi_link_rssi_dbm` reports
+Present availability (2026-10-17T10:06Z, read-only deployed view): delivery is frozen —
+cursor=98466, last delivered sample 2026-10-16T20:17:19Z, channel silence ~49,719 s
+(~13.8 h); the phone is flagged `stale/phone-silent-or-delayed` while the tailnet front
+answers (`transport=reachable`). The device is offline on the tailnet (tailscale last seen
+~20:57Z, ~13 h ago); the specific cause — off, lost Wi-Fi, tailnet client down, or app not
+running — is UNKNOWN from here (health DM 105877). `wifi_link_rssi_dbm` reports
 `unavailable reason=disconnected` — an API verdict (`getNetworkId() < 0`), not proof the
 Wi-Fi link is down; the known false negative is fixed in the candidate APK. No action
 receipts observed. Collection-side spool evidence is absent (`no-spool-summary-file`), so
