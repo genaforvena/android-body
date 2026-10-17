@@ -69,6 +69,33 @@ CI_WITH_COMMENTED_HARNESS = CI_WITH_ONE_TASK.replace(
     "tools/test-protocol.sh", "# tools/test-protocol.sh"
 )
 
+#: A root-module task: the workflow's bare ``:test`` has no module prefix, so
+#: ``CI_GRADLE_TASK`` cannot match it; a root-registered class can then be
+#: credited only by a harness.
+CI_WITH_ROOT_TASK = CI_WITH_ONE_TASK.replace(
+    ":app:testProtocol", ":test"
+).replace("tools/test-protocol.sh", "tools/test-root.sh")
+
+CI_ROOT_ONLY = CI_WITH_ONE_TASK.replace(
+    ":app:testProtocol", ":test"
+).replace("          tools/test-protocol.sh\n", "")
+
+GRADLE_ROOT = """\
+tasks.register('test', JavaExec) {
+    mainClass = 'org.androidbody.RootTest'
+}
+"""
+
+ROOT_TEST_FILE = {
+    "build.gradle": GRADLE_ROOT,
+    "src/test/java/org/androidbody/RootTest.java": "package org.androidbody;\n",
+}
+
+ROOT_HARNESS = {
+    "tools/test-root.sh":
+        '#!/bin/sh\njava -cp "$OUT" org.androidbody.RootTest\n',
+}
+
 BLE_PROBE_FILES = {
     "ble-probe/build.gradle": GRADLE_BLE,
     "ble-probe/src/test/java/org/androidbody/bleprobe/ProbeReportTest.java":
@@ -346,6 +373,48 @@ tasks.register('testThing', JavaExec) {
                 for line in lines
             ),
             lines,
+        )
+        self.assertFalse(any("ProtocolTest.java" in line for line in lines), lines)
+
+    def test_root_module_task_in_workflow_does_not_credit_root_class(self):
+        # A bare ``:test`` has no module prefix, so CI_GRADLE_TASK cannot see
+        # it; the root-registered class is uncovered (fail-closed RED).
+        code, lines = self.scan(
+            CI_ROOT_ONLY,
+            GRADLE_WITH_TWO_TASKS,
+            {"tools/test_dummy.py": "", **ROOT_TEST_FILE},
+        )
+        self.assertEqual(code, checker.RED)
+        self.assertTrue(
+            any("RootTest is invoked by no CI-run" in line for line in lines), lines
+        )
+
+    def test_root_module_class_can_be_credited_by_harness(self):
+        # The fail-closed rule blocks only the gradle path: a harness that runs
+        # the root-registered class still covers it.
+        code, lines = self.scan(
+            CI_WITH_ROOT_TASK,
+            GRADLE_WITH_TWO_TASKS,
+            {"tools/test_dummy.py": "", **ROOT_TEST_FILE, **ROOT_HARNESS},
+        )
+        self.assertEqual(code, checker.GREEN, lines)
+
+    def test_same_task_name_in_root_module_does_not_cross_credit(self):
+        # `:app:test` credits only the app module's class; a root task of the
+        # same name is a different task and its class stays uncovered.
+        code, lines = self.scan(
+            CI_WITH_ONE_TASK.replace(":app:testProtocol", ":app:test"),
+            GRADLE_WITH_TWO_TASKS,
+            {
+                "app/src/test/java/org/androidbody/ProtocolTest.java": "package org.androidbody;\n",
+                "tools/test-protocol.sh": HARNESS,
+                "tools/test_dummy.py": "",
+                **ROOT_TEST_FILE,
+            },
+        )
+        self.assertEqual(code, checker.RED)
+        self.assertTrue(
+            any("RootTest is invoked by no CI-run" in line for line in lines), lines
         )
         self.assertFalse(any("ProtocolTest.java" in line for line in lines), lines)
 

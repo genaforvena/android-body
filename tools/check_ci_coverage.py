@@ -23,7 +23,7 @@ holding ``test_*.py`` is not discovered by the workflow, or when a
 (``git ls-files``), so an untracked draft is not judged until it is added; a
 tracked test with no CI caller always is.
 
-Two shapes this detector was blind to before 2026-10-17, both real:
+Three shapes this detector was blind to before 2026-10-17, all real:
 
 * It only knew ``app/src/test/`` and ``:app:`` tasks, so a second module was
   invisible: ``ble-probe/src/test/java/.../ProbeReportTest.java`` had a
@@ -36,10 +36,17 @@ Two shapes this detector was blind to before 2026-10-17, both real:
   no longer credits the harness it names, nor a commented ``java -cp "$OUT"``
   line its class.
 
+* A root-module Java test file (``src/test/java/...`` with no module prefix)
+  was invisible: the marker required the leading slash of a module path, so
+  the file was not counted as a test at all and the checker printed GREEN
+  with "0 java test class(es)". The marker now matches both shapes; the
+  root-module ``:task`` rule below stays fail-closed.
+
 The module prefix is part of the match, so a task name shared by two modules
 cannot cross-credit. A root-module task (``./gradlew :testFoo`` with no module
 prefix) is not matched and would read as uncovered: that is the fail-closed
 direction, and the root ``build.gradle`` registers no test task today.
+
 """
 
 from __future__ import annotations
@@ -54,7 +61,10 @@ REPO = Path(__file__).resolve().parents[1]
 GREEN, RED, UNKNOWN = 0, 1, 2
 
 WORKFLOW = ".github/workflows/check.yml"
-JAVA_TEST_MARKER = "/src/test/java/"
+#: No leading slash: a root-module test file (``src/test/java/...``) must be
+#: counted too, or it is invisible to the detector entirely. The slash
+#: between ``test`` and ``java`` is part of the directory name.
+JAVA_TEST_MARKER = "src/test/java/"
 GRADLE_FILE = re.compile(r"(?:^|/)build\.gradle$")
 GRADLE_TASK = re.compile(r"tasks\.register\('(\w+)',\s*JavaExec\)\s*\{(.*?)\n\}", re.S)
 GRADLE_MAIN = re.compile(r"mainClass\s*=\s*'([\w.]+)'")

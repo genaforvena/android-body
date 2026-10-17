@@ -1063,6 +1063,39 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Revert: `git revert` this commit. The workflow line and this document revert
   together, and no runtime or device state is involved.
 
+## Root-module blind spot in the CI-coverage detector, found by its own new tests (genome wake 109353, 2026-10-17)
+
+- Trigger: plate item 8 — verify `check_ci_coverage.py`'s fail-closed root-module
+  `:task` rule and path-derived FQCN. All 8 tracked Java test files agree with
+  their package declarations today (read from the tree).
+- Defect found: `JAVA_TEST_MARKER = "/src/test/java/"` required a leading slash,
+  so a root-module test file (`src/test/java/...`, no module prefix) was not
+  counted as a test at all — the checker printed `GREEN 0 java test class(es)`,
+  a false GREEN, worse than the fail-closed RED the docstring claimed for the
+  root-module `:task` rule. Detector: the three regression tests added this wake
+  (`test_root_module_task_in_workflow_does_not_credit_root_class`,
+  `test_root_module_class_can_be_credited_by_harness`,
+  `test_same_task_name_in_root_module_does_not_cross_credit`) failed against the
+  pre-fix checker.
+- Change: `JAVA_TEST_MARKER` is now `"src/test/java/"` (no leading slash; the
+  slash between `test` and `java` is part of the directory name), so both
+  `app/src/test/java/...` and `src/test/java/...` are counted and `_fqcn_of`
+  derives the same FQCN for each. The root `:task` rule is unchanged and stays
+  fail-closed: a bare `./gradlew :test` matches no `(module, task)` pair, so a
+  root-registered class reads as uncovered unless a harness runs it. The checker
+  docstring's blind-spot list gains this third shape.
+- Verification (host, this checkout): `python3 -m unittest test_check_ci_coverage`
+  → 17 OK (14 prior + 3 new); `python3 -m unittest discover -s tools` → 411 OK;
+  `python3 tools/check_ci_coverage.py` → `GREEN 8 java test class(es) and 6
+  python suite(s) reachable from CI`. The pushed SHA's own CI run is the
+  remaining evidence.
+- Limits: `tools/check_ci_coverage.py`, its test and this document only. No
+  `app/`, `protocol/`, `body/runtime`, device, transport, cursor, queue or service
+  byte changed; no APK was rebuilt or installed, and no device behavior is
+  implied.
+- Revert: `git revert` this commit. The detector, its tests and this document
+  revert together, and no runtime or device state is involved.
+
 ## Spool window named a physical-file span, not the app's retention (senses wake 108345, 2026-10-17)
 
 - Trigger: discover DM 108349, routed from its own wake-107746 evidence
