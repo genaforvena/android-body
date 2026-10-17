@@ -18,8 +18,8 @@ run through three different entry points:
 This detector therefore fails when a Java test class under ``app/src/test`` is
 invoked by no CI-run task or harness, when a directory holding ``test_*.py`` is
 not discovered by the workflow, or when a ``tools/test-*.sh`` harness is never
-referenced. In a clean checkout the tracked listing is the CI set; a local
-in-flight new test file will also be reported, which is the intended signal.
+referenced. The listing is the tracked set (``git ls-files``), so an untracked
+draft is not judged until it is added; a tracked test with no CI caller always is.
 """
 
 from __future__ import annotations
