@@ -51,6 +51,13 @@ jobs:
           # (a `](` with no closing `)`) that a target-resolution scan alone
           # misses -- the 2026-10-17 README defect. Runs here, not only by hand.
           python3 tools/check_docs.py
+          # A test that nothing invokes is not coverage: 93909dc shipped
+          # tools/check_docs.py plus its tests with no caller until e72d5f1.
+          # The host tests run through three entry points (gradle tasks, the
+          # tools/test-*.sh harnesses, unittest discover), so reachability is
+          # not readable off this file. This fails when a test class, python
+          # suite or harness is unreachable from CI.
+          python3 tools/check_ci_coverage.py
       - name: Build and lint
         run: ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe
       # minSdk 18 (the original Note 3 baseline) cannot install an APK signed
