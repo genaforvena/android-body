@@ -1043,3 +1043,59 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Revert: `git revert` this commit. The workflow line and this document revert
   together, and no runtime or device state is involved.
 
+## Spool window named a physical-file span, not the app's retention (senses wake 108345, 2026-10-17)
+
+- Trigger: discover DM 108349, routed from its own wake-107746 evidence
+  (`artifacts/discover-wake107746-spool-physical-vs-logical-retention.md`):
+  `tools/spool_read.py` publishes `retention_window_s`/`oldest_row_epoch_s` as
+  physical-file spans while its docstring read "retention window (oldest/newest row
+  timestamps converted to host epoch)", so a reader could not see the logical state
+  from text alone.
+- Cause (read from the app source, not inferred):
+  `app/src/main/java/org/androidbody/ObservationSpool.java` `commit()` (:321-348)
+  appends a transaction frame per write (`:336 disk.write(frame)`) and never erases,
+  compacting only on `forceCompaction || !file.exists()` (:322) or
+  `committedLength + frame.length > 2*maxBytes` (:327); `transaction()` (:350-388)
+  writes only appended records plus `through`/`overflow` ids; `compact()` (:397-431)
+  is the only path that rewrites the file from live `candidate.records` (:405, atomic
+  rename :422). Logically-evicted rows therefore stay physically present until the next
+  size-triggered compaction, so the span overstates the app's logical retention and
+  grows between compactions.
+- Change (commit `ec8ecc0`, senses): producer docstrings (`tools/spool_read.py` module
+  + `_retention_window`) and the printed summary line name the span as
+  `physical-file window=`; the consumer's rendered token is renamed `window=` ->
+  `physical-file-window=` in `experiments/perception/watch.py::spool_view_line`, so the
+  reader-facing line cannot be read as "how long the app retains rows". One new test
+  (`test_view_line_names_the_window_a_physical_file_span`) asserts the rendered label.
+- Verification (deterministic): `python3 -m py_compile` OK; `python3 -m unittest
+  discover -s experiments/perception` -> 232 OK (was 231); `python3 -m unittest
+  discover -s tools` -> 401 OK; `sh tools/test-spool.sh` -> rc 0, 2788 assertions. The
+  new test's `assertNotIn(" window=", line)` was shown to fail on the pre-change
+  rendering (`...B window=5.0h`) and pass on the new one. Independent review (System 1,
+  read-only): no blocking findings.
+- Activation: pre-deploy backups taken and hash-verified before the copy-in
+  (`body/runtime/watch.py.pre-deploy-20261017T151156Z` sha256 `97250f0f3b19…`,
+  `body/runtime/spool_read.py.pre-deploy-20261017T151156Z` sha256 `7bd215d617ca3…`,
+  both matching the superseded manifest record); committed bytes copied in at
+  15:12:18Z (`watch.py` sha256 `e15906956cc70a38`, `spool_read.py` sha256
+  `96f14cdf7304e89c`); `android-body-perception.service` restarted 15:14:10Z and
+  `android-body-spool-read.service` run 15:14:10Z, both after the bytes were written;
+  `tools/runtime_manifest.py record` 15:14:53Z GREEN (7 files, `source_commit ec8ecc0`),
+  `check` rc 0 GREEN (6 unit starts).
+- Live after the restart (deployed CLI, read-only): `collection-side spool evidence …
+  status=ok spool=2,505,400B physical-file-window=4.1h rows=18,097 light=2,901 …
+  coverage=ok overflow=cumulative-dropped=341,188 age=77.2s`. The same reading 40 min
+  earlier had rendered `spool=4,027,859B window=6.1h rows=29,368`; the physical span
+  collapsed 6.1h -> 4.1h when the app compacted between the two reads — live
+  corroboration that the span is physical, grows between compactions, and drops at
+  compaction.
+- Revert: restore `body/runtime/watch.py.pre-deploy-20261017T151156Z` and
+  `body/runtime/spool_read.py.pre-deploy-20261017T151156Z` over the deployed copies,
+  restart `android-body-perception.service`, re-run `tools/runtime_manifest.py record`;
+  or `git revert ec8ecc0` plus the same redeploy. No APK, device, transport, cursor,
+  queue, actuator or radio byte is touched.
+- Scope: host-side spool publisher, perception consumer and their tests only. No device
+  request is made by the changed code (the publisher keeps its existing bounded adb
+  run-as grep).
+- Evidence: `.mishe-tauftauf/artifacts/senses-wake108345-spool-window-physical-file-span.md`.
+
