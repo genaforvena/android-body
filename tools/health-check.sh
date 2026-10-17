@@ -20,6 +20,9 @@
 # earlier generation, so `is-active` alone passes while the core replant holds
 # on the refused restart and restarts every channel with it. Section 1c bounds
 # the whole-hour channel restart count, which is how that retry loop reads.
+# Section 2f reads this site's binding-refusal audit log
+# (tools/binding_refusal.py): a documented cross-plant command the guard rejects
+# is a dead route, and the log is the only record of it.
 # Exits 0 if all invariants hold, 1 otherwise.
 set -u
 cd "$(dirname "$0")/.."
@@ -216,6 +219,30 @@ if command -v python3 >/dev/null 2>&1 && [ -x "$PWD/tools/runtime_pin.py" ]; the
   esac
 else
   echo "UNKNOWN runtime pin (python3 or tools/runtime_pin.py unavailable)"
+fi
+
+# 2f. Binding refusals (wake 106507): the pinned core's validate_home_binding
+# writes one JSON line per refused cross-plant command to
+# <bound-site>/logs/binding-refusal-audit.jsonl (observations.py
+# _audit_binding_refusal). A refusal means a mind followed a documented command
+# the guard rejects -- a dead route. Measured 2026-10-17: this plant's own
+# panes produced 12 refusals in 09:00-11:09Z (newest 3 min before this
+# section was written), because the charter fix (witness wake 106367) is on
+# disk but the running panes still carry the pre-edit delivery. Nothing read
+# the audit log, so the class surfaced only when a mind happened to open the
+# file. RED when the 24h window holds a refusal; UNKNOWN when the log is
+# missing or unreadable, never a pass.
+if command -v python3 >/dev/null 2>&1 && [ -x "$PWD/tools/binding_refusal.py" ]; then
+  REFUSAL_OUT=$(python3 "$PWD/tools/binding_refusal.py" --site "$SITE" 2>&1)
+  REFUSAL_RC=$?
+  printf '%s\n' "$REFUSAL_OUT"
+  case "$REFUSAL_RC" in
+    0) ;;
+    1) FAIL=1 ;;
+    *) ;;
+  esac
+else
+  echo "UNKNOWN binding refusals (python3 or tools/binding_refusal.py unavailable)"
 fi
 
 # 3. Transport. Two independent facts: the rendezvous server answers the

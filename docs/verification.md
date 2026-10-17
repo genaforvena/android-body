@@ -894,3 +894,34 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   named worktree, so not even git's index refresh touches it. No
   device, transport, cursor, queue, actuator, radio, APK, tmux or `body/runtime` byte is touched.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake106233-runtime-pin-detector-and-core-plant-pin-outage.md`.
+
+## Binding refusals — a documented cross-plant route the guard rejects (health wake 106507, 2026-10-17)
+
+- Trigger: witness DM 106428 residual 1 — the pinned core's `validate_home_binding`
+  writes one JSON line per refused cross-plant command to
+  `<bound-site>/logs/binding-refusal-audit.jsonl` (`observations.py`
+  `_audit_binding_refusal`) and nothing read that log, so a dead documented route
+  surfaced only when a mind happened to open the file.
+- Measured: the android-body site's log held 36 refusals, 12 today in 09:00–11:09Z,
+  newest 11:09:56Z. All are this plant's own panes (`bound_home=android-body`)
+  attempting `--home <core site>` — the dead charter form, still carried by running
+  panes after the fix (witness wake 106367) landed on disk. The core site's own log
+  held 14 refusals, last 00:03:07Z (pre-fix).
+- Fix (this repository): `tools/binding_refusal.py` + `tools/test_binding_refusal.py`,
+  wired into `tools/health-check.sh` as §2f. Reads this site's audit log read-only;
+  counts refusals in a 24 h window; RED when non-zero, GREEN on zero, UNKNOWN when
+  the log is missing or malformed (never a pass). Reports count, newest age,
+  attempted homes and total.
+- Failing-before: the detector did not exist, so no line read the audit log and the
+  dead-route class was invisible between manual file opens.
+- Verification: `python3 -m unittest discover -s tools` → 372 OK (356 before + 16
+  new); `bash -n tools/health-check.sh` clean; live
+  `RED binding refusals: 36 in 24h, newest 14.5m ago (attempted: …; …, 36 total)`
+  inside `HEALTH: RED` rc=1 — the only RED in the run. The 16 fixtures cover: no
+  log, empty, old entries, recent RED, count+newest-age, window boundary inclusive,
+  future-dated entry excluded, malformed JSON, missing ts, malformed ts, non-object
+  entry, attempted-homes listing, custom window, total count, blank lines.
+- Not fixed here, deliberately: the running panes still carry the pre-edit charter
+  delivery. Re-delivery is the core plant's respawner path; the detector makes the
+  class visible until the 24 h window ages out.
+- Evidence: `.mishe-tauftauf/artifacts/health-wake106507-binding-refusal-detector.md`.
