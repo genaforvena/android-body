@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,62 @@ FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 LINK = re.compile(r"\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+[\"'][^\"']*[\"'])?\s*\)")
 EXTERNAL = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+
+# Content-keyed baseline of tracked Markdown lines that exceed 768 characters.
+# The `read` display truncates lines longer than 768 characters and appends
+# `…`; a mid-sentence truncation (like the 2026-10-17 docs/verification.md
+# defect) stays GREEN under the link check. Each entry is (file, sha256[:16])
+# of a known long line. Content-keying makes the gate shift-invariant: editing
+# text above a baseline line does not produce false-RED, and a new long line
+# at a previously-baseline position is still flagged.
+LONG_LINE_BASELINE = {
+    ("README.md", "9101ddacd2e63e05"),
+    ("ble-probe/README.md", "d73dd1715d7003a1"),
+    ("docs/actions.md", "8676e78e68f1355f"),
+    ("docs/actions.md", "d615b095202ec2ed"),
+    ("docs/compatibility.md", "174ea31cd73ece81"),
+    ("docs/compatibility.md", "203eb6a3499f80dd"),
+    ("docs/compatibility.md", "964964830262c052"),
+    ("docs/compatibility.md", "d2e53070f246a533"),
+    ("docs/verification.md", "0be93d3a4089da3c"),
+    ("docs/verification.md", "113ff05381f9d794"),
+    ("docs/verification.md", "1223cb5dccddfca0"),
+    ("docs/verification.md", "1c694a26d40adb39"),
+    ("docs/verification.md", "333d56d84dc97a10"),
+    ("docs/verification.md", "4dbfdc322aaf9d18"),
+    ("docs/verification.md", "50b78c39ae426a77"),
+    ("docs/verification.md", "5b14966dad3520b6"),
+    ("docs/verification.md", "61a5a2877dac1c1c"),
+    ("docs/verification.md", "6dd89120828f6584"),
+    ("docs/verification.md", "7ea229a9b6ba9dc1"),
+    ("docs/verification.md", "82189260e7776e5e"),
+    ("docs/verification.md", "883b50fd27002dd9"),
+    ("docs/verification.md", "9091d3e7c23d63ea"),
+    ("docs/verification.md", "948c9428e6db247d"),
+    ("docs/verification.md", "99ad1e01e11b5591"),
+    ("docs/verification.md", "a6826eddfc8c51e3"),
+    ("docs/verification.md", "a8ba2fc6c63fe080"),
+    ("docs/verification.md", "b5bef8e5dcdfc049"),
+    ("docs/verification.md", "b8a85837b25a10cd"),
+    ("docs/verification.md", "c4cc40c7ccd3bfd5"),
+    ("docs/verification.md", "c4e4fd2007f93790"),
+    ("docs/verification.md", "cb3c234c12d88744"),
+    ("docs/verification.md", "d076dc3681e7bc38"),
+    ("docs/verification.md", "d2c732ac69f899ab"),
+    ("docs/verification.md", "d38d6b79fa05e480"),
+    ("docs/verification.md", "d7ac2a8b13fe5a58"),
+    ("docs/verification.md", "d8709d5fdd9468db"),
+    ("docs/verification.md", "dce31285ccc0ec40"),
+    ("docs/verification.md", "e2161df7f7996ff8"),
+    ("docs/verification.md", "ef6b9f94a40f7005"),
+    ("protocol/README.md", "41ad44e94303d2a7"),
+    ("protocol/README.md", "bd977b2d8ca00d7d"),
+}
+
+
+def _line_key(line: str) -> str:
+    """Return the content-key for a baseline lookup (shift-invariant)."""
+    return hashlib.sha256(line.encode("utf-8")).hexdigest()[:16]
 
 
 def slug(heading: str) -> str:
@@ -132,6 +189,14 @@ def scan(root: Path = REPO, paths: list[Path] | None = None) -> tuple[int, list[
                     if anchor not in target_headings:
                         lines.append(f"{rel}:{lineno}: unknown anchor {url}")
                         problems += 1
+            # Length gate: flag lines > 768 chars not in the frozen baseline.
+            # The `read` display truncates at 768 chars; a truncated line is a
+            # mid-sentence cut that the link check cannot see.
+            if len(line) > 768 and (rel, _line_key(line)) not in LONG_LINE_BASELINE:
+                lines.append(
+                    f"{rel}:{lineno}: line exceeds 768 characters ({len(line)}): {line.strip()[:100]}"
+                )
+                problems += 1
 
     if problems:
         return RED, lines
