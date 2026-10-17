@@ -35,7 +35,13 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Install build SDK
-        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+        # `:ble-probe` compiles against compileSdk 34, not the app's 36, so its
+        # registered test task below needs that platform present. Without it the
+        # module's Android sources (ProbeActivity, CapabilityReport,
+        # ProbeInstrumentation) and `:ble-probe:testProbeReport` were compiled by
+        # nothing in CI; the javac harness above covers only the Android-free
+        # classes (ProbeReport, ProbeResult).
+        run: sdkmanager 'platforms;android-36' 'platforms;android-34' 'build-tools;35.0.0'
       - name: Boundary tests
         run: |
           tools/test-protocol.sh
@@ -66,7 +72,10 @@ jobs:
           # suite or harness is unreachable from CI.
           python3 tools/check_ci_coverage.py
       - name: Build and lint
-        run: ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe
+        # The javac harness above runs ProbeReportTest without the Android SDK;
+        # this is the only CI path that also compiles the module's Android
+        # sources, through the registered task's dependsOn chain.
+        run: ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe :ble-probe:testProbeReport
       # minSdk 18 (the original Note 3 baseline) cannot install an APK signed
       # only with the v2 scheme: API 18 predates it. The debug signing config
       # enables v1 and both installable artifacts carry it, but nothing checked

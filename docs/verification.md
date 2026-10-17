@@ -39,7 +39,7 @@ Persistent-state checks cover endpoint-matching enable markers, failed preferenc
 
 ## Published repository and CI
 
-The public [GitHub repository](https://github.com/genaforvena/android-body) carries the source, CC0 license, third-party notices and the installable debug APK. `.github/workflows/check.yml` runs on every push and pull request: the protocol, spool and ble-probe shell harnesses, the rendezvous, light/vibrate, perception, minimal-substrate, trial-eval and tools unittest suites, then `:app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe`, an `apksigner verify --min-sdk-version 18` check that the built APK and the published download still carry the v1 signature the API 18 install path needs (the payload comparison ignores META-INF and so cannot see a lost v1 signature), a `tools/check_published_apk.py` comparison of the publ…
+The public [GitHub repository](https://github.com/genaforvena/android-body) carries the source, CC0 license, third-party notices and the installable debug APK. `.github/workflows/check.yml` runs on every push and pull request: the protocol, spool and ble-probe shell harnesses, the rendezvous, light/vibrate, perception, minimal-substrate, trial-eval and tools unittest suites, then `:app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe :ble-probe:testProbeReport` (the last compiles the `:ble-probe` module's Android sources and runs its registered test task; the module builds against `compileSdk 34`, installed alongside the app's `platforms;android-36`), an `apksigner verify --min-sdk-version 18` check that the built APK and the published download still carry the v1 signature the API 18 install path needs (the payload comparison ignores META-INF and so cannot see a lost v1 signature), a `tools/check_published_apk.py` comparison of the published download's payload against that build (a hand-rebuilt download can silently lag the source, and the download's own `SHA256SUMS` cannot see that), uploading the debug APK (`android-body-debug`) and the lint report.
 
 CI runs on the pushed tip, so a commit below the tip shares the tip's run. A run is named here only where a change needs one as evidence — the installed-APK payload run under [Built artifact](#built-artifact) is the current example; a tip's CI status is read from GitHub, not recorded here per push. This record is not a per-run ledger, and docs does not create a commit solely to record a CI run.
 
@@ -981,10 +981,11 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   workflow returns the class-level FAIL.
 - Limits: host-side harness and checker only. No APK, device, protocol, `ble-probe`
   source, transport, cursor, service or `body/runtime` byte changed. The harness
-  compiles only `ProbeReport` and `ProbeResult`; `ProbeActivity`, `CapabilityReport`
-  and `ProbeInstrumentation` are still not compiled by CI, and the gradle path
-  `:ble-probe:testProbeReport` still needs Android SDK platform 34 (this host has
-  36), so the module's Android sources and its gradle task remain unexercised in CI.
+  compiles only `ProbeReport` and `ProbeResult`; at that commit `ProbeActivity`,
+  `CapabilityReport` and `ProbeInstrumentation` were still not compiled by CI and
+  the gradle path `:ble-probe:testProbeReport` still needed Android SDK platform 34
+  (this host had 36), so the module's Android sources and its gradle task were
+  unexercised. Both are closed in the wake 108274 section below.
   No device or physical behavior is implied.
 - Independent review (reviewer subagent, read-only, working tree before commit): all
   five claims held. Its two caveats — module-collision untested, comment stripping
@@ -996,3 +997,49 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Revert: `git revert` this commit. The change is additive — one new harness, one
   workflow line, checker/doc edits — and no runtime, device, transport, cursor or
   service state is involved, so there is nothing to unwind outside Git.
+
+## ble-probe's Android sources in CI; a truncated CI paragraph repaired (genome wake 108274, 2026-10-17)
+
+- Trigger: the wake-107876 section's own stated limit — the `:ble-probe` module's
+  Android sources and its registered test task were compiled by nothing in CI. Two
+  independent reads this wake: `./gradlew --no-daemon :ble-probe:assembleDebug` and
+  `:ble-probe:lintDebug` both BUILD SUCCESSFUL on this host, and the "Published
+  repository and CI" paragraph of this file was found truncated mid-sentence.
+- Change (workflow only): `platforms;android-34` added to the "Install build SDK"
+  step (`:ble-probe` builds against `compileSdk 34`, the app against 36) and
+  `:ble-probe:testProbeReport` appended to the "Build and lint" gradle line. The
+  registered task's `dependsOn` chain compiles the whole debug source set, so
+  `ProbeActivity`, `CapabilityReport` and `ProbeInstrumentation` are compiled in CI
+  for the first time; `tools/test-ble-probe.sh` still covers the Android-free
+  classes without the SDK.
+- Verification (host, this checkout): the exact new gradle line (`:app:assembleDebug
+  :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe
+  :ble-probe:testProbeReport`) → BUILD SUCCESSFUL, printing `ProbeReport: query rows
+  and result-boundary assertions passed`; `:ble-probe:lintDebug` → BUILD SUCCESSFUL;
+  the workflow YAML parses and both edited `run` strings read back as intended;
+  `python3 tools/check_ci_coverage.py` → `GREEN 8 java test class(es) and 6 python
+  suite(s) reachable from CI`; `python3 -m unittest discover -s tools` → 401 OK. The
+  pushed SHA's own CI run is the remaining evidence and is read from GitHub, not
+  recorded here; a local build is not a CI result.
+- Truncation defect and cause: the paragraph above was 987 characters before
+  `8b1ff10` and 782 after it, ending mid-word ("comparison of the publ…"). Cause:
+  the edit body was taken from a `read` display, which truncates any line longer
+  than 768 characters and appends `…`; the 769 visible characters (768 plus that
+  marker) with the 11-character insertion is exactly the 780 characters written, so
+  the tail was silently dropped. Same signature family as the 2026-10-17 README
+  truncation (`337895f6`). Repair: the full sentence is restored with the ble-probe
+  change applied — the line is now 1,218 characters and ends "…, uploading the debug
+  APK (`android-body-debug`) and the lint report." Detector: none for this shape —
+  `check_docs.py` catches only the link-cutting variant of the same truncation
+  (`test_check_docs.py::test_truncated_link_is_red`), and a paragraph truncated
+  mid-sentence leaves no unclosed link, so the `8b1ff10` tree stayed GREEN. A
+  length gate would start RED: 41 tracked Markdown lines exceed
+  768 characters. Until those are repaired, long lines must be verified by byte
+  count, never copied from a `read` display.
+- Limits: the workflow and this document only. No `app/`, `protocol/`,
+  `body/runtime`, device, transport, cursor, queue or service byte changed; no APK
+  was rebuilt or installed, and no device behavior is implied. AGP fetched
+  `platforms;android-34` onto this host during the local build.
+- Revert: `git revert` this commit. The workflow line and this document revert
+  together, and no runtime or device state is involved.
+
