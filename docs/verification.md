@@ -39,7 +39,7 @@ Persistent-state checks cover endpoint-matching enable markers, failed preferenc
 
 ## Published repository and CI
 
-The public [GitHub repository](https://github.com/genaforvena/android-body) carries the source, CC0 license, third-party notices and the installable debug APK. `.github/workflows/check.yml` runs on every push and pull request: the protocol, spool and ble-probe shell harnesses, the rendezvous, light/vibrate, perception, minimal-substrate, trial-eval and tools unittest suites, then `:app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe :ble-probe:testProbeReport` (the last compiles the `:ble-probe` module's Android sources and runs its registered test task; the module builds against `compileSdk 34`, installed alongside the app's `platforms;android-36`), an `apksigner verify --min-sdk-version 18` check that the built APK and the published download still carry the v1 signature the API 18 install path needs (the payload comparison ignores META-INF and so cannot see a lost v1 signature), a `tools/check_published_apk.py` comparison of the published download's payload against that build (a hand-rebuilt download can silently lag the source, and the download's own `SHA256SUMS` cannot see that), uploading the debug APK (`android-body-debug`) and the lint report.
+The public [GitHub repository](https://github.com/genaforvena/android-body) carries the source, CC0 license, third-party notices and the installable debug APK. `.github/workflows/check.yml` runs on every push and pull request: the protocol, spool and ble-probe shell harnesses, the rendezvous, light/vibrate, perception, minimal-substrate, trial-eval and tools unittest suites, then `:app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe :ble-probe:testProbeReport :ble-probe:lintDebug` (the ble-probe tasks compile and lint the module's Android sources; it builds against `compileSdk 34`), an `apksigner verify --min-sdk-version 18` check that the b…
 
 CI runs on the pushed tip, so a commit below the tip shares the tip's run. A run is named here only where a change needs one as evidence — the installed-APK payload run under [Built artifact](#built-artifact) is the current example; a tip's CI status is read from GitHub, not recorded here per push. This record is not a per-run ledger, and docs does not create a commit solely to record a CI run.
 
@@ -1040,6 +1040,26 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   `body/runtime`, device, transport, cursor, queue or service byte changed; no APK
   was rebuilt or installed, and no device behavior is implied. AGP fetched
   `platforms;android-34` onto this host during the local build.
+- Revert: `git revert` this commit. The workflow line and this document revert
+  together, and no runtime or device state is involved.
+
+## ble-probe lint added to CI (genome wake 109235, 2026-10-17)
+
+- Trigger: plate item 7 — `:ble-probe:lintDebug` was not in CI. The module's
+  Android sources were compiled (via `:ble-probe:testProbeReport` dependsOn) but
+  linted by nothing; only `:app:lintDebug` ran.
+- Change (workflow only): `:ble-probe:lintDebug` appended to the "Build and lint"
+  gradle line; a matching `Upload ble-probe lint report` step added after the
+  existing app lint upload. The "Published repository and CI" paragraph updated
+  to list the new task.
+- Verification (host, this checkout): the workflow YAML parses;
+  `python3 tools/check_ci_coverage.py` → `GREEN 8 java test class(es) and 6 python
+  suite(s) reachable from CI`; `./gradlew --no-daemon :ble-probe:tasks --all`
+  confirms `lintDebug` is a registered task. The pushed SHA's own CI run is the
+  remaining evidence.
+- Limits: the workflow and this document only. No `app/`, `protocol/`,
+  `body/runtime`, device, transport, cursor, queue or service byte changed; no APK
+  was rebuilt or installed, and no device behavior is implied.
 - Revert: `git revert` this commit. The workflow line and this document revert
   together, and no runtime or device state is involved.
 

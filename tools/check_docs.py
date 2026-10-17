@@ -66,7 +66,6 @@ LONG_LINE_BASELINE = {
     ("docs/verification.md", "948c9428e6db247d"),
     ("docs/verification.md", "99ad1e01e11b5591"),
     ("docs/verification.md", "a6826eddfc8c51e3"),
-    ("docs/verification.md", "a8ba2fc6c63fe080"),
     ("docs/verification.md", "b5bef8e5dcdfc049"),
     ("docs/verification.md", "b8a85837b25a10cd"),
     ("docs/verification.md", "c4cc40c7ccd3bfd5"),

@@ -74,18 +74,10 @@ jobs:
       - name: Build and lint
         # The javac harness above runs ProbeReportTest without the Android SDK;
         # this is the only CI path that also compiles the module's Android
-        # sources, through the registered task's dependsOn chain.
-        run: ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe :ble-probe:testProbeReport
-      # minSdk 18 (the original Note 3 baseline) cannot install an APK signed
-      # only with the v2 scheme: API 18 predates it. The debug signing config
-      # enables v1 and both installable artifacts carry it, but nothing checked
-      # that, so a lost v1 signature (an AGP upgrade, a signing-config edit or a
-      # hand-rebuilt download) would break the documented install path with CI
-      # still green -- the published-payload check that follows ignores `META-INF`
-      # by design and so cannot see it. `--min-sdk-version 18` states the floor
-      # explicitly, so raising the manifest minimum cannot silently weaken this
-      # to a v2-only check. A v2-only rebuild of the same source fails here
-      # (exit 1, "Missing META-INF/MANIFEST.MF").
+        # sources, through the registered task's dependsOn chain. The
+        # ble-probe module's Android sources were compiled but not linted
+        # until :ble-probe:lintDebug was added here.
+        run: ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe :ble-probe:testProbeReport :ble-probe:lintDebug
       - name: APKs carry the v1 signature the API 18 install path needs
         run: |
           sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
@@ -104,4 +96,10 @@ jobs:
         with:
           name: android-lint
           path: app/build/reports/lint-results-debug.html
+      - name: Upload ble-probe lint report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ble-probe-android-lint
+          path: ble-probe/build/reports/lint-results-debug.html
           if-no-files-found: ignore
