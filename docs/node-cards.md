@@ -12,9 +12,10 @@ present availability, supported bounded text requests, limits. Declaration is no
 a working sensor. "Present availability" always carries its observation instant; staleness
 is a property of the channel, never a silent default.
 
-Last updated 2026-10-16 ~14:00Z by docs: Redmi10 installed-build bracket and
-re-pointed update candidate, the BLE-grant requirement, and the Note3 class-4 install.
-Availability stamps below are from the read-only deployed view at 13:53Z and can go stale.
+Last updated 2026-10-17T09:52Z by docs: Note3 present-availability numbers re-read from
+the deployed view at 09:51Z (spool, dropped-records and scan-window counts moved since the
+14:00Z reading); restored the subject of the truncated eval write/exec sentence. Availability
+stamps below are from the read-only deployed view at 09:51Z and can go stale.
 
 ## Note3 node card
 
@@ -57,17 +58,17 @@ ACCESS_NETWORK_STATE, VIBRATE, WAKE_LOCK, RECEIVE_BOOT_COMPLETED, FOREGROUND_SER
 FOREGROUND_SERVICE_SPECIAL_USE, POST_NOTIFICATIONS. Camera, microphone and location
 permissions are NOT requested.
 
-Present availability (13:53Z):
+Present availability (2026-10-17T09:51Z, read-only deployed view):
 
-- `mode=ON_COLLECT_ONLY` (`desired_on=true`; node-state observed 13:52:37Z): the phone
-  stores observations and issues no HTTP requests and no actions by design; the host pulls
-  through the bridge. Transport reachable, no backlog page pending, node-state fresh.
+- `mode=ON_COLLECT_ONLY` (`desired_on=true`; node-state observed 09:50:55Z, age 56 s): the
+  phone stores observations and issues no HTTP requests and no actions by design; the host
+  pulls through the bridge. Transport reachable, no backlog page pending, node-state fresh.
 - Delivered samples are stale since 2026-10-14T06:13:24Z — by design under collect-only,
-  not a delivery fault. Collection-side spool reads are live: spool 2,345,765 B, retention
-  window 3.9 h, 16,851 rows, coverage ok, 233,393 records dropped cumulatively at the
-  bound; scan_state windows=0 phase=window last_error=none sightings=0.
-- Phone clock runs ~25.2 s behind the host (measured offset bounds +24.7..+25.7 s, n=3);
-  receipt times are consumer-fetch times, not server receipts.
+  not a delivery fault. Collection-side spool reads are live: spool 2,601,208 B, retention
+  window 4.2 h, 18,829 rows, coverage ok, 318,079 records dropped cumulatively at the bound;
+  scan_state windows=525 phase=gap last_error=none sightings=0.
+- Phone clock runs ~24.7 s behind the host (measured offset bounds +24.2..+25.2 s, n=3,
+  age 54 s); receipt times are consumer-fetch times, not server receipts.
 
 Supported bounded text requests (while ON; nothing executes in collect-only mode):
 
@@ -79,7 +80,8 @@ Supported bounded text requests (while ON; nothing executes in collect-only mode
   non-allowlist paths return `failed reason=read_denied`. Eval is not advertised in the
   hello capabilities and is skipped in collect-only mode. Exercised on Note3 (2026-10-13,
   prior install `5e7fa255…`): identity/clock/read/env receipts retained, uid=10225. The
-  carries the consumer `eval write`/`eval exec` verbs. The session-start class-4
+  current Note3 install (2026-10-16T16:16:48Z, APK `87b36024…`) carries the consumer
+  `eval write`/`eval exec` verbs. The session-start class-4
   `probe exec` row exercises the same write-then-exec machinery on device: the
   post-install session `d4438183` (16:17:15Z) emitted
   `probe exec uid=10225 cmd=/data/data/org.androidbody/files/probe.txt output=hello
@@ -116,17 +118,19 @@ row shapes, not an APK hash: the phone has no ADB/USB channel, so its installed 
 not readable from here.
 
 Local owner enablement: UNKNOWN. The installed APK predates the `owner_checkboxes`
-emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side
-node-state file is absent (`mode=UNKNOWN`, reason `no-node-state-file`; unknown is never
+emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side node-state
+file is stale (`mode=UNKNOWN`, `status=stale`, reason `node-state-stale`; unknown is never
 OFF). No persisted owner choices exist yet to honor.
 
-Present availability (13:53Z): phone `fresh-clock-conditional` over tailnet HTTPS,
-cursor advancing at ~2 s channel cadence — the healthiest live channel of the two nodes.
-`wifi_link_rssi_dbm` reports `unavailable reason=disconnected` — an API verdict
-(`getNetworkId() < 0`), not proof the Wi-Fi link is down; the known false negative is
-fixed in the candidate APK. No action receipts observed. Collection-side spool evidence is
-absent (`no-spool-summary-file`), so this phone's own spool contents are unread; scan
-lifecycle is stale at `error reason=SecurityException` (consecutive_errors=1).
+Present availability (2026-10-17T09:52Z, read-only deployed view): delivery is frozen —
+cursor=98466, last delivered sample 2026-10-16T20:17:19Z, channel silence ~48,909 s
+(~13.6 h); the phone is flagged `stale/phone-silent-or-delayed` while the tailnet front
+answers (`transport=reachable`). Cause UNKNOWN from this view. `wifi_link_rssi_dbm` reports
+`unavailable reason=disconnected` — an API verdict (`getNetworkId() < 0`), not proof the
+Wi-Fi link is down; the known false negative is fixed in the candidate APK. No action
+receipts observed. Collection-side spool evidence is absent (`no-spool-summary-file`), so
+this phone's own spool contents are unread; scan lifecycle is stale at `error
+reason=SecurityException` (consecutive_errors=1).
 
 Supported bounded text requests: none exercised; none are being sent (no actuator
 authority). The installed build's eval status is unknown; it emits no `probe exec` row,
