@@ -134,17 +134,21 @@ fi
 # pane already stale that stays silent is held) or when the leases do not
 # advance within 3 x 6 s -- an advance check with no retry, which a frame cycle
 # over 18 s fails (pinned core `coordination/site_sync.py` `_leases`/`_verify`);
-# the retry then restarts every channel service (§1c). Measured 2026-10-16T20:28Z
-# and 21:05Z: witness 19.6-20.1 s per frame, discover/permissions 12-13 s, the
-# other minds 5.6-6.6 s, while §1c had already decayed to 0/h. This check reads
-# the frame cycle from the footer history tmux retains -- the same artifact the
-# core parses -- so it costs no wait and does not decay; each line carries load1,
-# which separates a pane's own render cost from a host-load episode (20:15-20:23Z:
-# every pane 22-53 s at load1 ~22 with no channel restarts). Panes are the site's
-# own health/windows.json intersected with the core's ROLES; `operator` is outside
+# the retry then restarts every channel service (§1c). Measured 2026-10-17T09:1xZ
+# (post-reboot, load1 3.8, core pin 14963f76fc38): witness median 17.76 s over 73
+# retained frames with 15 of them over the 18 s bound (max 18.31 s) -- its steady
+# cycle sits under that bound by only 0.24 s, so the advance check fails on
+# roughly one frame in five; discover/permissions 11.2 s, the other minds 5.6 s.
+# Earlier, 2026-10-16T20:28Z/21:05Z: witness 19.6-20.1 s, discover/permissions
+# 12-13 s, while §1c had already decayed to 0/h. This check reads the frame cycle
+# from the footer history tmux retains -- the same artifact the core parses -- so
+# it costs no wait and does not decay; each line carries load1, which separates a
+# pane's own render cost from a host-load episode (20:15-20:23Z: every pane 22-53 s
+# at load1 ~22 with no channel restarts). Panes are the site's own
+# health/windows.json intersected with the core's ROLES; `operator` is outside
 # that set because the core's own dash-stall detector covers it. RED is the newest
 # frame interval over the 18 s advance window or a lease age over the 20 s stale
-# bound; UNKNOWN never passes.
+# bound, each reported with the excess it measured; UNKNOWN never passes.
 if command -v python3 >/dev/null 2>&1 && [ -x "$PWD/tools/pane_lease.py" ]; then
   PL_OUT=$(python3 "$PWD/tools/pane_lease.py" --site "$SITE" 2>&1)
   PL_RC=$?

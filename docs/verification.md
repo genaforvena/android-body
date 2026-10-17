@@ -708,3 +708,51 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   service- or timer-driven beyond the check's own timer; no device, transport, cursor, queue,
   actuator, radio, APK or `body/runtime` byte is touched.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake103721-crosssite-failed-unit-and-stale-episode.md`.
+
+## §2c evidence line: the measured cycle printed as the bound (health wake 105170, 2026-10-17)
+
+- Trigger: the first §2c run of the wake read
+  `RED pane lease witness age=4.9s newest_interval=18.0s over the 18.0s advance window (n=65, worst=46.4s) load1=3.8`
+  — the measured value and the bound printed identically, so a real 0.001–0.01 s excursion read as a
+  broken tool rather than as the margin it was. A prior health wall had already repeated the
+  confusion ("17.7s over the 18.0s window … GREEN"), and 3 of the 15 real excursions in the retained
+  window are 18.001–18.004 s, which `%.2f` would still print as `18.00s` against the bound.
+- Cause: `tools/pane_lease.py`'s `pane_report` formatted measured intervals at `%.1f`, the same
+  precision as the bound it compares them to.
+- Fix: measured intervals and bounds print at `%.3f`, every failure names the excess it measured
+  (`… exceeds the 18.000s advance bound by …s` / `… exceeds the 20.000s stale bound by …s`), and the
+  retained-history median is reported beside the newest cycle in all three branches. The predicate is
+  unchanged — RED iff `newest > advance_bound` or `age > stale_bound`, strictly, evaluated on the
+  floats — so no verdict, exit code or bound moved; only the evidence line changed. The module
+  docstring and the §2c comment in `tools/health-check.sh` now carry the post-reboot measurements, and
+  the older quoted lines in the §2c section above are the pre-change format.
+- Failing-before: HEAD's bytes, run from a copy against the same shaped capture (steady 12 s cycle,
+  newest interval 18.01 s), printed `RED: age=0.0s newest_interval=18.0s over the 18.0s advance
+  window (n=5, worst=18.0s)` — the measured value and the bound identical; the worktree bytes print
+  `RED: age=0.0s newest_interval=18.010s exceeds the 18.000s advance bound by 0.010s (n=5,
+  median=12.000s, worst=18.010s)`. The revert path is therefore exercised: HEAD's bytes still import
+  and run.
+- Verification: `python3 -m unittest test_pane_lease` (from `tools/`) → 38 OK, including the new
+  `test_boundary_red_prints_the_measured_cycle_apart_from_the_bound`; `sh -n tools/health-check.sh`
+  clean. Live against the real panes, after the change: the natural run read `GREEN pane lease
+  witness age=16.9s newest_interval=17.833s median=17.754s (n=73, advance 18.000s) load1=3.6` →
+  `HEALTH: GREEN` rc=0, and the RED branch was exercised on the same live capture with the tool's own
+  bound override (`--bound 17.0`) → `RED pane lease witness age=0.4s newest_interval=17.850s exceeds
+  the 17.000s advance bound by 0.850s (n=73, median=17.833s, worst=18.343s) load1=3.6`, rc=1, the
+  other seven panes GREEN. The earlier run of the same wake read naturally RED under the first
+  iteration of this patch (`%.2f`: `newest_interval=18.24s over the 18.00s advance window`) →
+  `HEALTH: RED` rc=1; that GREEN is the pane's jitter landing under the bound at that instant,
+  **not** a repair. No other consumer parses the line: the only matches for
+  `advance window`/`newest_interval` outside the tool and its tests are this document and the §2c
+  comment.
+- Not fixed here, deliberately: the witness pane's steady cycle is 17.76 s median with 15 of 73
+  retained frames over the core's 18.000 s advance bound (min 17.30 s, max 18.31 s) at load1 3.8, so
+  the core's no-retry advance check fails on roughly one pane-check in five and its retry restarts
+  all 12 channels. That is core renderer cost, outside this repository, and is escalated with these
+  numbers (core chat 62696, 09:19Z, correcting the load attribution of the 19:48Z escalation 61572);
+  §2c RED is that known, routed defect and must not be read as a new failure of this repository's
+  code.
+- Revert: `git checkout -- tools/pane_lease.py tools/test_pane_lease.py tools/health-check.sh`. The
+  tool is not service- or timer-driven and only reads pane text; no device, transport, cursor, queue,
+  actuator, radio, APK, tmux state or `body/runtime` byte is touched.
+- Evidence: `.mishe-tauftauf/artifacts/health-wake105170-pane-cycle-margin-and-crossplant-dm-refusal.md`.

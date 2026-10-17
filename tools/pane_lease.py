@@ -37,6 +37,15 @@ interval over the retained history is reported as severity evidence. A single
 replant respawn gap can therefore read RED for one cycle, which is the same
 condition the core holds on, and a repaired renderer clears immediately. The
 reported ``load1`` separates a pane's own render cost from a host-load episode.
+Measured intervals are printed at millisecond precision and every failure names
+the excess it measured, because a pane whose cycle sits a few milliseconds over
+the bound otherwise prints the measured value and the bound identically
+(measured 2026-10-17T09:0xZ: ``witness`` cycles of 18.001-18.004 s printed as
+``18.0s over the 18.0s advance window``) and the line reads as a tool fault
+rather than the 0.001-0.004 s excursion it is. The retained median is reported
+beside the newest cycle, so a pane whose steady cycle sits under the bound while
+single frames cross it (``witness`` 2026-10-17: median 17.76 s, 15/73 over) is
+distinguishable from one whose whole cycle is too slow.
 
 Usage: ``pane_lease.py --site SITE [--session NAME] [--panes a,b,c]
          [--socket PATH] [--depth 800] [--bound 20]``
@@ -138,17 +147,19 @@ def pane_report(text, *, now, advance_bound=ADVANCE_BOUND_SECONDS, stale_bound=S
     intervals = frame_intervals(stamps)
     if not intervals:
         if age > stale_bound:
-            return "RED", f"age={age:.1f}s over the {stale_bound:.1f}s stale bound; no frame interval retained"
+            return "RED", (f"age={age:.3f}s exceeds the {stale_bound:.3f}s stale bound "
+                           f"by {age - stale_bound:.3f}s; no frame interval retained")
         return "UNKNOWN", f"age={age:.1f}s; fewer than two lease footers retained, interval unmeasurable"
     newest, worst = intervals[-1], max(intervals)
+    median = sorted(intervals)[len(intervals) // 2]
     if newest > advance_bound:
-        return "RED", (f"age={age:.1f}s newest_interval={newest:.1f}s over the {advance_bound:.1f}s advance window "
-                       f"(n={len(intervals)}, worst={worst:.1f}s)")
+        return "RED", (f"age={age:.1f}s newest_interval={newest:.3f}s exceeds the {advance_bound:.3f}s advance bound "
+                       f"by {newest - advance_bound:.3f}s (n={len(intervals)}, median={median:.3f}s, worst={worst:.3f}s)")
     if age > stale_bound:
-        return "RED", (f"age={age:.1f}s over the {stale_bound:.1f}s stale bound "
-                       f"(newest_interval={newest:.1f}s, n={len(intervals)})")
-    return "GREEN", (f"age={age:.1f}s newest_interval={newest:.1f}s "
-                     f"(n={len(intervals)}, advance {advance_bound:.1f}s)")
+        return "RED", (f"age={age:.3f}s exceeds the {stale_bound:.3f}s stale bound by {age - stale_bound:.3f}s "
+                       f"(newest_interval={newest:.3f}s, median={median:.3f}s, n={len(intervals)})")
+    return "GREEN", (f"age={age:.1f}s newest_interval={newest:.3f}s median={median:.3f}s "
+                     f"(n={len(intervals)}, advance {advance_bound:.3f}s)")
 
 
 def expected_panes(site):

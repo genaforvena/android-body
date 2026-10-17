@@ -101,25 +101,36 @@ class PaneReportTest(unittest.TestCase):
     def test_healthy_pane_is_green(self):
         status, detail = pane_lease.pane_report(capture_of([18, 12, 6, 0], self.NOW), now=self.NOW)
         self.assertEqual(status, "GREEN")
-        self.assertIn("newest_interval=6.0s", detail)
+        self.assertIn("newest_interval=6.000s median=6.000s", detail)
 
     def test_slow_current_cycle_is_red_while_the_newest_lease_is_fresh(self):
         # The durable case §1c cannot see: age 1 s, but the cycle is 22 s.
         status, detail = pane_lease.pane_report(capture_of([89, 67, 45, 23, 1], self.NOW), now=self.NOW)
         self.assertEqual(status, "RED")
-        self.assertIn("newest_interval=22.0s over the 18.0s advance window", detail)
+        self.assertIn("newest_interval=22.000s exceeds the 18.000s advance bound by 4.000s", detail)
 
     def test_replant_respawn_gaps_age_out_of_the_verdict(self):
         # The core tolerates one respawn gap (RENDERER_FRAME) and this check
         # reports the current cycle, so old multi-cycle gaps must not hold it RED.
         status, detail = pane_lease.pane_report(capture_of([120, 60, 40, 20, 10, 0], self.NOW), now=self.NOW)
         self.assertEqual(status, "GREEN")
-        self.assertIn("newest_interval=10.0s", detail)
+        self.assertIn("newest_interval=10.000s", detail)
+
+    def test_boundary_red_prints_the_measured_cycle_apart_from_the_bound(self):
+        # Measured 2026-10-17T09:08Z: the witness pane's newest cycle was
+        # 18.01 s against the 18.0 s advance bound, and ``%.1f`` printed both as
+        # "18.0s", so a real 0.01 s excursion read as a broken tool. The
+        # measured cycle and the bound must be distinguishable, and the
+        # retained median must show the pane is normally inside the bound.
+        status, detail = pane_lease.pane_report(capture_of([66, 54, 42, 30, 18.01, 0], self.NOW), now=self.NOW)
+        self.assertEqual(status, "RED")
+        self.assertIn("newest_interval=18.010s exceeds the 18.000s advance bound by 0.010s", detail)
+        self.assertIn("median=12.000s", detail)
 
     def test_silence_past_the_stale_bound_is_red(self):
         status, detail = pane_lease.pane_report(capture_of([80, 74, 68, 62], self.NOW), now=self.NOW)
         self.assertEqual(status, "RED")
-        self.assertIn("age=62.0s over the 20.0s stale bound", detail)
+        self.assertIn("age=62.000s exceeds the 20.000s stale bound by 42.000s", detail)
 
     def test_a_stuck_pane_inside_the_retry_window_is_still_red(self):
         # The core's retry applies the same 20 s threshold, so a pane already
@@ -127,7 +138,7 @@ class PaneReportTest(unittest.TestCase):
         # single read of that age is the safe direction, not a pass.
         status, detail = pane_lease.pane_report(capture_of([36, 30, 24], self.NOW), now=self.NOW)
         self.assertEqual(status, "RED")
-        self.assertIn("age=24.0s over the 20.0s stale bound", detail)
+        self.assertIn("age=24.000s exceeds the 20.000s stale bound by 4.000s", detail)
 
     def test_silence_at_the_stale_bound_is_not_red(self):
         status, detail = pane_lease.pane_report(capture_of([26, 20], self.NOW), now=self.NOW)
@@ -152,7 +163,7 @@ class PaneReportTest(unittest.TestCase):
     def test_one_footer_past_the_stale_bound_is_red(self):
         status, detail = pane_lease.pane_report(capture_of([60], self.NOW), now=self.NOW)
         self.assertEqual(status, "RED")
-        self.assertIn("over the 20.0s stale bound; no frame interval retained", detail)
+        self.assertIn("exceeds the 20.000s stale bound by 40.000s; no frame interval retained", detail)
 
     def test_failed_capture_is_unknown(self):
         self.assertEqual(pane_lease.pane_report(None, now=self.NOW)[0], "UNKNOWN")
@@ -279,11 +290,11 @@ class MainTest(unittest.TestCase):
 
     def test_report_lines_carry_the_prefix_health_check_maps(self):
         self._run(capture_of([89, 67, 45, 23, 1], self.NOW))
-        self.assertIn("RED    pane lease witness age=1.0s newest_interval=22.0s over the 18.0s advance window "
-                      "(n=4, worst=22.0s) load1=12.5", self.output)
+        self.assertIn("RED    pane lease witness age=1.0s newest_interval=22.000s exceeds the 18.000s advance bound "
+                      "by 4.000s (n=4, median=22.000s, worst=22.000s) load1=12.5", self.output)
         self._run(capture_of([18, 12, 6, 0], self.NOW))
-        self.assertIn("GREEN  pane lease genome age=0.0s newest_interval=6.0s (n=3, advance 18.0s) load1=12.5",
-                      self.output)
+        self.assertIn("GREEN  pane lease genome age=0.0s newest_interval=6.000s median=6.000s "
+                      "(n=3, advance 18.000s) load1=12.5", self.output)
 
     def test_relative_site_path_still_derives_the_session(self):
         # A relative --site must not leave the session name empty (the pane name
