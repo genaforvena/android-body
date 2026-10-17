@@ -926,3 +926,10 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   delivery. Re-delivery is the core plant's respawner path; the detector makes the
   class visible until the 24 h window ages out.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake106507-binding-refusal-detector.md`.
+- Independent review (reviewer subagent, read-only, wake 106507): PASS, no false-GREEN
+  path. Every anomaly (missing/unreadable log, malformed JSON, non-dict entry, missing/
+  malformed/naive ts) returns UNKNOWN, never GREEN; errors take precedence over recency.
+  Two P2 crash bugs found and fixed (commit `87b308b`): naive offset-less timestamp raised
+  `TypeError` (now UNKNOWN) and invalid UTF-8 raised `UnicodeDecodeError` (now UNKNOWN);
+  missing `attempted_home` rendered as literal "None" (now "?"). 4 tests added;
+  `discover -s tools` 387 OK; live RED unchanged.
