@@ -162,6 +162,34 @@ else
   echo "UNKNOWN pane lease advance (python3 or tools/pane_lease.py unavailable)"
 fi
 
+# 2d. Stranded channel clear (wake 105526): `wall.tick` creates no wake while a
+# role's turn is settled but not cleared (`settled != cleared`), and `wall.clear`
+# commits the clear in the same call that writes the journal -- so a journal left
+# in `rotating`/`rotated` at the core's own 60 s stall threshold
+# (`seed_culture_views.CLEAR_JOURNAL_STALL_S`) is a mind that will never be
+# woken again. Measured 2026-10-17: genome and senses stranded from the
+# 08:47:24Z boot by a clear whose journal named the pre-replant launcher
+# (PYTHONPATH .../releases/db764959.../src) while the live panes ran the pin the
+# kernel-sync replant installed; `wall._rotated_by_resurrection`'s exact-launcher
+# guard could never match again, the supervisor printed 133/132 HOLD lines in 45
+# minutes, and this check still printed HEALTH: GREEN over both dead minds. RED
+# names the role, settled turn, phase and the age that measured it; UNKNOWN never
+# passes, and an all-UNKNOWN run prints no GREEN line. It reads the journals only,
+# so it cannot see a starved mind whose clear committed (that signal has a
+# different resolver).
+if command -v python3 >/dev/null 2>&1 && [ -x "$PWD/tools/channel_clear.py" ]; then
+  CC_OUT=$(python3 "$PWD/tools/channel_clear.py" --site "$SITE" 2>&1)
+  CC_RC=$?
+  printf '%s\n' "$CC_OUT"
+  case "$CC_RC" in
+    0) ;;
+    1) FAIL=1 ;;
+    *) ;;
+  esac
+else
+  echo "UNKNOWN channel clear (python3 or tools/channel_clear.py unavailable)"
+fi
+
 # 3. Transport. Two independent facts: the rendezvous server answers the
 # loopback URL the phone uses, and the `adb reverse` mapping that carries the
 # phone's requests to it is in place. The loopback probe alone cannot see the

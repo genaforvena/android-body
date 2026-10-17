@@ -756,3 +756,67 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   tool is not service- or timer-driven and only reads pane text; no device, transport, cursor, queue,
   actuator, radio, APK, tmux state or `body/runtime` byte is touched.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake105170-pane-cycle-margin-and-crossplant-dm-refusal.md`.
+
+## Stranded channel clear — a pin advance killed two minds under a GREEN check (health wake 105526, 2026-10-17)
+
+- Trigger: `android-body-genome.service` and `android-body-senses.service` were in a permanent clear
+  HOLD from the 08:47:24Z boot — 133 and 132
+  `HOLD seed <role> clear: rotated mind process changed; reconcile clear` lines in 45 minutes, both
+  roles `pending=none` while their peers held wakes (health 105526, witness 105531, research-methods
+  105543). `tools/health-check.sh` printed `HEALTH: GREEN` for the whole 47 minutes.
+- Cause: `checks/wall-clear-genome-104072.json` and `wall-clear-senses-104006.json` (phase `rotated`,
+  written 2026-10-16T22:46–22:47Z) recorded the launcher of the then-current release
+  (`PYTHONPATH=…/releases/db76495964952f0b67648fd701f166c253a7fcbf/src`), while the live panes ran the
+  pin the 08:47Z kernel-sync replant installed (`…/releases/14963f76fc3806a74b054300d2db87b60ffd49f4/src`).
+  The pinned core's `wall._rotated_by_resurrection` compares the pane start command to
+  `journal["launch_command"]` exactly, so its recovery path could never fire again; `wall.clear` then
+  raised every tick, and `wall.tick` creates no wake while `settled != cleared`. Measured before the
+  repair: `argv equal: False`, the only differing entry PYTHONPATH, 8 entries both, `mind_idle: True`,
+  `_rotated_by_resurrection → None`, `state pending=None settled=104072 cleared=103863`.
+- Fix (this repository, no core edit): `tools/channel_clear.py` — a read-only detector for exactly
+  this state, wired into `tools/health-check.sh` as §2d. RED when a `checks/wall-clear-<role>-<settled>.json`
+  whose phase is `rotating`/`rotated` has reached a 60 s grace, which is the pinned core's own stall
+  threshold and comparison (`seed_culture_views.CLEAR_JOURNAL_STALL_S = 60.0`, `age < grace` continues;
+  the core's witness CLEAR STALL budget is 120 s, the supervisor's `--clear-grace-seconds` 30 s, its
+  `--interval` 5 s). `wall.clear` writes the journal, respawns and commits the feed entry inside one
+  call, so a rotation in flight cannot reach it. UNKNOWN never passes — and an all-UNKNOWN run prints no
+  GREEN summary line (review finding: the summary had asserted a fact about journals it had not read);
+  committed history is GREEN at any age. It reads the journals only, so it cannot see a starved mind
+  whose clear committed — that signal has a different resolver, and the docstring says so.
+- Site repair (not a source change): under `seed._lock(home)`, each journal's `launch_command` was set
+  to the live pane's argv and `after_pid` to the live pane pid (genome 2208, senses 2311), with
+  `reconciled_resurrection: true` — the key `wall.clear` itself writes. No pane was respawned, no
+  stale-pin launcher re-raised, no wake replayed, no core byte touched. Originals preserved byte-for-byte
+  (mode 600, mtime kept) at `.mishe-tauftauf/artifacts/health-wake105526-orig-wall-clear-genome-104072.json`
+  (sha256 `d169294648e26003a60ebf01ae75d52ef115535d8f06920458c142f2528bf78e`) and
+  `…-senses-104006.json` (sha256 `29908bdda5a4943c2972c272486ee962412f60cea4e0c7c2653bbba95018eafb`).
+- Failing-before: the detector did not exist, so §2d could not RED and the live check read
+  `HEALTH: GREEN` over two dead minds — the strongest form of the failing case, recorded above.
+  Replayed through the new detector, the two preserved journals (unmodified, own mtimes) print
+  `RED channel clear genome settled=104072 phase=rotated age=39701s reaches the 60s (12 x 5s
+  supervisor interval) clear grace: the supervisor cannot commit this clear and creates no new wake`,
+  the same for senses, rc=1; the same fixture with only a committed journal present reads
+  `GREEN channel clear: 0 of 1 journals unsettled`, rc=0; a directory of undecodable journals reads
+  `UNKNOWN … no decodable phase` with no GREEN line, rc=2.
+- Verification: `python3 -m unittest test_channel_clear` (from `tools/`) → 17 OK, including the replay
+  of the two observed journals, the inclusive `age >= grace` boundary (the comparison the core applies)
+  and the no-GREEN-summary-when-UNKNOWN case; `python3 -m unittest discover -s
+  tools` → 326 OK; `bash -n tools/health-check.sh` clean. Live after the site repair:
+  `GREEN channel clear: 0 of 6109 journals unsettled (newest wall-clear-senses-105595.json, grace
+  60s)` in 0.21 s, `HEALTH: GREEN` rc=0. Observed effect of the repair itself: `09:38:02 clear seed
+  genome after 104072`, `09:38:12 wake seed genome 105594`, `clear seed senses after 104006` /
+  `wake seed senses 105595`; both journals now `committed`, `clear=104072`/`104006`, zero HOLD lines
+  after 09:37:15Z.
+- Independent review (reviewer subagent, read-only): predicate judged sound against `wall.clear`/`tick`
+  (every stranded exit raises without a write, so the mtime freezes at the phase reached), no false-RED
+  on an in-flight rotation, and the 17 tests shown discriminating by in-memory mutation of the predicate
+  and the exit codes. Its three findings are applied: the all-UNKNOWN GREEN summary (above), a grace
+  comment that understated the latency, and an unused `JOURNAL_RE` constant with its `re` import.
+- Not fixed here, deliberately: the exact-launcher guard that made the recovery path unreachable is in
+  the core runtime (`wall.py`), outside this repository. Reported with the two bounded questions (should
+  the guard compare a pin-agnostic launcher identity; is there an intended reconcile command for a
+  rotated journal whose launcher no longer exists) to core body-research, core chat 62706, 09:5xZ.
+- Revert: `git checkout -- tools/health-check.sh && rm tools/channel_clear.py tools/test_channel_clear.py`.
+  The tool is not service- or timer-driven, opens no socket, and only reads site journal files; no
+  device, transport, cursor, queue, actuator, radio, APK, tmux or `body/runtime` byte is touched.
+- Evidence: `.mishe-tauftauf/artifacts/health-wake105526-stranded-clear-journals-and-channel-repair.md`.
