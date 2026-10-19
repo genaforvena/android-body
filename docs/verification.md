@@ -4,9 +4,10 @@ Checked 2026-10-07; updated through 2026-10-19. Version 0.2 adds persistent ON a
 
 ## Current delivery observation — 2026-10-19
 
-The deployed perception consumer reaches both configured endpoints, but neither provides fresh delivered phone measurements. At 2026-10-19T12:50:09Z, Note3 was `ON_COLLECT_ONLY`; its delivered cursor remained frozen at 265956 on `invalid line here`, with last valid sensor records from 2026-10-14. Its fresh app-private spool (3,129,292 bytes, 22,601 rows, 534,789 cumulative drops) is collection-side evidence only and does not establish delivery. Redmi10's cursor remained frozen at 98466 with last delivered measurements from 2026-10-16; its spool summary was absent. Endpoint reachability and host service state are not phone liveness. Treat current physical measurements as stale/unknown; no new physical trial result follows from these observations.
+At 2026-10-19T13:50:37Z the deployed perception consumer reached both configured endpoints, but neither provided fresh delivered phone measurements. Note3 was `ON_COLLECT_ONLY`; its delivered cursor remained frozen at 265956 on `invalid line here`, with last valid sensor records from 2026-10-14.
+Its app-private spool (3,882,053 bytes, 28,148 rows, 539,026 cumulative drops; physical-file span 5.9h) is collection-side evidence only and does not establish delivery. Redmi10's cursor remained frozen at 98466 with last delivered measurements from 2026-10-16; its spool summary was absent. Endpoint reachability and host service state are not phone liveness. Treat current physical measurements as stale/unknown; no new physical trial result follows from these observations.
 
-Source: deployed `body/runtime/watch.py view --site .mishe-tauftauf`, read 2026-10-19T12:50:09Z. The malformed-row parser boundary and handset-persisted cursor/action state remain unreconciled; do not infer them from the host consumer cursor or mutate queues/cursors pending owner evidence.
+Source: deployed `body/runtime/watch.py view --site .mishe-tauftauf`, read 2026-10-19T13:50:37Z. The malformed-row parser boundary and handset-persisted cursor/action state remain unreconciled; do not infer them from the host consumer cursor or mutate queues/cursors pending owner evidence.
 
 ## Built artifact
 
