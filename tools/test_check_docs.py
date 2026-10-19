@@ -116,8 +116,13 @@ class DetectorTest(unittest.TestCase):
         # Read the actual baseline line from the repo.
         text = (detector.REPO / "docs/verification.md").read_text(encoding="utf-8")
         lines = text.split("\n")
-        long_line = lines[9]  # line 10, a baseline entry
-        self.assertGreater(len(long_line), 768)
+        long_line = next(
+            line
+            for line in lines
+            if len(line) > 768
+            and ("docs/verification.md", hashlib.sha256(line.encode("utf-8")).hexdigest()[:16])
+            in detector.LONG_LINE_BASELINE
+        )
         key = hashlib.sha256(long_line.encode("utf-8")).hexdigest()[:16]
         self.assertIn(("docs/verification.md", key), detector.LONG_LINE_BASELINE)
         self._create_link_targets(long_line)
@@ -128,8 +133,13 @@ class DetectorTest(unittest.TestCase):
         # Prepending blank lines must not false-RED (shift-invariant).
         text = (detector.REPO / "docs/verification.md").read_text(encoding="utf-8")
         lines = text.split("\n")
-        long_line = lines[9]  # line 10, a baseline entry
-        self.assertGreater(len(long_line), 768)
+        long_line = next(
+            line
+            for line in lines
+            if len(line) > 768
+            and ("docs/verification.md", hashlib.sha256(line.encode("utf-8")).hexdigest()[:16])
+            in detector.LONG_LINE_BASELINE
+        )
         self._create_link_targets(long_line)
         shifted = "\n".join(["", "", "", long_line])
         code, report = self.scan_one("docs/verification.md", f"# T\n\n{shifted}\n")
