@@ -88,9 +88,15 @@ read), `9863007` (daemon thread pool), `e69d798` (wire into
 `BodyService.execute` as `eval` action branch with collect-only skip,
 failure classification, result identity hash, truncation marking, and
 session close). The evaluator is now live in the app. A bounded phone
-	trial on the owned Note3 (2026-10-12, discover wake 48948) executed
-	10 of 11 expected probes; the scratch-rerun failure was root-caused to
-	adb argv rejoining (harness quoting, not device denial). The harness
-	was corrected (echo builtin instead of absent printf; inner-rc capture
-	for unreliable adb exit codes) and re-verified on Note3 2026-10-12:
-	all 11 probes demonstrated on-device. Physical acceptance CLOSED.
+trial on the owned Note3 (2026-10-12, discover wake 48948) executed
+10 of 11 expected probes; the scratch-rerun failure was root-caused to
+adb argv rejoining (harness quoting, not device denial). The harness
+was corrected (echo builtin instead of absent printf; inner-rc capture
+for unreliable adb exit codes) and re-verified on Note3 2026-10-12:
+all 11 probes demonstrated on-device. This historical probe set passed; it does
+not establish retained-script safety. The current candidate is not accepted for
+retained-script trials: storage bounds are session-only, reader completion and
+elapsed-time enforcement are not assured, and direct-child destruction does not
+contain descendants; API-18 whole-tree stop is unproven. Keep physical trials
+gated until independent candidate/control evidence and a fresh delivered ON
+session exist; reconcile the cursor and pending outcomes before any request.

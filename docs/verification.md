@@ -1,6 +1,12 @@
 # Verification record
 
-Checked 2026-10-07; updated through 2026-10-16. Version 0.2 adds persistent ON and durable collect/upload-later behavior. Host/build evidence is separate from Android runtime and physical-device evidence.
+Checked 2026-10-07; updated through 2026-10-19. Version 0.2 adds persistent ON and durable collect/upload-later behavior. Host/build evidence is separate from Android runtime and physical-device evidence.
+
+## Current delivery observation — 2026-10-19
+
+The deployed perception consumer currently reaches both configured endpoints, but neither provides fresh delivered phone measurements. Note3 is explicitly `ON_COLLECT_ONLY`: its delivered cursor is frozen at 265956 on a malformed terminal row, with last valid sensor records from 2026-10-14. Its fresh app-private spool (3,216,725 bytes, 23,286 rows, 523,436 cumulative drops at 10:10Z) is collection-side evidence only and does not establish delivery. Redmi10's cursor is frozen at 98466 with last delivered measurements from 2026-10-16; its spool summary is absent. Endpoint reachability and host service state are not phone liveness. Treat current physical measurements as stale/unknown; no new physical trial result follows from these observations.
+
+Source: deployed `body/runtime/watch.py view --site .mishe-tauftauf`, read 2026-10-19T10:10:18Z; see the ignored-site wake evidence for full raw output.
 
 ## Built artifact
 
