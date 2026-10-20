@@ -252,6 +252,40 @@ host-side node-state file (below), so a gap names *why* the producer is silent
 (OFF, collect-only, not-running) rather than only that it is. These fields are
 provenance and never take part in the dedup identity.
 
+## Class-C delivery-gap detection
+
+The consumer detects a class-C delivery gap: no new record received for 120 s
+(`CLASS_C_WINDOW_SECONDS`) while polls keep succeeding, with no class-A arming
+(`ble_scan error code=2`) and no class-B null-lux freeze. The cause is explicitly
+non-deterministic — phone asleep, force-stopped app, or another halt — so a row
+reports the halt, not a cause. A detection fires at most once per `(cursor,
+session)` pair and appends a bounded record to
+`SITE/body/perception/class-c-delivery-gap-detectors.jsonl` (last 128 lines,
+atomically replaced).
+
+The log is shared by every followed node, so each record carries `node`. It also
+carries `host_stopped`, the host-side adb complement (`dumpsys package
+org.androidbody`, 5-second bound) that separates "phone asleep" from "app
+force-stopped". That probe can only read a device the host's `adb devices`
+enumerates exactly once, so its verdict is attributed to the row's node only when
+the enumerated serial equals the site's recorded `<node>_serial` in
+`SITE/body/activation.json`. Otherwise the row carries `host_stopped: null`,
+`host_stopped_device` (the serial that *was* enumerated, or null) and
+`host_stopped_reason` naming why:
+
+| `host_stopped_reason` | meaning |
+|---|---|
+| `no-adb-device-enumerated` | adb is absent or failed, or did not name exactly one attached device |
+| `no-recorded-serial-for-node` | the activation record names no serial for this node (no adb channel) |
+| `enumerated-serial-is-another-node` | the enumerated device belongs to a different node |
+| `probe-unknown` | the device matched; the bounded probe returned no verdict |
+
+`host_stopped_reason` is null only alongside a boolean `host_stopped`. Rows
+written before the `node`/attribution fields existed keep the old shape, and
+their `host_stopped` was measured on whichever device adb enumerated without
+being attributed to the row's node — on this site, the Note3's stopped state on
+Redmi10 rows.
+
 ## Light-cycle resumption detector
 
 `light_cycle_monitor.py` is a separate bounded host-side process that polls the live node's

@@ -12,13 +12,15 @@ import watch
 class PerceptionTests(unittest.TestCase):
     def setUp(self):
         # This suite makes no phone or physical request. Unpatched
-        # detect_class_c_delivery_gap() calls reach _host_stopped_state(), which
-        # runs `adb shell dumpsys package org.androidbody` against the physically
-        # connected phone: measured 2026-10-14 at 135 real device round-trips per
-        # suite run (bounded-output 133, fires-on-halt 1, no-repeat 1). OSError is
-        # the failure mode _host_stopped_state maps to an honest unknown, so the
-        # offline verdict is what these tests observe; tests asserting a specific
-        # host_stopped outcome patch subprocess.run themselves.
+        # detect_class_c_delivery_gap() calls reach _adb_device_serial(), whose
+        # `adb devices` is host-side; only a node whose recorded serial matches
+        # the enumerated one reaches _host_stopped_state(), which runs
+        # `adb shell dumpsys package org.androidbody` against the physically
+        # connected phone (measured 2026-10-14: 135 real device round-trips per
+        # suite run before this guard). OSError is the failure mode both map to an
+        # honest unknown, so the offline verdict is what these tests observe;
+        # tests asserting a specific host_stopped outcome patch subprocess.run
+        # themselves.
         patcher = patch("subprocess.run",
                         side_effect=OSError("subprocess disabled in unit tests"))
         patcher.start()
@@ -2538,35 +2540,104 @@ class PerceptionTests(unittest.TestCase):
             logged = json.loads(lines[-1])
             self.assertEqual(logged["channel_event_ages_seconds"]["acceleration"], 48.0)
 
+    SERIAL = "4d00553d61ab90b7"
+    STOPPED_TRUE = ("    User 0:  installed=true hidden=false stopped=true"
+                    " notLaunched=false enabled=0\n")
+    STOPPED_FALSE = ("    User 0:  installed=true hidden=false stopped=false"
+                     " notLaunched=false enabled=0\n")
+
+    def site_dir(self, folder):
+        """A temp site layout: ``body/perception/`` beside ``body/activation.json``."""
+        perception = folder / "perception"
+        perception.mkdir()
+        return perception
+
+    def record_serials(self, folder, **serials):
+        (folder / "activation.json").write_text(
+            json.dumps({f"{name}_serial": value for name, value in serials.items()}),
+            encoding="utf-8")
+
+    def halted_state(self, node, log_dir):
+        """A state whose polls succeed while no new record arrives (class-C shape)."""
+        state = watch.initial(node, f"http://127.0.0.1:8765/node/{node}")
+        start = time.time()
+        self.page(state, [f"1000 hello node={node} protocol=1 session=s1",
+                          "1000 light lux=12.5 accuracy=3 age_ms=0"],
+                  received=start - 200, log_dir=log_dir)
+        state["ok_at"] = time.time()
+        return state
+
+    def dumpsys_result(self, stdout, returncode=0):
+        result = MagicMock()
+        result.returncode = returncode
+        result.stdout = stdout
+        return result
+
+    def test_adb_device_serial_names_the_single_attached_device(self):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = f"List of devices attached\n{self.SERIAL}\tdevice\n\n"
+        with patch("subprocess.run", return_value=result) as run:
+            self.assertEqual(watch._adb_device_serial(), self.SERIAL)
+        self.assertEqual(run.call_args.args[0], ["adb", "devices"])
+
+    def test_adb_device_serial_is_unknown_without_exactly_one_attached_device(self):
+        # An empty or ambiguous enumeration cannot be attributed to a node, and
+        # an offline row is not an attached device.
+        for stdout in ("List of devices attached\n\n",
+                       "List of devices attached\nA\tdevice\nB\tdevice\n",
+                       "List of devices attached\nA\toffline\n"):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = stdout
+            with patch("subprocess.run", return_value=result):
+                self.assertIsNone(watch._adb_device_serial())
+
+    def test_adb_device_serial_is_unknown_when_adb_fails_or_is_absent(self):
+        with patch("subprocess.run", return_value=self.dumpsys_result("", 1)):
+            self.assertIsNone(watch._adb_device_serial())
+        with patch("subprocess.run", side_effect=FileNotFoundError()):
+            self.assertIsNone(watch._adb_device_serial())
+
+    def test_adb_device_serial_is_unknown_on_undecodable_output(self):
+        # `text=True` decodes adb's stdout; a non-UTF-8 byte raises
+        # UnicodeDecodeError (a ValueError). It must read as unknown rather than
+        # escape: the class-C call sits outside follow()'s per-node try, so an
+        # escaping ValueError reaches main() and exits the follower.
+        with patch("subprocess.run",
+                   side_effect=UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid")):
+            self.assertIsNone(watch._adb_device_serial())
+
     def test_host_stopped_state_true(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "    User 0:  installed=true hidden=false stopped=true notLaunched=false enabled=0\n"
-        with patch("subprocess.run", return_value=mock_result):
-            self.assertTrue(watch._host_stopped_state())
+        with patch("subprocess.run",
+                   return_value=self.dumpsys_result(self.STOPPED_TRUE)) as run:
+            self.assertTrue(watch._host_stopped_state(self.SERIAL))
+        self.assertEqual(run.call_args.args[0],
+                         ["adb", "-s", self.SERIAL, "shell", "dumpsys", "package",
+                          "org.androidbody"])
 
     def test_host_stopped_state_false(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "    User 0:  installed=true hidden=false stopped=false notLaunched=false enabled=0\n"
-        with patch("subprocess.run", return_value=mock_result):
-            self.assertFalse(watch._host_stopped_state())
+        with patch("subprocess.run",
+                   return_value=self.dumpsys_result(self.STOPPED_FALSE)):
+            self.assertFalse(watch._host_stopped_state(self.SERIAL))
 
     def test_host_stopped_state_unknown_on_error(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stdout = ""
-        with patch("subprocess.run", return_value=mock_result):
-            self.assertIsNone(watch._host_stopped_state())
+        with patch("subprocess.run", return_value=self.dumpsys_result("", 1)):
+            self.assertIsNone(watch._host_stopped_state(self.SERIAL))
 
     def test_host_stopped_state_unknown_on_timeout(self):
         import subprocess
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("adb", 5)):
-            self.assertIsNone(watch._host_stopped_state())
+            self.assertIsNone(watch._host_stopped_state(self.SERIAL))
 
     def test_host_stopped_state_unknown_on_no_adb(self):
         with patch("subprocess.run", side_effect=FileNotFoundError()):
-            self.assertIsNone(watch._host_stopped_state())
+            self.assertIsNone(watch._host_stopped_state(self.SERIAL))
+
+    def test_host_stopped_state_unknown_on_undecodable_output(self):
+        with patch("subprocess.run",
+                   side_effect=UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid")):
+            self.assertIsNone(watch._host_stopped_state(self.SERIAL))
 
     def test_host_stopped_probe_stays_offline_in_this_suite(self):
         # Regression guard for the observed defect: without setUp's guard the
@@ -2575,61 +2646,86 @@ class PerceptionTests(unittest.TestCase):
         # real probe returns stopped=false, so this fails loudly if the guard is
         # dropped; the contract under test is "unknown when spawning is
         # unavailable", never a device read.
-        self.assertIsNone(watch._host_stopped_state())
+        self.assertIsNone(watch._host_stopped_state(self.SERIAL))
 
-    def test_class_c_delivery_gap_detection_includes_host_stopped(self):
-        state = self.state()
+    def test_class_c_row_names_its_node_and_the_device_it_measured(self):
         with tempfile.TemporaryDirectory() as folder:
-            log_dir = Path(folder)
-            start = time.time()
-            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
-                      received=start - 200, log_dir=log_dir)
-            state["ok_at"] = time.time()
-            with patch("subprocess.run") as mock_run:
-                mock_result = MagicMock()
-                mock_result.returncode = 0
-                mock_result.stdout = "    User 0:  installed=true hidden=false stopped=true notLaunched=false enabled=0\n"
-                mock_run.return_value = mock_result
+            folder = Path(folder)
+            log_dir = self.site_dir(folder)
+            self.record_serials(folder, note3=self.SERIAL)
+            state = self.halted_state("note3", log_dir)
+            with patch.object(watch, "_adb_device_serial", return_value=self.SERIAL), \
+                 patch("subprocess.run",
+                       return_value=self.dumpsys_result(self.STOPPED_TRUE)):
                 detection = watch.detect_class_c_delivery_gap(state, log_dir)
-            self.assertIsNotNone(detection)
+            self.assertEqual(detection["node"], "note3")
             self.assertTrue(detection["host_stopped"])
+            self.assertEqual(detection["host_stopped_device"], self.SERIAL)
+            self.assertIsNone(detection["host_stopped_reason"])
+            logged = json.loads(
+                (log_dir / "class-c-delivery-gap-detectors.jsonl")
+                .read_text(encoding="utf-8").splitlines()[-1])
+            self.assertEqual(logged["node"], "note3")
 
-    def test_class_c_delivery_gap_detection_host_stopped_false(self):
-        state = self.state()
+    def test_class_c_host_stopped_is_absent_for_a_node_without_a_recorded_serial(self):
+        # The reported defect: a redmi10 row carried host_stopped measured on the
+        # Note3, the only device the host's adb enumerates. A node the probe
+        # cannot be attributed to reads unknown, and the probe never runs.
         with tempfile.TemporaryDirectory() as folder:
-            log_dir = Path(folder)
-            start = time.time()
-            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
-                      received=start - 200, log_dir=log_dir)
-            state["ok_at"] = time.time()
-            with patch("subprocess.run") as mock_run:
-                mock_result = MagicMock()
-                mock_result.returncode = 0
-                mock_result.stdout = "    User 0:  installed=true hidden=false stopped=false notLaunched=false enabled=0\n"
-                mock_run.return_value = mock_result
+            folder = Path(folder)
+            log_dir = self.site_dir(folder)
+            self.record_serials(folder, note3=self.SERIAL)
+            state = self.halted_state("redmi10", log_dir)
+            with patch.object(watch, "_adb_device_serial", return_value=self.SERIAL), \
+                 patch("subprocess.run") as run:
                 detection = watch.detect_class_c_delivery_gap(state, log_dir)
-            self.assertIsNotNone(detection)
-            self.assertFalse(detection["host_stopped"])
+            self.assertIsNone(detection["host_stopped"])
+            self.assertEqual(detection["host_stopped_device"], self.SERIAL)
+            self.assertEqual(detection["host_stopped_reason"],
+                             "no-recorded-serial-for-node")
+            run.assert_not_called()
 
-    def test_class_c_delivery_gap_detection_host_stopped_unknown(self):
-        state = self.state()
+    def test_class_c_host_stopped_is_absent_when_the_enumerated_serial_is_another_node(self):
         with tempfile.TemporaryDirectory() as folder:
-            log_dir = Path(folder)
-            start = time.time()
-            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
-                      received=start - 200, log_dir=log_dir)
-            state["ok_at"] = time.time()
-            with patch("subprocess.run") as mock_run:
-                mock_result = MagicMock()
-                mock_result.returncode = 1
-                mock_result.stdout = ""
-                mock_run.return_value = mock_result
+            folder = Path(folder)
+            log_dir = self.site_dir(folder)
+            self.record_serials(folder, note3=self.SERIAL, redmi10="0123456789abcdef")
+            state = self.halted_state("redmi10", log_dir)
+            with patch.object(watch, "_adb_device_serial", return_value=self.SERIAL), \
+                 patch("subprocess.run") as run:
+                detection = watch.detect_class_c_delivery_gap(state, log_dir)
+            self.assertIsNone(detection["host_stopped"])
+            self.assertEqual(detection["host_stopped_reason"],
+                             "enumerated-serial-is-another-node")
+            run.assert_not_called()
+
+    def test_class_c_host_stopped_is_absent_without_an_enumerated_device(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            log_dir = self.site_dir(folder)
+            self.record_serials(folder, note3=self.SERIAL)
+            state = self.halted_state("note3", log_dir)
+            with patch.object(watch, "_adb_device_serial", return_value=None), \
+                 patch("subprocess.run") as run:
+                detection = watch.detect_class_c_delivery_gap(state, log_dir)
+            self.assertIsNone(detection["host_stopped"])
+            self.assertIsNone(detection["host_stopped_device"])
+            self.assertEqual(detection["host_stopped_reason"], "no-adb-device-enumerated")
+            run.assert_not_called()
+
+    def test_class_c_delivery_gap_detection_host_stopped_unknown_on_probe_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            log_dir = self.site_dir(folder)
+            self.record_serials(folder, note3=self.SERIAL)
+            state = self.halted_state("note3", log_dir)
+            with patch.object(watch, "_adb_device_serial", return_value=self.SERIAL), \
+                 patch("subprocess.run", return_value=self.dumpsys_result("", 1)):
                 detection = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNotNone(detection)
             self.assertIsNone(detection["host_stopped"])
+            self.assertEqual(detection["host_stopped_device"], self.SERIAL)
+            self.assertEqual(detection["host_stopped_reason"], "probe-unknown")
 
     def test_light_resumption_view_reports_missing_heartbeat_as_unknown_not_calm(self):
         with tempfile.TemporaryDirectory() as folder:

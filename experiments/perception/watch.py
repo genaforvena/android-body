@@ -725,15 +725,63 @@ def _max_consecutive_null_lux(state):
     return max_consecutive
 
 
-def _host_stopped_state():
-    """Check if org.androidbody is force-stopped via host-side adb.
+ACTIVATION_RECORD_NAME = "activation.json"
 
-    Returns True if stopped=true, False if stopped=false, None if unknown.
-    Bounded: 5-second timeout on adb command. Never raises.
+
+def _adb_device_serial():
+    """The single serial the host's adb enumerates, or None.
+
+    Host-side enumeration only (``adb devices``), never a device command and
+    never ``adb reverse --list``. None when adb is absent, fails or times out,
+    or when the enumeration does not name exactly one attached device: an
+    empty or ambiguous list cannot be attributed to a node.
+    """
+    try:
+        result = subprocess.run(["adb", "devices"], capture_output=True,
+                                text=True, timeout=5)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, UnicodeError):
+        return None
+    if result.returncode != 0:
+        return None
+    serials = []
+    for line in result.stdout.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) >= 2 and fields[1] == "device":
+            serials.append(fields[0])
+    return serials[0] if len(serials) == 1 else None
+
+
+def _node_serial(directory, node):
+    """The site's recorded adb serial for one node, or None.
+
+    ``body/activation.json`` is the site's own statement of which adb serial
+    belongs to which node (``<node>_serial`` keys), the same mapping
+    ``tools/clock_offset.py`` uses. Read tolerantly: an unreadable record or a
+    missing, non-string entry yields None, never a guessed serial. Identity is
+    not a freshness quantity -- the record's own ``checked`` age is already
+    visible on the pane's activation line -- so this reader does not gate on age.
+    """
+    path = directory.parent / ACTIVATION_RECORD_NAME
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    value = record.get(f"{node}_serial")
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _host_stopped_state(serial):
+    """Check if org.androidbody is force-stopped on one adb-attached device.
+
+    Runs against the named ``serial``, so the verdict can be attributed to the
+    node that serial belongs to. Returns True if stopped=true, False if
+    stopped=false, None if unknown. Bounded: 5-second timeout. Never raises.
     """
     try:
         result = subprocess.run(
-            ["adb", "shell", "dumpsys", "package", "org.androidbody"],
+            ["adb", "-s", serial, "shell", "dumpsys", "package", "org.androidbody"],
             capture_output=True, text=True, timeout=5
         )
         if result.returncode != 0:
@@ -745,8 +793,34 @@ def _host_stopped_state():
                 if "stopped=false" in line:
                     return False
         return None
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, UnicodeError):
         return None
+
+
+def _node_host_stopped(directory, node):
+    """The stopped verdict for one node, or None when no device is attributable.
+
+    The adb probe can only read a device the host's adb enumerates. The verdict
+    is attributed to ``node`` only when that enumerated serial is the site's
+    recorded serial for the node; a node with no adb channel -- or a mislabelled
+    record -- carries None and a reason instead of another device's stopped
+    state. The reason is None only alongside a boolean verdict, so a null
+    ``host_stopped`` always says why. Returns ``(verdict, measured serial,
+    reason)``.
+    """
+    serial = _adb_device_serial()
+    if serial is None:
+        return None, None, "no-adb-device-enumerated"
+    recorded = _node_serial(directory, node)
+    if recorded is None:
+        return None, serial, "no-recorded-serial-for-node"
+    if recorded != serial:
+        return None, serial, "enumerated-serial-is-another-node"
+    verdict = _host_stopped_state(serial)
+    if verdict is None:
+        return None, serial, "probe-unknown"
+    return verdict, serial, None
+
 
 def detect_class_c_delivery_gap(state, log_dir):
     """Detect class-C delivery gap: delivery halt with no known cause.
@@ -755,9 +829,11 @@ def detect_class_c_delivery_gap(state, log_dir):
     while polls keep succeeding, AND the latest ble_scan is not a code=2
     error (class-A not armed), AND the class-B null-lux condition is not
     met (no null-lux freeze). Non-deterministic: phone asleep, force-stopped
-    app, or other causes. The deterministic complement is the host-side adb
-    check (dumpsys package stopped), owned by health/genome. Emits bounded
-    JSONL to log_dir/class-c-delivery-gap-detectors.jsonl.
+    app, or other causes. The row names its node, because the log is shared by
+    every followed node; ``host_stopped`` is the host-side adb complement
+    (dumpsys package stopped) and is emitted only for the node the enumerated
+    adb serial belongs to -- see ``_node_host_stopped``. Emits bounded JSONL to
+    log_dir/class-c-delivery-gap-detectors.jsonl.
     """
     if log_dir is None:
         return None
@@ -793,10 +869,11 @@ def detect_class_c_delivery_gap(state, log_dir):
     state["_class_c_detected_cursor"] = cursor
     state["_class_c_detected_session"] = session
 
-    host_stopped = _host_stopped_state()
+    host_stopped, host_stopped_device, host_stopped_reason = _node_host_stopped(log_dir, state["node"])
 
     detection = {
         "kind": "class-c-delivery-gap",
+        "node": state["node"],
         "detected_at": stamp(now),
         "cursor": cursor,
         "session": session,
@@ -804,6 +881,8 @@ def detect_class_c_delivery_gap(state, log_dir):
         "window_seconds": CLASS_C_WINDOW_SECONDS,
         "reason": "delivery halted with polls succeeding; no code=2, no null-lux freeze",
         "host_stopped": host_stopped,
+        "host_stopped_device": host_stopped_device,
+        "host_stopped_reason": host_stopped_reason,
     }
 
     _emit_class_c(log_dir, detection)
