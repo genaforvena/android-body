@@ -58,19 +58,23 @@ ACCESS_NETWORK_STATE, VIBRATE, WAKE_LOCK, RECEIVE_BOOT_COMPLETED, FOREGROUND_SER
 FOREGROUND_SERVICE_SPECIAL_USE, POST_NOTIFICATIONS. Camera, microphone and location
 permissions are NOT requested.
 
-Present availability (2026-10-20T08:26Z, read-only deployed view):
+Present availability (2026-10-20T18:28Z, read-only deployed view):
 
-- `mode=ON_COLLECT_ONLY` (`desired_on=true`; node-state observed 08:26:04Z, age 1.4 s,
+- `mode=ON_COLLECT_ONLY` (`desired_on=true`; node-state observed 18:28:20Z, age 18.8 s,
   `status=ok`): the phone stores observations and issues no HTTP requests and no actions by
   design; the host pulls through the bridge. Transport reachable, no backlog page pending,
   node-state fresh.
 - Delivered samples are stale since 2026-10-14T06:13:24Z — by design under collect-only,
-  not a delivery fault. Collection-side spool reads are live: spool 3,238,880 B, retention
-  window 5.0 h, 23,447 rows, coverage ok, 618,039 records dropped cumulatively at the bound;
-  scan_state windows=2642 phase=gap last_error=none sightings=0.
-- Phone clock measured +2.8 s behind the host at 08:26Z (n=3, bounds +2.3..+3.3 s) with
-  `host_ntp_synchronized=false`, so part of that offset is host error; the split implies
-  transport latency ~24-27 s. Receipt times are consumer-fetch times, not server receipts.
+  not a delivery fault. Collection-side spool reads are live: spool 2,442,723 B, retention
+  window 4.0 h, 17,610 rows, coverage ok, 660,832 records dropped cumulatively at the bound;
+  scan_state windows=2944 phase=gap last_error=none sightings=0.
+- Phone clock measured -1.1 s at 18:28Z (n=3, bounds -1.6..-0.6 s,
+  `host_ntp_synchronized=true`): by the pane's host-wall-minus-phone-wall convention the
+  phone reads ~1.1 s ahead of the host, so the offset is attributable to the phone rather
+  than shared with host error. The earlier +2.8 s reading (08:26Z) carried
+  `host_ntp_synchronized=false`, so it could not separate phone error from host error.
+  Implied transport latency ~27.5-30.5 s. Receipt times are
+  consumer-fetch times, not server receipts.
 
 Supported bounded text requests (while ON; nothing executes in collect-only mode):
 
