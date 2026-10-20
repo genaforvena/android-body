@@ -12,10 +12,11 @@ present availability, supported bounded text requests, limits. Declaration is no
 a working sensor. "Present availability" always carries its observation instant; staleness
 is a property of the channel, never a silent default.
 
-Last updated 2026-10-20T08:26Z by docs: both cards' present availability re-read from the
-deployed view (snapshot in `.mishe-tauftauf/artifacts/docs-wake118587-node-cards/`); Redmi10
-is delivering again after ~3.5 days silent, Note3 stays collect-only by design. Availability
-stamps below are from the read-only deployed view and can go stale.
+Last updated 2026-10-20T11:18Z by docs: Redmi10 re-read from the deployed view (snapshot in
+`.mishe-tauftauf/artifacts/docs-wake118733-node-cards/`) — it answers `eval` actions, so its
+vintage bracket is re-derived, and its delivery halts repeatedly for an unestablished reason.
+Note3's card is unchanged (collect-only by design). Availability stamps below are from the
+read-only deployed view and can go stale.
 
 ## Note3 node card
 
@@ -108,44 +109,56 @@ Implemented capabilities (session-start `cap` block): battery, light, accelerome
 wifi_link_rssi present; vibration (actuator) present. The installed build emits no
 `ble_status` and no `ble_scan_state` row; its BLE rows are `ble_scan start
 beacon=MISHE-BEACON …` immediately followed by `ble_scan error reason=SecurityException`
-in 5/5 session starts. That failure is structural, not a grantable gap: before `e131909`
-(2026-10-15T20:16Z) the manifest declared only `BLUETOOTH`/`BLUETOOTH_ADMIN`
+in every retained session start. That failure is structural, not a grantable gap: before
+`e131909` (2026-10-15T20:16Z) the manifest declared only `BLUETOOTH`/`BLUETOOTH_ADMIN`
 (`maxSdkVersion=30`), while API31+ `BluetoothLeScanner.startScan()` requires the runtime
 `BLUETOOTH_SCAN` permission — no configuration change on this build can make it scan.
 
-Installed build vintage: bracketed to [2026-10-11T12:10Z, 2026-10-12T22:05Z) by row-shape
-differential over its 5 retained session-start bundles — it emits `ble_scan start`
-(`59412b0`) but no `owner_checkboxes` (`ff865cd`), `ble_status` (`079db2e`),
-`ble_scan_state` (`e57c91b`) or `probe exec` (`a1eed4d`) row. The interval is inferred from
-row shapes, not an APK hash: the phone has no ADB/USB channel, so its installed bytes are
-not readable from here.
+Installed build vintage: bracketed to [2026-10-11T22:43Z, 2026-10-12T22:05Z) by row-shape
+differential over its retained session-start bundles and action receipts — it emits `ble_scan
+start` (`59412b0`) and answers `eval` actions (`e69d798`, 2026-10-11T22:43Z), but emits no
+`owner_checkboxes` (`ff865cd`, 2026-10-12T22:05Z) and no `command=` field in eval receipts
+(`4066dd0`, 2026-10-12T22:08Z), which rules out every later emission. The interval is inferred
+from row and receipt shapes, not an APK hash: the phone has no ADB/USB channel, so its
+installed bytes are not readable from here.
 
 Local owner enablement: UNKNOWN. The installed APK predates the `owner_checkboxes`
 emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side node-state
 file is stale (`mode=UNKNOWN`, `status=stale`, reason `node-state-stale`; unknown is never
 OFF). No persisted owner choices exist yet to honor.
 
-Present availability (2026-10-20T08:26Z, read-only deployed view): delivering again. Session
-`45bdac2e…` started 2026-10-20T07:18:02Z and the cursor advanced 98466 → 101732 with
-`channel-delivery [pass]: cursor=advancing transport=reachable` and
-`phone=fresh-clock-conditional`, after ~3.5 days without a delivered sample (last
-2026-10-16T20:17:19Z; the offline cause was never established from here — health DM 105877).
-Battery 0.74 (charging=false), light 92.0 lux and acceleration x=0.071 y=0.058 z=9.830 m/s²
-were `fresh-clock-conditional` at 08:26:00Z. `wifi_link_rssi_dbm` still reports
-`unavailable reason=disconnected` — an API verdict (`getNetworkId() < 0`), not proof the
-Wi-Fi link is down; the known false negative is fixed in the candidate APK. No action
-receipts observed. Collection-side spool evidence is absent (`no-spool-summary-file`), so
-this phone's own spool contents are unread; scan lifecycle is stale at `error
-reason=SecurityException` (consecutive_errors=1).
+Present availability (2026-10-20T11:18Z, read-only deployed view): delivering in bursts, with
+halts. Session `45bdac2e…` started 2026-10-20T07:18:02Z and delivered cursor 98466 → 106658
+after ~3.5 days without a delivered sample (last 2026-10-16T20:17:19Z; that offline cause was
+never established from here — health DM 105877). Delivery halts repeatedly inside the session:
+the deployed class-c delivery-gap detector recorded halts at 09:32Z, 09:53Z and 10:44Z (120 s
+window, polls succeeding, no code=2, no null-lux freeze), and the node reported a pending
+backlog as delivery resumed. The latest delivered record is 2026-10-20T10:08:42Z — battery
+0.76 (charging=true), light 149.0 lux, acceleration `unavailable reason=stale`,
+`wifi_link_rssi_dbm unavailable reason=disconnected` — and at 11:18Z the cursor was still
+106658, a ~70-minute halt in progress. Nine class-c halts are recorded for this node since
+2026-10-15, at distinct cursors from 1252 to 106658; the 98466 halt extended ~3.5 days. Cause
+UNKNOWN: class-c is by definition the no-known-cause class, the phone has no ADB channel, and
+its own spool is unread (`no-spool-summary-file`). The rows' `host_stopped` field is the only
+adb-attached device's (Note3's) app state, not Redmi10's, and must not be read as evidence
+about this phone. Scan lifecycle stays stale at `error reason=SecurityException`
+(consecutive_errors=1). `wifi_link_rssi_dbm`'s `disconnected` verdict is an API verdict
+(`getNetworkId() < 0`), not proof the Wi-Fi link is down; the known false negative is fixed in
+the candidate APK.
 
-Supported bounded text requests: none exercised; none are being sent (no actuator
-authority). The installed build's eval status is unknown; it emits no `probe exec` row,
-consistent with the vintage bracket. The vibration grammar is the app's own; whether this
-build carries it is unverified.
+Supported bounded text requests: `eval` is exercised on this phone. Five receipts at
+2026-10-20T08:30-08:33Z: `eval identity` and `eval read /proc/self/attr/current` succeeded (the
+latter `u:r:untrusted_app:s0:c10,c257,c512,c768`, SELinux categories included), `eval read
+/data/system/packages.list` returned `failed reason=read_denied`, and two further eval commands
+returned `failed reason=invalid_arguments` — grammar rejections, not device failures. The
+receipts carry no `command=` field, so the canonical command text is absent from these rows
+(pre-`4066dd0` vintage). No vibration request has been sent and none is authorized; whether
+this build carries the vibration grammar is unverified.
 
 Limits: Redmi10 is preparation, not a wired node: no USB window, no owner checkboxes,
 BLE scan structurally dead on the installed build, Wi-Fi RSSI verdict ambiguous, spool
-contents unread. The remedy is an APK update to the current candidate
+contents unread, delivery halting repeatedly for an unestablished reason. The remedy is an APK
+update to the current candidate
 `downloads/android-body-debug.apk` = `87b36024…` (73,358 B, source `e0ea84d` (app bytes `697d68a`), published `e0ea84d`), which carries `e131909` (BLUETOOTH_SCAN plus runtime request), `556049c` (ACCESS_NETWORK_STATE / `network_id_unavailable`), `0c83e32` (class-4 ExecProbe) and `697d68a` (`EvalOutcome` write-receipt bound); it supersedes `3b6dcf7a…` (72,914 B, source `8dbb324`) and `a17829c7…` (70,631 B, source `a201891`).
 The update needs the human on the
 phone (no ADB channel): either `adb install -r` in a USB window or copying the APK across
