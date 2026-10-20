@@ -294,6 +294,12 @@ transport is not reachable, or the node's cursor has not advanced within
 `CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS` (30 s). A cursor that advances while a channel stays
 stale is sensor throttling, not delivery loss.
 
+The verdict and the detection row also carry `node_mode` / `node_state_status` read from the
+host-side node-state file (below), as provenance and never as part of the status rule. A node
+in `ON_COLLECT_ONLY` never delivers by design, so its frozen cursor is a designed state rather
+than a delivery loss; the mode lets a reader tell the two apart from one document. A stale or
+absent node-state file reads `UNKNOWN`, never a fabricated mode.
+
 The interval is deliberately not widened for a draining node. Redmi10 on
 2026-10-20T19:11-19:26Z drained a backlog by delivering one 128-record page every ~78 s, each
 advancing the cursor, so those cycles report `cursor=frozen` while delivery is progressing
@@ -310,14 +316,14 @@ instead of filtering the wait:
 | `advance_interval_max_seconds` | slowest of those retained intervals |
 | `advance_interval_samples` | how many intervals the two fields cover |
 
-The pane prints them as `interval=30.0s age=Ns cadence=Ms(n=k,max=Js)`, so a reader can see
-that a frozen cursor is advancing in ~78 s pages rather than stopped. The intervals describe
-the most recent uninterrupted observation window: the advance clock is persisted with the
-node state, so a verdict gap wider than the module's refresh bound clears the retained samples
-and drops the interval spanning it. Two residual cases are stated rather than hidden — a
-restart shorter than that bound still folds its downtime into one sample, and one stalled poll
-clears the samples for a cycle — so the field is context, never a filter. The halt census
-remains `body/queues/writes.jsonl` (the host's accepted POSTs), not this verdict.
+The pane prints them as `interval=30.0s age=Ns node_mode=MODE cadence=Ms(n=k,max=Js)`, so a
+reader can see that a frozen cursor is advancing in ~78 s pages rather than stopped. The
+intervals describe the most recent uninterrupted observation window: the advance clock is
+persisted with the node state, so a verdict gap wider than the module's refresh bound clears
+the retained samples and drops the interval spanning it. Two residual cases are stated rather
+than hidden — a restart shorter than that bound still folds its downtime into one sample, and
+one stalled poll clears the samples for a cycle — so the field is context, never a filter. The
+halt census remains `body/queues/writes.jsonl` (the host's accepted POSTs), not this verdict.
 
 Detections append a bounded record to
 `SITE/body/perception/channel-delivery-gap-detectors.jsonl` (last 128 lines, atomically
@@ -329,7 +335,7 @@ census. A per-episode key would log
 every page cycle of a drain instead — measured on the 2026-10-20 evening, 18 rows in 75 min
 of drain, 11 of them 75.4-83.6 s page cycles — and those rows would evict real halts from the
 bounded file. A row carries the frozen cursor, its age, the node's cadence context, the
-transport verdict, the per-channel ages and the session.
+transport verdict, the per-channel ages, the session and the node's mode provenance.
 
 ## Light-cycle resumption detector
 

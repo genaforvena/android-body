@@ -385,6 +385,29 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual((published["status"], published["mode"],
                           published["collect_only"]), ("ok", "ON_COLLECT_ONLY", True))
 
+    def test_space_snapshot_publishes_a_stable_channel_delivery_shape(self):
+        """A consumer reads the per-node channel_delivery keys; a dropped key is a break.
+
+        The fallback shape must match the verdict's. Appending the node-mode
+        provenance once silently dropped ``interval_seconds`` from this fallback,
+        which a JSON consumer reads as a missing field.
+        """
+        state = self.state()
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
+        self.assertEqual(
+            set(node["channel_delivery"]),
+            {"status", "reason", "cursor_state", "cursor_age_seconds", "transport",
+             "channel_ages_seconds", "channel_event_ages_seconds", "interval_seconds",
+             "advance_interval_median_seconds", "advance_interval_max_seconds",
+             "advance_interval_samples", "node_mode", "node_state_status"})
+        self.assertEqual(node["channel_delivery"]["interval_seconds"],
+                         watch.CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS)
+        self.assertEqual(node["channel_delivery"]["node_mode"], "UNKNOWN")
+        state["_channel_delivery_verdict"] = watch._channel_delivery_verdict(state, 1000, 30)
+        node = watch.space_snapshot([state], 1000, 30)["nodes"][0]
+        self.assertEqual(set(node["channel_delivery"]),
+                         set(state["_channel_delivery_verdict"]))
+
     def test_space_snapshot_publishes_the_clock_domain_reading_additively(self):
         """The clock-domain reading is one additive node field; inconsistent values pass through uncoerced."""
         state = self.state()
@@ -2334,6 +2357,48 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(verdict["transport"], "reachable")
         self.assertIsNone(verdict["reason"])
 
+    def test_channel_delivery_verdict_reports_the_node_mode_as_provenance(self):
+        # A node in ON_COLLECT_ONLY never delivers by design, so its frozen cursor is a
+        # designed state rather than a delivery loss. The mode rides along as provenance
+        # (mirroring the class-b detector) and never changes the status rule.
+        state = self.state()
+        now = time.time()
+        state["cursor"] = 100
+        state["poll_at"] = now
+        state["error"] = None
+        watch._channel_delivery_verdict(state, now, 30.0)  # seed
+        state["_channel_delivery_last_cursor_advance_at"] = (
+            now - watch.CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS - 1)
+        node_state = {"status": "ok", "mode": "ON_COLLECT_ONLY",
+                      "desired_on": True, "collect_only": True}
+        verdict = watch._channel_delivery_verdict(state, now, 30.0, node_state)
+        self.assertEqual(verdict["status"], "fail")
+        self.assertEqual(verdict["reason"], "cursor-freeze")
+        self.assertEqual(verdict["node_mode"], "ON_COLLECT_ONLY")
+        self.assertEqual(verdict["node_state_status"], "ok")
+        # A stale or absent node state is UNKNOWN, never a fabricated mode.
+        verdict = watch._channel_delivery_verdict(state, now, 30.0)
+        self.assertEqual(verdict["node_mode"], "UNKNOWN")
+        self.assertEqual(verdict["node_state_status"], "unknown")
+
+    def test_channel_delivery_detector_row_carries_the_node_mode(self):
+        state = self.state()
+        now = time.time()
+        state["cursor"] = 100
+        state["poll_at"] = now
+        state["error"] = None
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            watch.detect_channel_delivery_gap(state, log_dir, 30.0)  # seed
+            state["_channel_delivery_last_cursor_advance_at"] = (
+                now - watch.CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS - 1)
+            node_state = {"status": "ok", "mode": "ON_COLLECT_ONLY"}
+            detection = watch.detect_channel_delivery_gap(state, log_dir, 30.0, node_state)
+            self.assertIsNotNone(detection)
+            self.assertEqual(detection["reason"], "cursor-freeze")
+            self.assertEqual(detection["node_mode"], "ON_COLLECT_ONLY")
+            self.assertEqual(detection["node_state_status"], "ok")
+
     def drive_channel_polls(self, state, gaps, advance=128, poll=5.0, stale=30.0):
         """Drive `_channel_delivery_verdict` the way the follower does: one poll every `poll`
         seconds, with the cursor advancing by `advance` at the end of each gap. Returns the
@@ -2448,7 +2513,7 @@ class PerceptionTests(unittest.TestCase):
             state["_channel_delivery_verdict"] = watch._channel_delivery_verdict(state, now, 30.0)
         view = watch.render(state, now, 30.0)
         self.assertIn("cursor=frozen transport=reachable interval=30.0s age=60.0s "
-                      "cadence=78.0s(n=3,max=78.0s)", view)
+                      "node_mode=UNKNOWN cadence=78.0s(n=3,max=78.0s)", view)
 
     def test_channel_delivery_detector_fires_on_cursor_freeze(self):
         state = self.state()

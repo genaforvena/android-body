@@ -899,7 +899,7 @@ CHANNEL_DELIVERY_DETECTOR_LINES = 128
 CHANNEL_DELIVERY_ADVANCE_SAMPLES = 8
 
 
-def _channel_delivery_verdict(state, now, stale):
+def _channel_delivery_verdict(state, now, stale, node_state=None):
     """Evaluate channel-level delivery status without emitting.
 
     Tracks cursor advance and computes per-channel observation ages. Returns
@@ -914,6 +914,14 @@ def _channel_delivery_verdict(state, now, stale):
     downtime into one sample, and a single poll that itself stalls past ``stale``
     (a hung response is bounded per socket operation, not per response) clears
     the samples for one cycle, after which they are relearned.
+
+    The verdict also carries the host-side node mode (``node_mode`` /
+    ``node_state_status``) as provenance, mirroring the class-b detector: a node
+    in ``ON_COLLECT_ONLY`` never delivers by design, so its frozen cursor is a
+    designed state rather than a delivery loss, and the reader must be able to
+    tell the two apart from one document. The mode is provenance and never part
+    of the status rule, so a node whose mode is stale or unknown still reports
+    its cursor measurement unchanged.
     """
     previous_verdict_at = state.get("_channel_delivery_last_verdict_at")
     state["_channel_delivery_last_verdict_at"] = now
@@ -987,10 +995,12 @@ def _channel_delivery_verdict(state, now, stale):
         "advance_interval_median_seconds": cadence,
         "advance_interval_max_seconds": slowest,
         "advance_interval_samples": len(intervals),
+        "node_mode": (node_state or {}).get("mode", "UNKNOWN"),
+        "node_state_status": (node_state or {}).get("status", "unknown"),
     }
 
 
-def detect_channel_delivery_gap(state, log_dir, stale):
+def detect_channel_delivery_gap(state, log_dir, stale, node_state=None):
     """Detect channel-level delivery loss: transport unreachable or cursor freeze.
 
     RED only on delivery loss: transport unreachable OR cursor not advancing
@@ -1005,14 +1015,17 @@ def detect_channel_delivery_gap(state, log_dir, stale):
     with the floor unchanged, a per-episode key would log every page cycle of a
     drain (18 rows in 75 min of drain on 2026-10-20) and evict real halts from
     the bounded file. The halt census is the host's accepted-POST record
-    ``body/queues/writes.jsonl``. Emits bounded JSONL to
-    log_dir/channel-delivery-gap-detectors.jsonl.
+    ``body/queues/writes.jsonl``. The row also carries ``node_mode`` /
+    ``node_state_status`` as provenance, so an ``ON_COLLECT_ONLY`` node's designed
+    freeze is distinguishable from a delivery loss (mirroring the class-b
+    detector); the mode never changes whether a row is emitted. Emits bounded
+    JSONL to log_dir/channel-delivery-gap-detectors.jsonl.
     """
     if log_dir is None:
         return None
 
     now = time.time()
-    verdict = _channel_delivery_verdict(state, now, stale)
+    verdict = _channel_delivery_verdict(state, now, stale, node_state)
     state["_channel_delivery_verdict"] = verdict
 
     if verdict["status"] != "fail":
@@ -1043,8 +1056,9 @@ def detect_channel_delivery_gap(state, log_dir, stale):
         "channel_event_ages_seconds": verdict["channel_event_ages_seconds"],
         "session": session,
         "node": state["node"],
+        "node_mode": verdict["node_mode"],
+        "node_state_status": verdict["node_state_status"],
     }
-
     path = log_dir / "channel-delivery-gap-detectors.jsonl"
     previous = []
     if path.exists():
@@ -1930,7 +1944,8 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
         "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS,
         "advance_interval_median_seconds": None,
         "advance_interval_max_seconds": None,
-        "advance_interval_samples": 0}
+        "advance_interval_samples": 0,
+        "node_mode": "UNKNOWN", "node_state_status": "unknown"}
     ages = " ".join(
         f"{k}={cd['channel_ages_seconds'].get(k)}s"
         for k in SENSORS)
@@ -1941,7 +1956,8 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
     cadence = cd.get("advance_interval_median_seconds")
     lines.append(f"  channel-delivery [{cd['status']}]: cursor={cd['cursor_state']} "
                  f"transport={cd['transport']} interval={cd['interval_seconds']}s "
-                 f"age={cd['cursor_age_seconds']}s"
+                 f"age={cd['cursor_age_seconds']}s "
+                 f"node_mode={cd.get('node_mode', 'UNKNOWN')}"
                  + (f" cadence={cadence}s(n={cd['advance_interval_samples']}"
                     f",max={cd['advance_interval_max_seconds']}s)"
                     if cadence is not None else "")
@@ -2299,7 +2315,8 @@ def space_snapshot(states, now, stale, node_states=None, clocks=None):
                 "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS,
                 "advance_interval_median_seconds": None,
                 "advance_interval_max_seconds": None,
-                "advance_interval_samples": 0}
+                "advance_interval_samples": 0,
+                "node_mode": "UNKNOWN", "node_state_status": "unknown"}
         })
     return {"schema_version": 1, "generated_at_utc": stamp(now),
             "producer": {"name": "android-body-perception", "entry_point": "watch.py",
@@ -3040,8 +3057,9 @@ def follow(args, directory):
                 changed = update_events(state, now, args.stale_seconds)
                 state["node_status"] = node_status(state, now, args.stale_seconds)
                 save(path, state)
+                node_state = read_node_state(directory, state["node"], now)
                 detection = detect_class_b_delivery_gap(
-                    state, directory, read_node_state(directory, state["node"], now))
+                    state, directory, node_state)
                 if detection:
                     print(f"class-b-delivery-gap: {detection}", flush=True)
                 detection_a = detect_class_a_freeze(state, directory)
@@ -3050,7 +3068,8 @@ def follow(args, directory):
                 detection_c = detect_class_c_delivery_gap(state, directory)
                 if detection_c:
                     print(f"class-c-delivery-gap: {detection_c}", flush=True)
-                detection_ch = detect_channel_delivery_gap(state, directory, args.stale_seconds)
+                detection_ch = detect_channel_delivery_gap(
+                    state, directory, args.stale_seconds, node_state)
                 if detection_ch:
                     print(f"channel-delivery-gap: {detection_ch}", flush=True)
                 if changed:
