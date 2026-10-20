@@ -300,8 +300,12 @@ fi
 # writes (writes.jsonl recency). RED when the host path is dead, or when the
 # device is on the tailnet but silent past REDMI_SILENT_BOUND (900s: the
 # observed write cadence is a 4-7s interval, and the only >60s gap in the
-# first 95 min of history was one 29-min outage). UNKNOWN when the device is
-# simply not connected, matching section 6 above.
+# first 95 min of history was one 29-min outage). The "live tailnet path"
+# verdict requires the daemon to be Running: `tailscale status --json` is a
+# stale cached map while the daemon is stopped (wake 118178), so a stopped
+# daemon prints its own RED reason instead of asserting a path that is down.
+# UNKNOWN when the daemon state is unreadable or the device is simply not
+# connected, matching section 6 above.
 REMI_URL=${REMI_URL:-https://mesh-home.tail3e4555.ts.net/node/redmi10}
 REMI_NODE=${REMI_NODE:-redmi-10}
 REMI_SILENT_BOUND=${REMI_SILENT_BOUND:-900}
@@ -341,7 +345,15 @@ PY
   # that made the RED branch unreachable for exactly the silent-but-connected
   # case it exists to catch (measured 2026-10-15: Online=False, Active=True,
   # writes every ~4s). Empty output = peer absent or view unreadable = UNKNOWN.
-  REMI_ONLINE=$(tailscale status --json 2>/dev/null | python3 "$PWD/tools/tailnet_peer.py" "$REMI_NODE")
+  # Wake 118178: that document is also a stale cached map while the daemon is
+  # stopped (measured 2026-10-20T15:45Z: BackendState "Stopped" since 14:03:03Z,
+  # peer still listed Online), so the peer predicate alone read `yes` and the
+  # silence branch asserted "a live tailnet path" that did not exist — a silent
+  # phone during a stopped daemon is expected (it buffers and dumps on resume),
+  # not a device fault. The daemon's own state is read beside the peer view.
+  REMI_STATUS=$(tailscale status --json 2>/dev/null)
+  REMI_ONLINE=$(printf '%s' "$REMI_STATUS" | python3 "$PWD/tools/tailnet_peer.py" "$REMI_NODE")
+  REMI_DAEMON=$(printf '%s' "$REMI_STATUS" | python3 "$PWD/tools/tailnet_daemon.py")
   REMI_AGE=$(python3 - "$SITE/body/queues/writes.jsonl" <<'PY'
 import json, sys, datetime
 last = None
@@ -375,8 +387,12 @@ PY
       *)
         if [ "$REMI_AGE" -le "$REMI_SILENT_BOUND" ]; then
           pass "redmi10 writing over tailnet HTTPS (last ${REMI_AGE}s ago)"
-        elif [ "$REMI_ONLINE" = "yes" ]; then
+        elif [ "$REMI_DAEMON" = "running" ] && [ "$REMI_ONLINE" = "yes" ]; then
           fail "redmi10 silent ${REMI_AGE}s over a live tailnet path"
+        elif [ "$REMI_DAEMON" = "stopped" ]; then
+          fail "redmi10 silent ${REMI_AGE}s with the host tailnet daemon not running (path down; the phone buffers)"
+        elif [ "$REMI_DAEMON" = "unknown" ]; then
+          echo "UNKNOWN redmi10 transport: silent ${REMI_AGE}s and the tailnet daemon state is unreadable"
         else
           echo "UNKNOWN redmi10 transport: silent ${REMI_AGE}s and not on tailnet (device off)"
         fi
