@@ -93,7 +93,7 @@ python3 -m unittest discover -s experiments/trial-eval
 python3 -m unittest discover -s tools
 python3 tools/check_docs.py
 python3 tools/check_ci_coverage.py
-./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testBleScanEvents :app:testEvalOutcome :app:testExecProbe
+./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testBleScanEvents :app:testEvalOutcome :app:testExecProbe :app:testBoundedExec
 ```
 
 See the [verification record](docs/verification.md), [compatibility and physical validation](docs/compatibility.md), [observations](docs/observations.md), [actions](docs/actions.md), [integration](docs/integration.md), the [per-phone capability cards](docs/node-cards.md), and the [wire protocol](protocol/README.md). Physical Note3, Xiaomi and contemporary-device checks remain explicit rather than inferred from emulator/host tests.
