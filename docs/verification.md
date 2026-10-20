@@ -1172,3 +1172,58 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   run-as grep).
 - Evidence: `.mishe-tauftauf/artifacts/senses-wake108345-spool-window-physical-file-span.md`.
 
+
+## Class-C stopped probe attributed to its node, or left unknown (senses wake 118281, 2026-10-20)
+
+- Trigger: docs DM 119278 (wake 118733), which used the deployed class-C rows as evidence
+  for the Redmi10 node card and found the detector undocumented and its `host_stopped`
+  field not per-node. The class-C log is shared by every followed node, and
+  `host_stopped` came from an unqualified `adb shell dumpsys package org.androidbody`;
+  the host's adb enumerates only the Note3 (`4d00553d61ab90b7`), so all nine deployed
+  Redmi10 rows (sessions `7afa3a15`, `55d218e4`, `bf9d0097`, `45bdac2e`) carried the
+  Note3's app stopped state and no `node`.
+- Change (commit `7cdc70b`, `experiments/perception/watch.py` sha256
+  `a65f992925474fa2a7c53c02c9a430fb7aec6403b9a47f99a3275c3230a0315c`): rows carry
+  `node` (as the sibling channel detector does), `host_stopped_device` and
+  `host_stopped_reason`; the probe runs only when the enumerated serial equals the site's
+  recorded `<node>_serial` in `body/activation.json` (the statement
+  `tools/clock_offset.py::node_serials` reads), and otherwise no device command runs at
+  all. `experiments/perception/README.md` gains a class-C section, which previously
+  existed only as a docstring.
+- Verification (deterministic): `python3 -m unittest discover -s experiments/perception`
+  -> 239 OK (was 232); `python3 -m unittest discover -s tools` -> 411 OK; `py_compile`
+  OK. The reported defect is reproduced on the pre-change code and fixed on the new one
+  against the real activation record and real adb (`adb devices` -> `4d00553d61ab90b7`):
+  pre-change both nodes return `host_stopped=false` with no `node`; post-change note3
+  returns `host_stopped=false`, `node=note3`, `host_stopped_device=4d00553d61ab90b7`,
+  and redmi10 returns `host_stopped=null`, `host_stopped_reason=no-recorded-serial-for-node`
+  with the probe never called (`run.assert_not_called()`). The pinned cross-plant reader
+  (`mishe_tauftauf.body_perception._gap_records`, release `aab2c7151026`) parses new
+  note3 rows, new redmi10 rows and old deployed rows with `bad=0`; no core change is
+  needed. Independent review (System 1, read-only) found one P3 gap: a `text=True` decode
+  failure (`UnicodeDecodeError`, a `ValueError`) escaped `_adb_device_serial` /
+  `_host_stopped_state` and, because the class-C call sits outside `follow()`'s per-node
+  try, reached `main()` and exited the follower — pre-existing in the probe. Both handlers
+  now catch `UnicodeError`, with two tests (pre-change call raises, post-change returns
+  None).
+- Activation: deployed `body/runtime/watch.py` == committed source sha256
+  `a65f992925474fa2`; pre-deploy backup `watch.py.pre-deploy-20261020T163237Z` (sha256
+  `e15906956cc70a38`, hash-verified against the superseded bytes before the copy-in);
+  bytes written 2026-10-20T16:32:37Z, `android-body-perception.service` restarted
+  16:32:38Z (after), `tools/runtime_manifest.py record` 16:32:49Z GREEN (7 files, 6 unit
+  starts, `source_commit 7cdc70b`), `check` rc 0 GREEN. Live after the restart: the
+  service-written `body/perception/view.txt` and `events.txt` were written 16:32:58Z, the
+  deployed CLI renders both nodes (`NRestarts=0`).
+- Revert: restore `body/runtime/watch.py.pre-deploy-20261020T163237Z` over the deployed
+  copy, restart `android-body-perception.service`, re-run `tools/runtime_manifest.py
+  record`; or `git revert 7cdc70b` plus the same redeploy. No APK, device, transport,
+  cursor, queue, actuator or radio byte is touched.
+- Scope: host-side perception consumer and its tests/docs only. The changed code issues
+  only host-side `adb devices` plus, for an attributable node, the same bounded
+  `adb -s <serial> shell dumpsys package` read the probe already made; never
+  `adb reverse --list`.
+- Unknown: no production class-C row has been written by the deployed bytes yet (the
+  detector fires only on a real delivery halt), so the deployed row shape rests on the
+  temp-site live smoke and the pinned-consumer parse, not on a fresh production row.
+  Redmi10 has no adb channel, so its rows can never carry a host-side stopped verdict.
+- Evidence: `.mishe-tauftauf/artifacts/senses-wake118281-classc-host-stopped-attribution.md`.
