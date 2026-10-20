@@ -2334,6 +2334,101 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(verdict["transport"], "reachable")
         self.assertIsNone(verdict["reason"])
 
+    def drive_channel_polls(self, state, gaps, advance=128, poll=5.0, stale=30.0):
+        """Drive `_channel_delivery_verdict` the way the follower does: one poll every `poll`
+        seconds, with the cursor advancing by `advance` at the end of each gap. Returns the
+        clock and the last verdict."""
+        now = 0.0
+        state["poll_at"] = now
+        verdict = watch._channel_delivery_verdict(state, now, stale)
+        for gap in gaps:
+            elapsed = 0.0
+            while elapsed + poll < gap:
+                elapsed += poll
+                now += poll
+                state["poll_at"] = now
+                verdict = watch._channel_delivery_verdict(state, now, stale)
+            now += gap - elapsed
+            state["cursor"] += advance
+            state["poll_at"] = now
+            verdict = watch._channel_delivery_verdict(state, now, stale)
+        return now, verdict
+
+    def test_channel_delivery_verdict_reports_the_page_cadence_without_widening_the_floor(self):
+        # Redmi10 on 2026-10-20T19:11-19:26Z delivered one 128-record page every ~78 s, each
+        # advancing the cursor (docs DM 121552). The verdict reports that cadence as context
+        # and keeps the 30 s floor: widening the interval would hide real halts, because the
+        # same evening held 161 s halts beside 112 s slow stretches (see the module comment).
+        state = self.state()
+        state["cursor"] = 100
+        state["error"] = None
+        now, verdict = self.drive_channel_polls(state, [78.0] * 4)
+        self.assertEqual(verdict["advance_interval_median_seconds"], 78.0)
+        self.assertEqual(verdict["advance_interval_max_seconds"], 78.0)
+        self.assertEqual(verdict["advance_interval_samples"], 4)
+        # 60 s into the next page cycle, polled the way the follower does: the cursor is frozen
+        # by the floor, and the cadence context is what tells a reader this node advances in
+        # ~78 s pages rather than having stopped.
+        for _ in range(12):
+            now += 5.0
+            state["poll_at"] = now
+            verdict = watch._channel_delivery_verdict(state, now, 30.0)
+        self.assertEqual(verdict["cursor_age_seconds"], 60.0)
+        self.assertEqual(verdict["status"], "fail")
+        self.assertEqual(verdict["cursor_state"], "frozen")
+        self.assertEqual(verdict["reason"], "cursor-freeze")
+        self.assertEqual(verdict["interval_seconds"], watch.CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS)
+        self.assertEqual(verdict["advance_interval_median_seconds"], 78.0)
+        # A steady node's cadence must not widen the interval either.
+        state = self.state()
+        state["cursor"] = 100
+        state["error"] = None
+        now, verdict = self.drive_channel_polls(state, [4.0] * 4, advance=4)
+        self.assertEqual(verdict["advance_interval_median_seconds"], 4.0)
+        state["poll_at"] = now + 31.0
+        verdict = watch._channel_delivery_verdict(state, now + 31.0, 30.0)
+        self.assertEqual(verdict["status"], "fail")
+        self.assertEqual(verdict["cursor_state"], "frozen")
+
+    def test_channel_delivery_cadence_context_retains_eight_samples(self):
+        # The context keeps the newest eight advances, so a single long halt interval cannot
+        # misrepresent the node's typical cadence.
+        state = self.state()
+        state["cursor"] = 100
+        state["error"] = None
+        now, verdict = self.drive_channel_polls(state, [300.0] + [4.0] * 8, advance=4)
+        self.assertEqual(verdict["advance_interval_samples"], 8)
+        self.assertEqual(verdict["advance_interval_median_seconds"], 4.0)
+        self.assertEqual(verdict["advance_interval_max_seconds"], 4.0)
+
+    def test_channel_delivery_cadence_context_drops_the_followers_downtime(self):
+        # The advance clock is persisted with the node state, so the first advance after a
+        # follower restart would otherwise report the host's downtime as the node's cadence.
+        state = self.state()
+        state["cursor"] = 100
+        state["error"] = None
+        now, verdict = self.drive_channel_polls(state, [78.0] * 2)
+        self.assertEqual(verdict["advance_interval_samples"], 2)
+        # The follower is stopped for two hours while the node keeps delivering.
+        state["cursor"] += 128
+        state["poll_at"] = now + 7200.0
+        verdict = watch._channel_delivery_verdict(state, now + 7200.0, 30.0)
+        self.assertIsNone(verdict["advance_interval_median_seconds"])
+        self.assertEqual(verdict["advance_interval_samples"], 0)
+
+    def test_view_reports_the_channel_cadence_context(self):
+        state = self.state()
+        state["cursor"] = 100
+        state["error"] = None
+        now, verdict = self.drive_channel_polls(state, [78.0] * 3)
+        for _ in range(12):  # 60 s of polls inside the next page cycle
+            now += 5.0
+            state["poll_at"] = now
+            state["_channel_delivery_verdict"] = watch._channel_delivery_verdict(state, now, 30.0)
+        view = watch.render(state, now, 30.0)
+        self.assertIn("cursor=frozen transport=reachable interval=30.0s age=60.0s "
+                      "cadence=78.0s(n=3,max=78.0s)", view)
+
     def test_channel_delivery_detector_fires_on_cursor_freeze(self):
         state = self.state()
         now = time.time()

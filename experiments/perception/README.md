@@ -286,6 +286,48 @@ their `host_stopped` was measured on whichever device adb enumerated without
 being attributed to the row's node — on this site, the Note3's stopped state on
 Redmi10 rows.
 
+## Channel-delivery detection
+
+The consumer evaluates a per-node delivery verdict on every poll and renders it as
+`channel-delivery [status]`. `fail` means delivery loss by the detector's two rules: the
+transport is not reachable, or the node's cursor has not advanced within
+`CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS` (30 s). A cursor that advances while a channel stays
+stale is sensor throttling, not delivery loss.
+
+The interval is deliberately not widened for a draining node. Redmi10 on
+2026-10-20T19:11-19:26Z drained a backlog by delivering one 128-record page every ~78 s, each
+advancing the cursor, so those cycles report `cursor=frozen` while delivery is progressing
+(docs DM 121552). Host-side evidence does not separate that page cadence from a halt: the same
+evening held accepted-POST gaps of 36.9-112.6 s with no declared cause beside real halts of
+161.4 s, 324.8 s, 384.4 s and 522.0 s, so an interval wide enough to ignore the page cadence
+would stop reporting the 161.4 s halt. The verdict reports the node's own cadence as context
+instead of filtering the wait:
+
+| field | meaning |
+|---|---|
+| `cursor_age_seconds` | seconds since the cursor last advanced |
+| `advance_interval_median_seconds` | median of the last `CHANNEL_DELIVERY_ADVANCE_SAMPLES` (8) completed advance intervals, null before the first |
+| `advance_interval_max_seconds` | slowest of those retained intervals |
+| `advance_interval_samples` | how many intervals the two fields cover |
+
+The pane prints them as `interval=30.0s age=Ns cadence=Ms(n=k,max=Js)`, so a reader can see
+that a frozen cursor is advancing in ~78 s pages rather than stopped. The intervals describe
+the most recent uninterrupted observation window: the advance clock is persisted with the
+node state, so a verdict gap wider than the module's refresh bound clears the retained samples
+and drops the interval spanning it. Two residual cases are stated rather than hidden — a
+restart shorter than that bound still folds its downtime into one sample, and one stalled poll
+clears the samples for a cycle — so the field is context, never a filter. The halt census
+remains `body/queues/writes.jsonl` (the host's accepted POSTs), not this verdict.
+
+Detections append a bounded record to
+`SITE/body/perception/channel-delivery-gap-detectors.jsonl` (last 128 lines, atomically
+replaced). One row per `(session, reason)` onset, kept while the condition holds and across a
+return to `pass`: this log is an onset record, not a halt census. A per-episode key would log
+every page cycle of a drain instead — measured on the 2026-10-20 evening, 18 rows in 75 min
+of drain, 11 of them 75.4-83.6 s page cycles — and those rows would evict real halts from the
+bounded file. A row carries the frozen cursor, its age, the node's cadence context, the
+transport verdict, the per-channel ages and the session.
+
 ## Light-cycle resumption detector
 
 `light_cycle_monitor.py` is a separate bounded host-side process that polls the live node's

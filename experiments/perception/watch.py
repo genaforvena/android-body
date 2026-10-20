@@ -891,6 +891,12 @@ def detect_class_c_delivery_gap(state, log_dir):
 
 CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS = 30.0
 CHANNEL_DELIVERY_DETECTOR_LINES = 128
+# The verdict reports the node's own recent cursor-advance cadence as context, because a
+# node draining a backlog advances in fixed-size pages on its own schedule (Redmi10 on
+# 2026-10-20T19:11-19:26Z: one 128-record page every ~78 s). It does NOT widen the freeze
+# interval: no host-side statistic separates a slow page cadence from a halt here (the same
+# evening held real 161 s halts and 112 s slow stretches), so widening would hide halts.
+CHANNEL_DELIVERY_ADVANCE_SAMPLES = 8
 
 
 def _channel_delivery_verdict(state, now, stale):
@@ -898,11 +904,32 @@ def _channel_delivery_verdict(state, now, stale):
 
     Tracks cursor advance and computes per-channel observation ages. Returns
     a verdict dict consumed by both the detector (for JSONL emission) and
-    space_snapshot (for the per-node channel_delivery field).
+    space_snapshot (for the per-node channel_delivery field). The advance
+    intervals reported as cadence context describe the most recent uninterrupted
+    observation window: the state (and with it the advance clock) is persisted
+    across follower restarts, so a verdict gap wider than ``stale`` clears the
+    retained samples and the interval spanning that gap is not recorded. The
+    bound is the module's consumer-refresh bound, so two residual cases are
+    stated rather than hidden: a restart shorter than ``stale`` still folds its
+    downtime into one sample, and a single poll that itself stalls past ``stale``
+    (a hung response is bounded per socket operation, not per response) clears
+    the samples for one cycle, after which they are relearned.
     """
+    previous_verdict_at = state.get("_channel_delivery_last_verdict_at")
+    state["_channel_delivery_last_verdict_at"] = now
+    # `stale` is this module's consumer-refresh bound: a verdict gap wider than it means no
+    # verdict was computed for that long, so nothing spanning it is a node measurement.
+    observing = (previous_verdict_at is not None and now - previous_verdict_at <= stale)
+    if not observing:
+        state["_channel_delivery_advance_intervals"] = []
     cursor = state["cursor"]
     prev_cursor = state.get("_channel_delivery_prev_cursor")
     if prev_cursor is not None and cursor != prev_cursor:
+        previous_advance = state.get("_channel_delivery_last_cursor_advance_at")
+        if observing and previous_advance is not None:
+            intervals = state.setdefault("_channel_delivery_advance_intervals", [])
+            intervals.append(round(now - previous_advance, 3))
+            del intervals[:-CHANNEL_DELIVERY_ADVANCE_SAMPLES]
         state["_channel_delivery_last_cursor_advance_at"] = now
     state["_channel_delivery_prev_cursor"] = cursor
 
@@ -912,6 +939,12 @@ def _channel_delivery_verdict(state, now, stale):
         last_advance = now
 
     cursor_age = now - last_advance
+    # Context, not a filter: the median and slowest of the retained advance intervals say how
+    # fast this node has been advancing, so a reader can tell a page-cadence wait from a stop
+    # (see CHANNEL_DELIVERY_ADVANCE_SAMPLES above). The status rule stays the fixed floor.
+    intervals = sorted(state.get("_channel_delivery_advance_intervals") or [])
+    cadence = intervals[len(intervals) // 2] if intervals else None
+    slowest = intervals[-1] if intervals else None
     cursor_frozen = cursor_age > CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS
     transport_status = transport(state, now, stale)
 
@@ -951,6 +984,9 @@ def _channel_delivery_verdict(state, now, stale):
         "channel_ages_seconds": channel_ages,
         "channel_event_ages_seconds": channel_event_ages,
         "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS,
+        "advance_interval_median_seconds": cadence,
+        "advance_interval_max_seconds": slowest,
+        "advance_interval_samples": len(intervals),
     }
 
 
@@ -959,7 +995,17 @@ def detect_channel_delivery_gap(state, log_dir, stale):
 
     RED only on delivery loss: transport unreachable OR cursor not advancing
     within CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS. Cursor advancing + channel
-    stale = sensor throttling, NOT delivery loss. Emits bounded JSONL to
+    stale = sensor throttling, NOT delivery loss. The interval is deliberately
+    not widened for a draining node's page cadence: host-side evidence cannot
+    separate a slow page cadence from a halt (see
+    CHANNEL_DELIVERY_ADVANCE_SAMPLES), so the row carries the node's own recent
+    cadence as context instead of hiding the wait. One row per
+    ``(session, reason)`` onset -- the key is kept while the condition holds and
+    across a return to pass, so this log is an onset record, not a halt census:
+    with the floor unchanged, a per-episode key would log every page cycle of a
+    drain (18 rows in 75 min of drain on 2026-10-20) and evict real halts from
+    the bounded file. The halt census is the host's accepted-POST record
+    ``body/queues/writes.jsonl``. Emits bounded JSONL to
     log_dir/channel-delivery-gap-detectors.jsonl.
     """
     if log_dir is None:
@@ -985,6 +1031,8 @@ def detect_channel_delivery_gap(state, log_dir, stale):
         "cursor": state["cursor"],
         "cursor_state": verdict["cursor_state"],
         "cursor_age_seconds": verdict["cursor_age_seconds"],
+        "advance_interval_median_seconds": verdict["advance_interval_median_seconds"],
+        "advance_interval_max_seconds": verdict["advance_interval_max_seconds"],
         "transport": verdict["transport"],
         "reason": reason,
         "channel_ages_seconds": verdict["channel_ages_seconds"],
@@ -1875,7 +1923,10 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
         "cursor_age_seconds": None, "transport": "unknown",
         "channel_ages_seconds": {k: None for k in SENSORS},
         "channel_event_ages_seconds": {k: None for k in SENSORS},
-        "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS}
+        "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS,
+        "advance_interval_median_seconds": None,
+        "advance_interval_max_seconds": None,
+        "advance_interval_samples": 0}
     ages = " ".join(
         f"{k}={cd['channel_ages_seconds'].get(k)}s"
         for k in SENSORS)
@@ -1883,9 +1934,14 @@ def render(state, now, stale, node_state=None, clock=None, spool=None):
     silence = " ".join(
         f"{k}=" + (f"{event_ages[k]}s" if event_ages.get(k) is not None else "none")
         for k in SENSORS)
+    cadence = cd.get("advance_interval_median_seconds")
     lines.append(f"  channel-delivery [{cd['status']}]: cursor={cd['cursor_state']} "
                  f"transport={cd['transport']} interval={cd['interval_seconds']}s "
-                 f"{ages} silence {silence}")
+                 f"age={cd['cursor_age_seconds']}s"
+                 + (f" cadence={cadence}s(n={cd['advance_interval_samples']}"
+                    f",max={cd['advance_interval_max_seconds']}s)"
+                    if cadence is not None else "")
+                 + f" {ages} silence {silence}")
     rssi = state["latest"].get("wifi_link_rssi_dbm")
     lines.append("Wi-Fi link RSSI (connected-link API observation; not room proximity):")
     lines.append("  status=" + wifi_rssi_status(rssi, now, stale) +
@@ -2236,7 +2292,10 @@ def space_snapshot(states, now, stale, node_states=None, clocks=None):
                 "cursor_age_seconds": None, "transport": "unknown",
                 "channel_ages_seconds": {k: None for k in SENSORS},
                 "channel_event_ages_seconds": {k: None for k in SENSORS},
-                "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS}
+                "interval_seconds": CHANNEL_DELIVERY_CURSOR_FREEZE_SECONDS,
+                "advance_interval_median_seconds": None,
+                "advance_interval_max_seconds": None,
+                "advance_interval_samples": 0}
         })
     return {"schema_version": 1, "generated_at_utc": stamp(now),
             "producer": {"name": "android-body-perception", "entry_point": "watch.py",
