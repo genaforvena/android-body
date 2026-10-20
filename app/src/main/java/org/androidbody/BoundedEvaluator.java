@@ -46,9 +46,11 @@ import java.util.concurrent.TimeoutException;
  * destroy-on-timeout and a truthful {@code destroyed=} flag. A target that
  * still holds its merged output stream when the decision is taken (a
  * backgrounded descendant) is reported as an unavailable outcome naming the
- * open stream; a descendant that writes only after the direct child's exit can
- * be dropped, which is why exec targets must not background processes (see
- * {@link BoundedExec} for the measured reader contract).
+ * open stream when the reader's blocking read had already begun at the direct
+ * child's exit, and as a silent empty success otherwise; a descendant that
+ * writes only after the direct child's exit can be dropped, which is why exec
+ * targets must not background processes (see {@link BoundedExec} for the
+ * measured reader contract).
  */
 public final class BoundedEvaluator {
     public static final int MAX_OUTPUT_PER_COMMAND = 1024;
@@ -385,7 +387,9 @@ public final class BoundedEvaluator {
      * to the SELinux MAC decision; a child past its deadline is destroyed and
      * the destroy result is reported truthfully, and a target that still holds
      * the merged output stream at the direct child's exit is reported as an
-     * unavailable outcome naming the open stream.
+     * unavailable outcome naming the open stream when the reader's blocking
+     * read had already begun at that exit, and as a silent empty success
+     * otherwise.
      */
     private static String exec(Command command, File filesDir, int uid) {
         String path = command.argument;
