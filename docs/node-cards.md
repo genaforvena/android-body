@@ -12,7 +12,7 @@ present availability, supported bounded text requests, limits. Declaration is no
 a working sensor. "Present availability" always carries its observation instant; staleness
 is a property of the channel, never a silent default.
 
-Last updated 2026-10-20T19:30Z. Availability stamps below are from the read-only deployed view
+Last updated 2026-10-20T21:42Z. Availability stamps below are from the read-only deployed view
 and can go stale; each correction is stated in the card body with its evidence, and the history
 lives in Git.
 
@@ -132,8 +132,8 @@ emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side 
 file is stale (`mode=UNKNOWN`, `status=stale`, reason `node-state-stale`; unknown is never
 OFF). No persisted owner choices exist yet to honor.
 
-Present availability (2026-10-20T19:29Z, read-only deployed view): delivering, cursor 132,616,
-`channel-delivery [pass]: cursor=advancing`. The delivery pattern changed today: 4-record POSTs
+Present availability (2026-10-20T21:42Z, read-only deployed view): delivering, cursor 139,108,
+`channel-delivery [pass]: cursor=advancing`, cadence 6.1 s over the last 8 advances. The delivery pattern changed today: 4-record POSTs
 every ~5 s until 18:53Z, then three silences — 18:53:14→19:01:56Z (522.0 s), 19:01:56→19:04:38Z
 (161.4 s), 19:04:38→19:11:02Z (384.4 s) — each ending in a 128-record page, and since 19:11Z
 128-record backlog pages every ~80 s. Current session `af9d723f…`, whose session-start bundle was
@@ -150,12 +150,17 @@ operator's; this plant does not override a deliberate operator state.
 The three evening halts match no such stop: the `tailscaled` journal has no ipn-state transition
 after 17:39:11Z, and session `af9d723f…` spans both sides of each one. Rows whose phone epochs fall
 inside a silence arrived after it, so the phone stayed alive and buffered while the host accepted
-nothing. Their cause is UNKNOWN from here — phone-side pause, relay/DERP path and the serve front
-are unseparated — and they meet health's own falsifier for the transport-side account (a >60 s gap
-with no `tailscaled` stop; health DM 121551, senses DM 121552 on the detector's per-session
-dedup). The tailnet stops' resolver remains the operator; these three have none. Class-c stays the
-detector's no-known-cause class, not a cause: the nine older rows since 2026-10-15 (cursors
-1252–106658, including the ~3.5-day 98466 halt) have no matched tailnet window either.
+nothing. Health's causal read of the same windows (wake 118178, DM 121882) narrows them to
+transport-path stalls on the host's tailnet serve path: the serve front logged `TLS handshake error
+… EOF` and `CreateEndpoint … connection was refused` from the phone's own tailnet address inside
+the silences, the phone was retrying throughout, and tailnet stop, rendezvous-listener outage,
+serve reload and phone death are each ruled out. The remaining split — host DERP egress vs the
+serve front's accept — is still UNKNOWN and awaits the A/B/C gap detector health specified; the
+three meet health's own falsifier for the transport-side account (a >60 s gap with no `tailscaled`
+stop; senses DM 121552 on the detector's per-session dedup). The tailnet stops' resolver remains the
+operator; these three have none. Class-c stays the detector's no-known-cause class, not a cause:
+the nine older rows since 2026-10-15 (cursors 1252–106658, including the ~3.5-day 98466 halt)
+have no matched tailnet window either.
 
 The rows' `host_stopped` field was the only adb-attached device's (Note3's) app state, not
 Redmi10's, and must not be read as evidence about this phone; senses fixed the probe (commits
