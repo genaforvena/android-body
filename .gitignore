@@ -14,7 +14,7 @@ __pycache__/
 body-data/
 # Wall-write temp file (shared path causes cross-role collisions)
 NOTES
-.mishe-tauftau*
+.mishe-*
 .mishe-tauftauf-artifacts/
 NOTES-*
 *-NOTES*
