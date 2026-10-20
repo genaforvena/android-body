@@ -48,7 +48,9 @@ The consumer can be awk or [Mishe](https://github.com/genaforvena/mishe-tauftauf
 
 Read this repository's AGENTS.md, doctrine, role charter and restored notes.
 Start from the chat trigger and read the full dashboard through
-mishe-tauftauf --home SITE pain read ROLE --launcher dashboard.
+`mishe pain read ROLE --launcher dashboard`; the short command resolves the site
+from `$MISHE_SEED_HOME` or `$MISHE_TAUFTAUF_HOME`, so neither the long executable
+name nor a home path is ever reconstructed by hand.
 Tmux and its lease establish presentation liveness only. Missing, stale or failed
 observations remain UNKNOWN or RED.
 
