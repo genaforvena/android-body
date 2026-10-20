@@ -16,9 +16,15 @@ import java.nio.charset.Charset;
  *
  * <p>Bounds: stdout+stderr ≤ 4096 B (merged via {@code redirectErrorStream}),
  * duration ≤ 5 s, storage ≤ 1 file, child destroyed on timeout/OFF.
- * {@code /system/bin/sh} spawns no descendants, so a process-tree kill is not
- * required. The exec machinery itself is shared with the consumer write/exec verbs
- * in {@link BoundedExec}.
+ * {@code /system/bin/sh} spawns no descendants of its own, so a process-tree
+ * kill is not required; if the target script backgrounds one and that
+ * descendant still holds the merged stream when the decision is taken, the
+ * probe reports {@code unavailable reason=exec stdout open at direct-child
+ * exit} rather than a silent empty success. A descendant that writes only after
+ * the direct child's exit can be dropped (see {@link BoundedExec} for the
+ * measured reader contract), so exec targets must not background processes. The
+ * exec machinery itself is shared with the consumer write/exec verbs in
+ * {@link BoundedExec}.
  *
  * <p>Attribution: {@code uid=} is the PARENT's {@code Process.myUid()} (inherited
  * by the child, no privilege change), not an independently-read child identity.

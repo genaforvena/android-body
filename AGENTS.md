@@ -24,7 +24,7 @@ python3 -m unittest discover -s experiments/perception
 python3 -m unittest discover -s experiments/minimal-substrate
 python3 -m unittest discover -s experiments/trial-eval
 python3 -m unittest discover -s tools
-./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testBleScanEvents :app:testEvalOutcome :app:testExecProbe
+./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testBleScanEvents :app:testEvalOutcome :app:testExecProbe :app:testBoundedExec
 ```
 
 Use the exact final APK for installation checks. Record its SHA-256 and verify v1 signing for API18 devices. Recheck after source/resource changes. Physical validation lives in `docs/compatibility.md`; leave unrun checks visibly unrun.

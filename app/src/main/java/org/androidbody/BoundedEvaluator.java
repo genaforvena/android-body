@@ -43,7 +43,12 @@ import java.util.concurrent.TimeoutException;
  * Bounds: 1,024 bytes/output, 65,536 bytes/session, 10s timeout, 128
  * commands/session, 65,536 bytes cumulative write storage per session; exec
  * stdout ≤ 4096 B and exec duration ≤ 5 s via {@link BoundedExec}, with
- * destroy-on-timeout and a truthful {@code destroyed=} flag.
+ * destroy-on-timeout and a truthful {@code destroyed=} flag. A target that
+ * still holds its merged output stream when the decision is taken (a
+ * backgrounded descendant) is reported as an unavailable outcome naming the
+ * open stream; a descendant that writes only after the direct child's exit can
+ * be dropped, which is why exec targets must not background processes (see
+ * {@link BoundedExec} for the measured reader contract).
  */
 public final class BoundedEvaluator {
     public static final int MAX_OUTPUT_PER_COMMAND = 1024;
@@ -378,7 +383,9 @@ public final class BoundedEvaluator {
      * Exec the app-written file itself under the app identity (class-4 route).
      * The owner-only exec bit is set first so a DAC denial is not misattributed
      * to the SELinux MAC decision; a child past its deadline is destroyed and
-     * the destroy result is reported truthfully.
+     * the destroy result is reported truthfully, and a target that still holds
+     * the merged output stream at the direct child's exit is reported as an
+     * unavailable outcome naming the open stream.
      */
     private static String exec(Command command, File filesDir, int uid) {
         String path = command.argument;

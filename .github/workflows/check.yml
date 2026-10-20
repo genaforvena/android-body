@@ -77,7 +77,7 @@ jobs:
         # sources, through the registered task's dependsOn chain. The
         # ble-probe module's Android sources were compiled but not linted
         # until :ble-probe:lintDebug was added here.
-        run: ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe :ble-probe:testProbeReport :ble-probe:lintDebug
+        run: ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testProtocol :app:testSpool :app:testRestore :app:testExecProbe :app:testBoundedExec :ble-probe:testProbeReport :ble-probe:lintDebug
       - name: APKs carry the v1 signature the API 18 install path needs
         run: |
           sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
