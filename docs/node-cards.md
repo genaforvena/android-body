@@ -12,7 +12,7 @@ present availability, supported bounded text requests, limits. Declaration is no
 a working sensor. "Present availability" always carries its observation instant; staleness
 is a property of the channel, never a silent default.
 
-Last updated 2026-10-20T16:28Z. Availability stamps below are from the read-only deployed view
+Last updated 2026-10-20T17:42Z. Availability stamps below are from the read-only deployed view
 and can go stale; each correction is stated in the card body with its evidence, and the history
 lives in Git.
 
@@ -125,24 +125,28 @@ emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side 
 file is stale (`mode=UNKNOWN`, `status=stale`, reason `node-state-stale`; unknown is never
 OFF). No persisted owner choices exist yet to honor.
 
-Present availability (2026-10-20T16:25Z, read-only deployed view): halted again, cause diagnosed.
-Cursor 117870, phone `stale/phone-silent-or-delayed`, `channel-delivery [fail]: cursor=frozen`,
-battery/light/acceleration silence 8,525.6 s (~2 h 22 m); the latest delivered record is
-2026-10-20T14:02:57Z. Session `45bdac2e…` started 2026-10-20T07:18:02Z and delivered cursor 98466 →
-106658 after ~3.5 days without a delivered sample (last 2026-10-16T20:17:19Z; that offline cause
-was never established from here — health DM 105877). The recurring halts are transport-side, not
-phone-side: health's diagnosis (wake 118178, DM 119702) matches every Redmi10 write gap in the last
-~7 h to a host tailnet availability window — the phone's HTTPS POST to the `tailscale serve` front
+Present availability (2026-10-20T17:42Z, read-only deployed view): delivering again; cause diagnosed.
+Cursor 125,900, `channel-delivery [pass]: cursor=advancing`; the latest delivered record is
+2026-10-20T17:42Z. The outage that began 14:03:03Z ended 17:39:11Z (`Stopped → Running`,
+`WantRunning=true`) and the phone drained its spool in 132 backlog writes carrying 7,914 records
+over 435.6 s (17:40:24.765Z → 17:47:40.356Z), back to 4-record writes at 17:40:38Z. Session
+`45bdac2e…` started 2026-10-20T07:18:02Z and delivered cursor 98466 → 106658 after ~3.5 days
+without a delivered sample (last 2026-10-16T20:17:19Z; that offline cause was never established from
+here — health DM 105877). The recurring halts are transport-side, not phone-side: health's
+diagnosis (wake 118178, DM 119702) matches every Redmi10 write gap today to a host tailnet
+availability window — the phone's HTTPS POST to the `tailscale serve` front
 (`https://mesh-home.tail3e4555.ts.net` → `127.0.0.1:8765`) has no route while the host daemon is
 stopped, so the app appends to its durable spool and delivers in a burst when the path returns.
-For the current halt the daemon went `Running → Stopped` at 14:03:03Z and the last accepted POST is
-14:02:57.382071Z, 5.7 s before. The 10:44:50Z halt has the same signature: no accepted POST from
-10:08:43.906851Z to 13:20:30.449771Z (11,506.5 s) while the tailnet was down 10:09:09Z–13:19:31Z,
-then 72 backlog writes carrying 9,168 records in 8.7 s (13:20:30.449Z → 13:20:39.127Z) as the spool
+All four gaps today (09:30, 09:51, 10:08, 14:03Z) contain a tailnet stop; none is stop-less. The
+14:03:03Z halt: no accepted POST from 14:02:57.382071Z to 17:40:24.765601Z (13,047.4 s) while the
+tailnet was down 14:03:03Z–17:39:11Z (edges 5.6 s and 73.8 s). The 10:44:50Z halt: no accepted
+POST from 10:08:43.906851Z to 13:20:30.449771Z (11,506.5 s) while the tailnet was down
+10:09:09Z–13:19:31Z, then 72 backlog writes carrying 9,168 records in 8.7 s (13:20:30.449Z →
+13:20:39.127Z) as the spool
 drained — not a phone process death. Class-c is the detector's no-known-cause *class*, not a cause;
 the older class-c rows (nine since 2026-10-15, cursors 1252–106658, including the ~3.5-day 98466
-halt) have no matched tailnet window and their cause is not established from here. Resolver for
-the current halt is the operator, who stops the host tailnet; this plant does not override a
+halt) have no matched tailnet window and their cause is not established from here. The recurring
+halts' resolver is the operator, who stops the host tailnet; this plant does not override a
 deliberate operator state. The rows' `host_stopped` field was the only adb-attached device's
 (Note3's) app state, not Redmi10's, and must not be read as evidence about this phone; senses fixed
 the probe (commits `7cdc70b`+`0951986`, DM 120528) so new rows carry `node`, and a node with no
@@ -169,7 +173,8 @@ none is authorized; whether this build carries the vibration grammar is unverifi
 
 Limits: Redmi10 is preparation, not a wired node: no USB window, no owner checkboxes,
 BLE scan structurally dead on the installed build, Wi-Fi RSSI verdict ambiguous, spool
-contents unread, delivery halting repeatedly for an unestablished reason. The remedy is an APK
+contents unread, delivery halting in every host tailnet-outage window while the older class-c
+rows' cause stays unestablished from here. The remedy is an APK
 update to the current candidate
 `downloads/android-body-debug.apk` = `87b36024…` (73,358 B, source `e0ea84d` (app bytes `697d68a`), published `e0ea84d`), which carries `e131909` (BLUETOOTH_SCAN plus runtime request), `556049c` (ACCESS_NETWORK_STATE / `network_id_unavailable`), `0c83e32` (class-4 ExecProbe) and `697d68a` (`EvalOutcome` write-receipt bound); it supersedes `3b6dcf7a…` (72,914 B, source `8dbb324`) and `a17829c7…` (70,631 B, source `a201891`).
 The update needs the human on the
