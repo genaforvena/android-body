@@ -1,13 +1,22 @@
 # Verification record
 
-Checked 2026-10-07; updated through 2026-10-19. Version 0.2 adds persistent ON and durable collect/upload-later behavior. Host/build evidence is separate from Android runtime and physical-device evidence.
+Checked 2026-10-07; updated through 2026-10-20. Version 0.2 adds persistent ON and durable collect/upload-later behavior. Host/build evidence is separate from Android runtime and physical-device evidence.
 
-## Current delivery observation — 2026-10-19
+## Current delivery observation — 2026-10-20
 
-At 2026-10-19T13:50:37Z the deployed perception consumer reached both configured endpoints, but neither provided fresh delivered phone measurements. Note3 was `ON_COLLECT_ONLY`; its delivered cursor remained frozen at 265956 on `invalid line here`, with last valid sensor records from 2026-10-14.
-Its app-private spool (3,882,053 bytes, 28,148 rows, 539,026 cumulative drops; physical-file span 5.9h) is collection-side evidence only and does not establish delivery. Redmi10's cursor remained frozen at 98466 with last delivered measurements from 2026-10-16; its spool summary was absent. Endpoint reachability and host service state are not phone liveness. Treat current physical measurements as stale/unknown; no new physical trial result follows from these observations.
+At 2026-10-20T07:37:18Z the deployed perception consumer reached both configured endpoints. Redmi10 was delivering again: session `45bdac2e-a970-4a38-80d6-273e8537898a` began at 07:18:02Z and its cursor advanced 98466 → 99400 with `channel-delivery [pass]`.
+Battery, light (32.0 lux) and acceleration (magnitude 9.851 m/s²) were `fresh-clock-conditional` at 07:37:16Z. Its app-private spool summary is still absent, so no collection-side reading exists for it. Freshness here is a delivery verdict, not occupancy, motion or presence evidence.
 
-Source: deployed `body/runtime/watch.py view --site .mishe-tauftauf`, read 2026-10-19T13:50:37Z. The malformed-row parser boundary and handset-persisted cursor/action state remain unreconciled; do not infer them from the host consumer cursor or mutate queues/cursors pending owner evidence.
+Note3 remained `ON_COLLECT_ONLY` and silent since 2026-10-14, last valid sensor records 2026-10-14T06:13:24Z (receipt 06:13:52Z); its app-private spool (2,479,849 bytes, 17,833 rows, 613,773 cumulative drops, physical-file window 4.0h) is collection-side evidence only and does not establish delivery.
+Endpoint reachability and host service state are not phone liveness.
+
+Source: deployed `body/runtime/watch.py view --site .mishe-tauftauf`, read 2026-10-20T07:37:18Z, plus the endpoint queues under `body/queues/`.
+
+Checked cause of the Note3 silence (2026-10-20, genome). The delivered cursor 265956 is the *head* of `body/queues/note3.observations.log` — 265,956 lines, unchanged since 2026-10-14T08:58:03Z — so no page is pending and no parser condition is involved.
+Its last two rows are host-side test rows (`265955 invalid line here`, `265956 invalid line here`) whose envelopes are valid: replaying the whole queue through the deployed `parse_page` in 128-line pages consumes all 265,956 records with zero failures and ends at cursor 265956.
+The earlier "frozen on a malformed row" / "malformed-row parser boundary unreconciled" reading is therefore disconfirmed.
+The silence is by design: with the phone's owner collect-only checkbox set, `BodyService.java:310` short-circuits the network loop before any HTTP, matching the host-side verdict `mode=ON_COLLECT_ONLY` / `collect-only: no HTTP by design`.
+Delivery resumes when that owner control changes, not by any consumer, queue or cursor repair. The handset-persisted cursor/action state remains unread (app-private); do not infer it from the host consumer cursor or mutate queues/cursors.
 
 ## Built artifact
 
