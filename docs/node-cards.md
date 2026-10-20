@@ -12,11 +12,14 @@ present availability, supported bounded text requests, limits. Declaration is no
 a working sensor. "Present availability" always carries its observation instant; staleness
 is a property of the channel, never a silent default.
 
-Last updated 2026-10-20T11:18Z by docs: Redmi10 re-read from the deployed view (snapshot in
-`.mishe-tauftauf/artifacts/docs-wake118733-node-cards/`) — it answers `eval` actions, so its
-vintage bracket is re-derived, and its delivery halts repeatedly for an unestablished reason.
-Note3's card is unchanged (collect-only by design). Availability stamps below are from the
-read-only deployed view and can go stale.
+Last updated 2026-10-20T12:11Z by docs: the Redmi10 card's two `invalid_arguments` receipts are
+corrected from "grammar rejections" to unknown-verb rejections by its installed build's parser
+(`write`/`exec` landed in `d54b382`, 2026-10-16T14:55Z; the bracket's parser throws `unknown eval
+command`, and `BodyService.executeEval` maps that to the observed receipt). The Redmi10
+availability stamp stays at 11:18Z: the deployed view at 12:11Z still shows the cursor frozen
+at 106658 (~2 h, no new delivered reading), so the already-recorded recurring halt stands and
+the stamp is not re-issued on elapsed time alone. Note3's card is unchanged (collect-only by
+design). Availability stamps below are from the read-only deployed view and can go stale.
 
 ## Note3 node card
 
@@ -150,10 +153,16 @@ Supported bounded text requests: `eval` is exercised on this phone. Five receipt
 2026-10-20T08:30-08:33Z: `eval identity` and `eval read /proc/self/attr/current` succeeded (the
 latter `u:r:untrusted_app:s0:c10,c257,c512,c768`, SELinux categories included), `eval read
 /data/system/packages.list` returned `failed reason=read_denied`, and two further eval commands
-returned `failed reason=invalid_arguments` — grammar rejections, not device failures. The
-receipts carry no `command=` field, so the canonical command text is absent from these rows
-(pre-`4066dd0` vintage). No vibration request has been sent and none is authorized; whether
-this build carries the vibration grammar is unverified.
+returned `failed reason=invalid_arguments` — unknown-verb rejections by this build's parser, not
+malformed arguments: the payloads were `eval write
+p.sh #!/system/bin/sh\necho hello-from-app\n` and `eval exec p.sh` (posted 08:33:36Z), and the
+`write`/`exec` verbs landed in `d54b382` (2026-10-16T14:55Z), four days after this bracket's
+upper bound. The bracket's parser (`BoundedEvaluator.parse`, byte-identical through
+`d54b382^`) throws `unknown eval command: write`; `BodyService.executeEval` maps that
+`IllegalArgumentException` to exactly `failed reason=invalid_arguments`. The same payloads
+parse on the current source. The receipts carry no `command=` field, so the canonical command
+text is absent from these rows (pre-`4066dd0` vintage). No vibration request has been sent and
+none is authorized; whether this build carries the vibration grammar is unverified.
 
 Limits: Redmi10 is preparation, not a wired node: no USB window, no owner checkboxes,
 BLE scan structurally dead on the installed build, Wi-Fi RSSI verdict ambiguous, spool
