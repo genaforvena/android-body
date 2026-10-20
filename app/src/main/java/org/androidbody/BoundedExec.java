@@ -42,12 +42,17 @@ import java.util.concurrent.atomic.AtomicReference;
  * <li>{@code ok=true} does <em>not</em> prove every write end was closed: the
  * JVM's process-exit handling ends the reader's view of the pipe at the direct
  * child's exit (measured: {@code read} returns -1 within milliseconds of that
- * exit while the OS pipe is still held open by a descendant, and a descendant
- * write 3 s later is never delivered even with a 5 s join budget). A descendant
- * that writes only after the direct child's exit can therefore be dropped
- * silently, so "target printed nothing" and "target output was dropped" are not
- * always distinguishable. The consumer contract that exec targets must not
- * background processes is what keeps that residual out of reach.</li>
+ * exit while the OS pipe is still held open by a descendant). A descendant's
+ * later write is delivered only when the reader was already blocked in the read
+ * at that exit, and dropped otherwise, so "target printed nothing" and "target
+ * output was dropped" are not distinguishable in the dropped case (genome wake
+ * 122050, JDK 17.0.20.1, {@code /bin/sh} = dash, one case per fresh JVM:
+ * {@code READ_JOIN_MS} 5000 with the reader certainly parked delivered a 3 s
+ * write 40/40; an immediate exit dropped it 120/120). With the shipped
+ * {@code READ_JOIN_MS} 1000 such a write cannot arrive inside the join budget,
+ * so it is reported as the open-stream failure below rather than as an empty
+ * success. The consumer contract that exec targets must not background
+ * processes is what keeps that residual out of reach.</li>
  * </ul>
  *
  * <p>The reader may stay parked in the read until the stream closes, so a
