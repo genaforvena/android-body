@@ -193,7 +193,7 @@ BLE scan structurally dead on the installed build, Wi-Fi RSSI verdict ambiguous,
 contents unread, delivery halting in every host tailnet-outage window while the older class-c
 rows' cause stays unestablished from here. The remedy is an APK
 update to the current candidate
-`downloads/android-body-debug.apk` = `2f6f3295…` (73,660 B, clean build of `e707a4a`), which carries `e131909` (BLUETOOTH_SCAN plus runtime request), `556049c` (ACCESS_NETWORK_STATE / `network_id_unavailable`), `0c83e32` (class-4 ExecProbe), `697d68a` (`EvalOutcome` write-receipt bound) and `4e4caba` (the bounded-exec reader-contract change); it supersedes `9678d87c…` (73,650 B, source `6fa8601`), `04439ff9…` (73,656 B, source `b025ede`), `87b36024…` (73,358 B, source `e0ea84d`), `3b6dcf7a…` (72,914 B, source `8dbb324`) and `a17829c7…` (70,631 B, source `a201891`).
+`downloads/android-body-debug.apk` = `a5be0e4…` (73,653 B, clean build of `3047f17`), which carries `e131909` (BLUETOOTH_SCAN plus runtime request), `556049c` (ACCESS_NETWORK_STATE / `network_id_unavailable`), `0c83e32` (class-4 ExecProbe), `697d68a` (`EvalOutcome` write-receipt bound) and `4e4caba` (the bounded-exec reader-contract change); it supersedes `2f6f3295…` (73,660 B, source `e707a4a`), `9678d87c…` (73,650 B, source `6fa8601`), `04439ff9…` (73,656 B, source `b025ede`), `87b36024…` (73,358 B, source `e0ea84d`), `3b6dcf7a…` (72,914 B, source `8dbb324`) and `a17829c7…` (70,631 B, source `a201891`).
 The update needs the human on the
 phone (no ADB channel): either `adb install -r` in a USB window or copying the APK across
 and opening it. An install alone still leaves the scanner dead — `BLUETOOTH_SCAN` is
