@@ -12,14 +12,15 @@ present availability, supported bounded text requests, limits. Declaration is no
 a working sensor. "Present availability" always carries its observation instant; staleness
 is a property of the channel, never a silent default.
 
-Last updated 2026-10-20T12:11Z by docs: the Redmi10 card's two `invalid_arguments` receipts are
+Last updated 2026-10-20T14:05Z by docs: the Redmi10 card's two `invalid_arguments` receipts are
 corrected from "grammar rejections" to unknown-verb rejections by its installed build's parser
 (`write`/`exec` landed in `d54b382`, 2026-10-16T14:55Z; the bracket's parser throws `unknown eval
 command`, and `BodyService.executeEval` maps that to the observed receipt). The Redmi10
-availability stamp stays at 11:18Z: the deployed view at 12:11Z still shows the cursor frozen
-at 106658 (~2 h, no new delivered reading), so the already-recorded recurring halt stands and
-the stamp is not re-issued on elapsed time alone. Note3's card is unchanged (collect-only by
-design). Availability stamps below are from the read-only deployed view and can go stale.
+availability stamp is re-issued at 14:01Z on a new delivered reading: the 10:44:50Z halt ended
+between the 12:11Z read (cursor still 106658) and 13:20:35Z, and the view now shows
+`channel-delivery [pass]` with cursor 117802 advancing and a delivered record at 14:01:32Z.
+Note3's card is unchanged (collect-only by design). Availability stamps below are from the
+read-only deployed view and can go stale.
 
 ## Note3 node card
 
@@ -130,24 +131,28 @@ emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side 
 file is stale (`mode=UNKNOWN`, `status=stale`, reason `node-state-stale`; unknown is never
 OFF). No persisted owner choices exist yet to honor.
 
-Present availability (2026-10-20T11:18Z, read-only deployed view): delivering in bursts, with
-halts. Session `45bdac2e…` started 2026-10-20T07:18:02Z and delivered cursor 98466 → 106658
-after ~3.5 days without a delivered sample (last 2026-10-16T20:17:19Z; that offline cause was
-never established from here — health DM 105877). Delivery halts repeatedly inside the session:
-the deployed class-c delivery-gap detector recorded halts at 09:32Z, 09:53Z and 10:44Z (120 s
-window, polls succeeding, no code=2, no null-lux freeze), and the node reported a pending
-backlog as delivery resumed. The latest delivered record is 2026-10-20T10:08:42Z — battery
-0.76 (charging=true), light 149.0 lux, acceleration `unavailable reason=stale`,
-`wifi_link_rssi_dbm unavailable reason=disconnected` — and at 11:18Z the cursor was still
-106658, a ~70-minute halt in progress. Nine class-c halts are recorded for this node since
-2026-10-15, at distinct cursors from 1252 to 106658; the 98466 halt extended ~3.5 days. Cause
-UNKNOWN: class-c is by definition the no-known-cause class, the phone has no ADB channel, and
-its own spool is unread (`no-spool-summary-file`). The rows' `host_stopped` field is the only
-adb-attached device's (Note3's) app state, not Redmi10's, and must not be read as evidence
-about this phone. Scan lifecycle stays stale at `error reason=SecurityException`
-(consecutive_errors=1). `wifi_link_rssi_dbm`'s `disconnected` verdict is an API verdict
-(`getNetworkId() < 0`), not proof the Wi-Fi link is down; the known false negative is fixed in
-the candidate APK.
+Present availability (2026-10-20T14:01Z, read-only deployed view): delivering, in bursts with
+recurring halts. Session `45bdac2e…` started 2026-10-20T07:18:02Z and delivered cursor 98466 →
+106658 after ~3.5 days without a delivered sample (last 2026-10-16T20:17:19Z; that offline cause
+was never established from here — health DM 105877). The halt recorded at 10:44:50Z (cursor
+106658, last received epoch 10:08:44Z) ended between the 12:11Z read (cursor still 106658) and
+13:20:35Z. Its location is now pinned upstream of the server queue: the rendezvous write journal
+(`body/queues/writes.jsonl`) records no accepted POST from 10:08:43.906851Z to 13:20:30.449771Z
+— 11,506.5 s (3 h 11 m 46 s) — then 71 backlog pages of 128 records, while the phone's sampler
+kept running (queue rows 106659+, phone epochs 10:08:47Z–13:13:02Z, appended at 13:20:35Z).
+Rejected writes are not journaled, so whether the phone attempted and was refused, or never
+attempted, stays UNKNOWN. At 14:01Z the view shows `channel-delivery [pass]: cursor=advancing`,
+`backlog_page_pending=false`, transport reachable, `last_poll=14:01:37Z`, cursor 117802; the
+latest delivered record is 2026-10-20T14:01:32Z. Halts today: 09:32Z, 09:53Z, 10:44Z (120 s
+window, polls succeeding, no code=2, no null-lux freeze); the 10:44Z stall ran ~3 h 12 min.
+Nine class-c halts are recorded for this node since 2026-10-15, at distinct cursors from 1252 to
+106658; the 98466 halt extended ~3.5 days. Cause UNKNOWN: class-c is by definition the
+no-known-cause class, the phone has no ADB channel, and its own spool is unread
+(`no-spool-summary-file`). The rows' `host_stopped` field is the only adb-attached device's
+(Note3's) app state, not Redmi10's, and must not be read as evidence about this phone. Scan
+lifecycle stays stale at `error reason=SecurityException` (consecutive_errors=1).
+`wifi_link_rssi_dbm`'s `disconnected` verdict is an API verdict (`getNetworkId() < 0`), not proof
+the Wi-Fi link is down; the known false negative is fixed in the candidate APK.
 
 Supported bounded text requests: `eval` is exercised on this phone. Five receipts at
 2026-10-20T08:30-08:33Z: `eval identity` and `eval read /proc/self/attr/current` succeeded (the
