@@ -1245,7 +1245,10 @@ MONITOR_ARTIFACTS = Path(__file__).resolve().parent / "artifacts"
 MONITOR_STATE_FILE = MONITOR_ARTIFACTS / "light-cycle-monitor-state.json"
 MONITOR_LOG_FILE = MONITOR_ARTIFACTS / "light-cycle-resumed.jsonl"
 MONITOR_LOG_TAIL_BYTES = 4096
-
+# A single detector row can exceed the tail window: its baseline_samples array grows with
+# the dark dwell it covers. The reader widens the window until it holds a parseable row,
+# bounded by this cap.
+MONITOR_LOG_MAX_BYTES = 1 << 20
 
 def _read_json_file(path):
     try:
@@ -1254,19 +1257,8 @@ def _read_json_file(path):
         return None
 
 
-def _last_monitor_row(path, limit=MONITOR_LOG_TAIL_BYTES):
-    """Last complete detector row, or None. Reads only a bounded tail.
-
-    A partial or unparseable line (crash mid-append, or the tail read starting mid-line)
-    is skipped rather than reported as "no row", so an earlier complete row is still read.
-    """
-    try:
-        with open(path, "rb") as stream:
-            stream.seek(0, os.SEEK_END)
-            stream.seek(max(0, stream.tell() - limit))
-            chunk = stream.read()
-    except OSError:
-        return None
+def _last_complete_dict_line(chunk):
+    """Newest parseable JSON object line in ``chunk``, or None."""
     for line in reversed(chunk.split(b"\n")):
         if not line.strip():
             continue
@@ -1274,8 +1266,38 @@ def _last_monitor_row(path, limit=MONITOR_LOG_TAIL_BYTES):
             row = json.loads(line)
         except (json.JSONDecodeError, UnicodeDecodeError):
             continue
-        return row if isinstance(row, dict) else None
+        if isinstance(row, dict):
+            return row
     return None
+
+
+def _last_monitor_row(path, limit=MONITOR_LOG_TAIL_BYTES, max_bytes=MONITOR_LOG_MAX_BYTES):
+    """Last complete detector row, or None. Reads only a bounded tail.
+
+    The window widens until it holds a parseable row. One row can exceed ``limit``: on
+    2026-10-20 the production log's last row was 4150 B of ``baseline_samples`` against a
+    4096 B window, which rendered ``last_row=none`` while the log held 81 rows. A window
+    that starts inside a line never parses that line (no prefix of a ``json.dumps``
+    object parses as an object), so a crash-mid-append line or an oversized row makes the
+    scan fall back to the newest *complete* row instead of reporting "no row".
+    ``max_bytes`` bounds the widening; a log whose tail holds no parseable row reads as
+    None.
+    """
+    try:
+        with open(path, "rb") as stream:
+            span = max(limit, 1)
+            while True:
+                # Re-measure inside the open handle: a log rotated or truncated between a
+                # separate stat and this read would otherwise seek past EOF and read nothing.
+                stream.seek(0, os.SEEK_END)
+                start = max(0, stream.tell() - span)
+                stream.seek(start)
+                row = _last_complete_dict_line(stream.read())
+                if row is not None or start == 0 or span >= max_bytes:
+                    return row
+                span = min(max_bytes, span * 2)
+    except OSError:
+        return None
 
 
 def _monitor_row_span(row):

@@ -296,6 +296,12 @@ render a `Light-cycle resumption detector` section: liveness (`status`, heartbea
 the 30 s stale bound), the heartbeat fields verbatim, and the last retained row. A missing or
 stale heartbeat is UNKNOWN/stale, never calm.
 
+The view reads the last retained row from a bounded tail of the log and widens that window
+until it holds a parseable row (cap `MONITOR_LOG_MAX_BYTES`), because one row can exceed the
+4096 B window: a long dark dwell grows its `baseline_samples` array. A window that starts
+inside a line never parses that line, so the scan falls back to the newest *complete* row
+rather than rendering "no row".
+
 A resumption row names each quantity it carries, and the view renders those names:
 
 | row field | quantity |

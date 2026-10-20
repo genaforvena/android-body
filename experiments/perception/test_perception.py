@@ -3027,6 +3027,95 @@ class PerceptionTests(unittest.TestCase):
         self.assertIn("last_row=lux=67.0 prev_lux=0.2 threshold_lux=7.0 samples=59", view)
 
 
+
+    def test_last_monitor_row_reads_a_single_row_larger_than_the_tail_window(self):
+        # The 2026-10-20 production log's last row was 4150 B of baseline_samples against a
+        # 4096 B window, so the whole window sat inside that one line and the view rendered
+        # last_row=none while the log held 81 rows.
+        with tempfile.TemporaryDirectory() as folder:
+            log_file = Path(folder) / "light-cycle-resumed.jsonl"
+            samples = [[116277 + index, 1792503623 + index, 5.0]
+                       for index in range(160)]
+            row = json.dumps({
+                "event": "light-cycle-resumed", "lux": 14.0, "prev_lux": 4.0,
+                "prev_observed_unix": 1030.0, "baseline_first_unix": 1005.0,
+                "baseline_samples": samples, "threshold_lux": 10.0, "samples": 160,
+                "timestamp_unix": 1073.0})
+            log_file.write_text(row + "\n")
+            self.assertGreater(log_file.stat().st_size, watch.MONITOR_LOG_TAIL_BYTES)
+            with patch.object(watch, "MONITOR_STATE_FILE", Path(folder) / "absent.json"), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                view = watch.light_resumption_view(1000, 30)
+        self.assertIn("last_row=lux=14.0 prev_lux=4.0 threshold_lux=10.0 samples=160 "
+                      "baseline_span_s=159s", view)
+        self.assertNotIn("last_row=none", view)
+
+    def test_last_monitor_row_widens_past_a_truncated_oversized_row(self):
+        # A crash mid-append after an oversized row must still yield the earlier complete
+        # row, not None.
+        with tempfile.TemporaryDirectory() as folder:
+            log_file = Path(folder) / "light-cycle-resumed.jsonl"
+            samples = [[116277 + index, 1792503623 + index, 5.0]
+                       for index in range(160)]
+            row = json.dumps({
+                "event": "light-cycle-resumed", "lux": 14.0, "prev_lux": 4.0,
+                "prev_observed_unix": 1030.0, "baseline_first_unix": 1005.0,
+                "baseline_samples": samples, "threshold_lux": 10.0, "samples": 160,
+                "timestamp_unix": 1073.0})
+            log_file.write_text(row + "\n" + row[:len(row) // 2])
+            with patch.object(watch, "MONITOR_STATE_FILE", Path(folder) / "absent.json"), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                view = watch.light_resumption_view(1000, 30)
+        self.assertIn("last_row=lux=14.0 prev_lux=4.0 threshold_lux=10.0 samples=160",
+                      view)
+        self.assertNotIn("last_row=none", view)
+
+    def test_last_monitor_row_falls_back_past_a_corrupt_line_and_a_partial(self):
+        # A crash mid-append leaves the newest complete line unparseable, and the restarted
+        # monitor concatenates its next append onto it. A tail window that starts inside the
+        # row before the corrupt line holds no parseable row, so the reader must keep widening
+        # until it does -- not stop at the first window that merely contains two newlines.
+        with tempfile.TemporaryDirectory() as folder:
+            log_file = Path(folder) / "light-cycle-resumed.jsonl"
+            samples = [[116277 + index, 1792503623 + index, 5.0]
+                       for index in range(160)]
+            row = json.dumps({
+                "event": "light-cycle-resumed", "lux": 14.0, "prev_lux": 4.0,
+                "prev_observed_unix": 1030.0, "baseline_first_unix": 1005.0,
+                "baseline_samples": samples, "threshold_lux": 10.0, "samples": 160,
+                "timestamp_unix": 1073.0})
+            corrupt = "{" + "x" * 6500
+            log_file.write_text(row + "\n" + corrupt + "\n" + row[:1500])
+            self.assertGreater(log_file.stat().st_size, 2 * watch.MONITOR_LOG_TAIL_BYTES)
+            with patch.object(watch, "MONITOR_STATE_FILE", Path(folder) / "absent.json"), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                view = watch.light_resumption_view(1000, 30)
+        self.assertIn("last_row=lux=14.0 prev_lux=4.0 threshold_lux=10.0 samples=160",
+                      view)
+        self.assertNotIn("last_row=none", view)
+
+    def test_last_monitor_row_does_not_trust_a_separate_size_stat(self):
+        # A log rotated or truncated between a separate stat and the read used to leave the
+        # seek past EOF, so the view rendered last_row=none for a file that held rows. The
+        # reader re-measures inside the open handle and must be immune to a wrong stat.
+        with tempfile.TemporaryDirectory() as folder:
+            log_file = Path(folder) / "light-cycle-resumed.jsonl"
+            # A row small enough that a correct tail read needs no widening: the only way this
+            # view can lose it is the reader trusting a separate stat over the open handle.
+            row = json.dumps({
+                "event": "light-cycle-resumed", "lux": 14.0, "prev_lux": 4.0,
+                "threshold_lux": 10.0, "samples": 3, "timestamp_unix": 1073.0})
+            log_file.write_text(row + "\n")
+            self.assertLess(log_file.stat().st_size, watch.MONITOR_LOG_TAIL_BYTES)
+            with patch.object(watch.os.path, "getsize",
+                              return_value=log_file.stat().st_size + (1 << 20)), \
+                 patch.object(watch, "MONITOR_STATE_FILE", Path(folder) / "absent.json"), \
+                 patch.object(watch, "MONITOR_LOG_FILE", log_file):
+                view = watch.light_resumption_view(1000, 30)
+        self.assertIn("last_row=lux=14.0 prev_lux=4.0 threshold_lux=10.0 samples=3",
+                      view)
+        self.assertNotIn("last_row=none", view)
+
     def test_last_monitor_row_names_a_pre_rename_row_and_flags_it(self):
         # The count of consumed samples and the baseline start were written as ``poll`` and
         # ``prev_observed_unix`` until 2026-10-16. The view renders both under their current
