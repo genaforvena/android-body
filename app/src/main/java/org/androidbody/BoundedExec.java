@@ -49,10 +49,13 @@ import java.util.concurrent.atomic.AtomicReference;
  * 122050, JDK 17.0.20.1, {@code /bin/sh} = dash, one case per fresh JVM:
  * {@code READ_JOIN_MS} 5000 with the reader certainly parked delivered a 3 s
  * write 40/40; an immediate exit dropped it 120/120). With the shipped
- * {@code READ_JOIN_MS} 1000 such a write cannot arrive inside the join budget,
- * so it is reported as the open-stream failure below rather than as an empty
- * success. The consumer contract that exec targets must not background
- * processes is what keeps that residual out of reach.</li>
+ * {@code READ_JOIN_MS} 1000 such a write cannot arrive inside the join budget:
+ * when the reader's blocking read had already begun at the direct child's exit
+ * it is reported as the open-stream failure below (20/20, witness wake 122305),
+ * while an immediate exit instead yields the silent empty success (19/20
+ * silent empty, 1 open-stream on the same fresh-JVM harness). The consumer
+ * contract that exec targets must not background processes is what keeps that
+ * residual out of reach.</li>
  * </ul>
  *
  * <p>The reader may stay parked in the read until the stream closes, so a

@@ -20,9 +20,10 @@ import java.nio.charset.Charset;
  * kill is not required; if the target script backgrounds one and that
  * descendant still holds the merged stream when the decision is taken, the
  * probe reports {@code unavailable reason=exec stdout open at direct-child
- * exit} rather than a silent empty success. A descendant that writes only after
- * the direct child's exit can be dropped (see {@link BoundedExec} for the
- * measured reader contract), so exec targets must not background processes. The
+ * exit} when the reader's blocking read had already begun at that exit, and a
+ * silent empty success otherwise (see {@link BoundedExec} for the measured
+ * reader contract). A descendant that writes only after the direct child's
+ * exit can be dropped, so exec targets must not background processes. The
  * exec machinery itself is shared with the consumer write/exec verbs in
  * {@link BoundedExec}.
  *

@@ -40,6 +40,18 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(code, detector.MISMATCH)
         self.assertTrue(any("entry differs: classes.dex" in line for line in lines))
 
+    def test_crc32_is_reported_in_hex(self):
+        # research-methods wake 122240: the decimal CRC-32 nearly produced a
+        # false drift report against hex `unzip -v` output. The report must
+        # carry the base.
+        code, lines = detector.compare({"classes.dex": (10, 1)},
+                                       {"classes.dex": (12, 9)})
+        self.assertEqual(code, detector.MISMATCH)
+        entry = next(line for line in lines if "entry differs" in line)
+        self.assertIn("crc32=0x00000001", entry)
+        self.assertIn("crc32=0x00000009", entry)
+        self.assertNotIn("(10, 1)", entry)
+
     def test_added_and_removed_entries_are_flagged(self):
         code, lines = detector.compare(
             {"classes.dex": (10, 1), "res/old.xml": (1, 1)},

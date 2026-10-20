@@ -58,14 +58,17 @@ def compare(published: dict[str, tuple[int, int]],
     if published == built:
         return MATCH, [f"GREEN published APK payload matches the build "
                        f"({len(published)} entries)"]
-    lines = ["RED published APK payload differs from the build of the current source"]
+    lines = ["RED published APK payload differs from the build of the current source "
+             "(crc32 in hex, the `unzip -v` base)"]
+    def fmt(entry: tuple[int, int] | None) -> str:
+        return "absent" if entry is None else f"(size={entry[0]}, crc32={entry[1]:#010x})"
     for name in sorted(set(published) | set(built)):
         if published.get(name) == built.get(name):
             continue
         where = ("only in published" if name not in built else
                  "only in build" if name not in published else "entry differs")
         lines.append(f"  {where}: {name} "
-                     f"published={published.get(name)} built={built.get(name)}")
+                     f"published={fmt(published.get(name))} built={fmt(built.get(name))}")
     lines.append("  rebuild downloads/android-body-debug.apk from the current "
                  "source and refresh downloads/SHA256SUMS")
     return MISMATCH, lines
