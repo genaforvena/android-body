@@ -47,6 +47,19 @@ beside the newest cycle, so a pane whose steady cycle sits under the bound while
 single frames cross it (``witness`` 2026-10-17: median 17.76 s, 15/73 over) is
 distinguishable from one whose whole cycle is too slow.
 
+The lease alone cannot say *why* a cycle is slow. A renderer whose own render
+failed publishes ``RENDERER: RED <reason>`` with ``ok=false`` in
+``dashboards/<pane>.json`` (``observations.compose_frame``), and one that merely
+costs more than the frame interval publishes ``ok=true``. The renderer's own
+record is therefore appended to every line as attribution, so a RED lease names
+its cause instead of being re-derived each time. Measured 2026-10-20T21:4xZ:
+``witness``'s render costs 19.7-22.5 s against the core's
+``_RENDERER_TIMEOUTS['witness'] = 20.0`` s (1 retry, 2 s backoff), so its loop
+runs 47 s when the render fails and 25 s even when it succeeds -- both over the
+18 s advance bound -- and its dashboard publishes ``RENDERER: RED
+timeout-after-20s``. Attribution is informational: the lease verdict above still
+decides the exit status, because a renderer can be slow-but-successful.
+
 Usage: ``pane_lease.py --site SITE [--session NAME] [--panes a,b,c]
          [--socket PATH] [--depth 800] [--bound 20]``
 
@@ -96,6 +109,37 @@ STALE_BOUND_SECONDS = 20.0
 #: Lines of pane history read per pane (~74 frames retained here), which bounds
 #: how far back the reported worst interval reaches.
 LEASE_DEPTH_LINES = 800
+
+#: Mirrors ``observations.compose_frame``'s renderer-failure line, which the
+#: renderer publishes into the frame it writes to ``dashboards/<pane>.json``.
+#: The record's own ``ok`` flag is the renderer's verdict on its last render.
+RENDERER_RE = re.compile(r"^RENDERER: (RED|UNKNOWN) (.+)$", re.MULTILINE)
+
+#: A pane name is a site slug; anything else cannot name a dashboard record.
+PANE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+#: ``observations._RENDERER_TIMEOUTS`` in the pinned core release: the render
+#: timeout ``compose_frame`` applies before it retries once and fails the frame.
+#: ``witness`` is the only role with its own value; every other pane uses the
+#: default. Measured 2026-10-20T21:5xZ on this host: ``top-pains/witness`` 19.9 s
+#: against 20.0 s, ``top-pains/discover`` 9.6 s and ``top-pains/permissions``
+#: 8.9 s against 10.0 s. Each is marginal, so any load excursion fails the
+#: render, stretches its cycle to ``timeout + backoff + timeout + refresh``, and
+#: trips the advance bound below.
+RENDERER_TIMEOUTS = {"witness": 20.0}
+RENDERER_TIMEOUT_DEFAULT = 10.0
+
+#: The loop's non-render work (publish, write, bookkeeping) between the frame
+#: interval and the render itself. A successful render cannot exceed its
+#: timeout, so a cycle longer than ``timeout + refresh + LOOP_OVERHEAD`` did not
+#: come from one render: the pane stopped publishing for part of it.
+LOOP_OVERHEAD_SECONDS = 2.0
+
+#: The refresh a pane's footer advertises; the renderer sleeps exactly that
+#: between frames, so a successful render's cost is the cycle minus it.
+REFRESH_RE = re.compile(
+    r"^-- pane live \S+ \u00b7 refresh ([0-9.]+)s \u00b7 ticks every frame --$", re.MULTILINE
+)
 
 #: Mirrors ``observations.FOOTER_LEASE_RE`` in the pinned core release: the one
 #: footer line the core parses for a lease, and the only line whose stamp is a
@@ -267,6 +311,70 @@ def load1():
         return None
 
 
+def renderer_verdict(site, pane, *, now=None):
+    """The renderer's own verdict for *pane*, read from ``dashboards/<pane>.json``.
+
+    The renderer publishes one record per loop: the frame it projected and an
+    ``ok`` flag, with ``RENDERER: RED <reason>`` in the frame when its render
+    failed (``observations.compose_frame``). That is the renderer's own report of
+    why its frame is not fresh, so a RED lease can be attributed instead of
+    re-derived. The record's age is reported because a failing renderer publishes
+    one only every ~47 s, and a verdict older than the pane's lease is the last
+    frame it managed. An unreadable record is UNKNOWN, never a pass.
+    """
+    now = time.time() if now is None else now
+    if not PANE_NAME_RE.match(pane):
+        return "UNKNOWN", "renderer verdict refused: pane name is not a slug"
+    path = Path(site) / "dashboards" / f"{pane}.json"
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return "UNKNOWN", f"renderer verdict unreadable: {exc}"
+    if not isinstance(record, dict) or not isinstance(record.get("frame"), str):
+        return "UNKNOWN", "renderer verdict record malformed"
+    ok = record.get("ok")
+    if ok not in (True, False):
+        return "UNKNOWN", f"renderer verdict malformed: ok={ok!r}"
+    match = RENDERER_RE.search(record["frame"])
+    if ok is True:
+        if match is not None:
+            return "UNKNOWN", "renderer verdict malformed: ok=true with a renderer failure line"
+        detail = "render=ok"
+    else:
+        detail = f"render=RED {match.group(2).strip() if match else 'command failed'}"
+    created = record.get("created")
+    age = None
+    if isinstance(created, str):
+        try:
+            age = now - datetime.datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            age = None
+    if age is not None:
+        detail += f" (published {age:.1f}s ago)"
+    return ("GREEN" if ok else "RED"), detail
+
+
+def render_cycle(text):
+    """``(newest frame interval, advertised refresh)`` in seconds, or None.
+
+    The renderer's loop is ``compose_frame`` then ``sleep(refresh)``, and the
+    footer carries that refresh, so a *successful* render's cost is the newest
+    frame interval minus it. Only a successful render implies this: a render that
+    exceeded its timeout publishes a RED frame after
+    ``timeout + backoff + timeout``, which its own reason names instead, and a
+    pane that stopped publishing shows an interval spanning the gap rather than
+    one render. Callers must therefore pair this with the renderer's own verdict
+    and its timeout before calling the difference a render cost.
+    """
+    if not text:
+        return None
+    intervals = frame_intervals(lease_stamps(text))
+    refreshes = REFRESH_RE.findall(text)
+    if not intervals or not refreshes:
+        return None
+    return intervals[-1], float(refreshes[-1])
+
+
 def main(argv=None, *, capture_fn=capture, now=None, load=None):
     parser = argparse.ArgumentParser(description="Measure pane lease age and frame cycle.")
     parser.add_argument("--site", required=True, help="site root (reads health/windows.json)")
@@ -301,9 +409,22 @@ def main(argv=None, *, capture_fn=capture, now=None, load=None):
     failed = False
     unknown = False
     for pane in panes:
-        status, detail = pane_report(capture_fn(socket, session, pane, args.depth),
-                                     now=now, advance_bound=args.bound, stale_bound=args.stale_bound)
-        print(f"{status:<6} pane lease {pane} {detail}{context}")
+        text = capture_fn(socket, session, pane, args.depth)
+        status, detail = pane_report(text, now=now, advance_bound=args.bound, stale_bound=args.stale_bound)
+        verdict, why = renderer_verdict(site, pane, now=now)
+        margin = ""
+        cycle = render_cycle(text)
+        if verdict == "GREEN" and cycle is not None:
+            interval, refresh = cycle
+            timeout = RENDERER_TIMEOUTS.get(pane, RENDERER_TIMEOUT_DEFAULT)
+            if interval - refresh <= timeout + LOOP_OVERHEAD_SECONDS:
+                margin = (f" render~{interval - refresh:.1f}s (cycle minus refresh)"
+                          f" vs renderer timeout {timeout:.1f}s")
+            else:
+                margin = (f" cycle {interval:.1f}s exceeds one render+refresh "
+                          f"(max {timeout + refresh + LOOP_OVERHEAD_SECONDS:.1f}s for this pane): "
+                          f"the pane stopped publishing for part of it")
+        print(f"{status:<6} pane lease {pane} {detail}{context} | renderer: {verdict} {why}{margin}")
         failed = failed or status == "RED"
         unknown = unknown or status == "UNKNOWN"
     return 1 if failed else (2 if unknown else 0)

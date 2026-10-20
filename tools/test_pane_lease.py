@@ -323,6 +323,97 @@ class MainTest(unittest.TestCase):
         (self.site / "health" / "windows.json").write_text("[]", encoding="utf-8")
         self.assertEqual(self._run(capture_of([6, 0], self.NOW), extra=["--panes", "genome"]), 0)
 
+    def test_main_line_appends_the_renderers_own_verdict(self):
+        (self.site / "dashboards").mkdir()
+        created = datetime.fromtimestamp(self.NOW - 12.5, timezone.utc).isoformat()
+        (self.site / "dashboards" / "witness.json").write_text(
+            json.dumps({"version": 1, "slug": "witness", "created": created,
+                        "frame": "HEADLINE: GREEN\nRENDERER: RED timeout-after-20s\n",
+                        "ok": False}), encoding="utf-8")
+        self._run(capture_of([89, 67, 45, 23, 1], self.NOW))
+        self.assertIn("load1=12.5 | renderer: RED render=RED timeout-after-20s "
+                      "(published 12.5s ago)", self.output)
+
+    def test_main_line_reports_the_render_margin_when_the_render_succeeded(self):
+        (self.site / "dashboards").mkdir()
+        created = datetime.fromtimestamp(self.NOW - 2.0, timezone.utc).isoformat()
+        (self.site / "dashboards" / "witness.json").write_text(
+            json.dumps({"version": 1, "slug": "witness", "created": created,
+                        "frame": "HEADLINE: GREEN\n", "ok": True}), encoding="utf-8")
+        self._run(capture_of([89, 67, 45, 23, 1], self.NOW))
+        self.assertIn("renderer: GREEN render=ok (published 2.0s ago) "
+                      "render~17.0s (cycle minus refresh) vs renderer timeout 20.0s", self.output)
+
+
+class RendererVerdictTest(unittest.TestCase):
+    """Attribution: a RED lease names the renderer's own failure, not a re-derived guess."""
+
+    NOW = 1_792_000_000.0
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.site = Path(self.tmp.name)
+        (self.site / "dashboards").mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _publish(self, pane, *, ok, frame):
+        created = datetime.fromtimestamp(self.NOW - 12.5, timezone.utc).isoformat()
+        (self.site / "dashboards" / f"{pane}.json").write_text(
+            json.dumps({"version": 1, "slug": pane, "created": created, "frame": frame, "ok": ok}),
+            encoding="utf-8")
+
+    def test_failed_render_carries_the_renderers_own_reason(self):
+        self._publish("witness", ok=False, frame="HEADLINE: GREEN\nRENDERER: RED timeout-after-20s\n")
+        self.assertEqual(pane_lease.renderer_verdict(self.site, "witness", now=self.NOW),
+                         ("RED", "render=RED timeout-after-20s (published 12.5s ago)"))
+
+    def test_successful_render_is_green_and_names_no_failure(self):
+        self._publish("genome", ok=True, frame="HEADLINE: GREEN\nOBSERVATION\n")
+        self.assertEqual(pane_lease.renderer_verdict(self.site, "genome", now=self.NOW),
+                         ("GREEN", "render=ok (published 12.5s ago)"))
+
+    def test_missing_record_is_unknown_never_a_pass(self):
+        status, detail = pane_lease.renderer_verdict(self.site, "genome", now=self.NOW)
+        self.assertEqual(status, "UNKNOWN")
+        self.assertIn("renderer verdict unreadable", detail)
+
+    def test_non_slug_pane_name_is_refused(self):
+        status, detail = pane_lease.renderer_verdict(self.site, "../elsewhere", now=self.NOW)
+        self.assertEqual(status, "UNKNOWN")
+        self.assertIn("refused", detail)
+
+    def test_ok_true_with_a_failure_line_is_malformed(self):
+        self._publish("genome", ok=True, frame="RENDERER: RED timeout-after-20s\n")
+        status, detail = pane_lease.renderer_verdict(self.site, "genome", now=self.NOW)
+        self.assertEqual(status, "UNKNOWN")
+        self.assertIn("malformed", detail)
+
+
+class RenderCycleTest(unittest.TestCase):
+    """The implied render cost is the predictive margin against the renderer timeout."""
+
+    NOW = 1_792_000_000.0
+
+    def test_cycle_is_the_newest_interval_with_the_advertised_refresh(self):
+        # 22 s cycle, 5 s advertised refresh -> a 17 s render.
+        self.assertEqual(pane_lease.render_cycle(capture_of([89, 67, 45, 23, 1], self.NOW)), (22.0, 5.0))
+
+    def test_no_footer_implies_no_cycle(self):
+        self.assertIsNone(pane_lease.render_cycle("a frozen pane with no footer"))
+        self.assertIsNone(pane_lease.render_cycle(None))
+
+    def test_a_wrapped_footer_is_not_read_as_a_refresh(self):
+        self.assertIsNone(pane_lease.render_cycle(
+            "-- pane live 2026-10-20T00:00:00Z \u00b7 refresh 5s \u00b7 ticks every\n"))
+
+    def test_the_default_timeout_governs_a_pane_without_its_own_value(self):
+        # discover has no entry in RENDERER_TIMEOUTS, so its bound is the 10 s
+        # default; witness keeps its own 20 s.
+        self.assertEqual(pane_lease.RENDERER_TIMEOUTS.get("discover", pane_lease.RENDERER_TIMEOUT_DEFAULT), 10.0)
+        self.assertEqual(pane_lease.RENDERER_TIMEOUTS["witness"], 20.0)
+
 
 class LiveInvocationTest(unittest.TestCase):
     """The real tool, no tmux session: UNKNOWN and exit 2, never a pass."""
