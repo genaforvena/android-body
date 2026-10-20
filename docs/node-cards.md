@@ -12,10 +12,10 @@ present availability, supported bounded text requests, limits. Declaration is no
 a working sensor. "Present availability" always carries its observation instant; staleness
 is a property of the channel, never a silent default.
 
-Last updated 2026-10-17T10:06Z by docs: Redmi10 present-availability re-read from the deployed
-view at 10:06Z (delivery frozen; the device is offline on the tailnet per health DM 105877);
-Note3 present-availability numbers re-read at 09:51Z. Availability stamps below are from the
-read-only deployed view and can go stale.
+Last updated 2026-10-20T08:26Z by docs: both cards' present availability re-read from the
+deployed view (snapshot in `.mishe-tauftauf/artifacts/docs-wake118587-node-cards/`); Redmi10
+is delivering again after ~3.5 days silent, Note3 stays collect-only by design. Availability
+stamps below are from the read-only deployed view and can go stale.
 
 ## Note3 node card
 
@@ -47,7 +47,8 @@ start including collect-only, make no network request and request no actuator.
 
 Local owner enablement (persisted phone-side, emitted at each session start):
 
-- battery=on, light=on, acceleration=on, vibration=on (measured 13:52Z).
+- battery=on, light=on, acceleration=on, vibration=on (emitted at each session start; read
+  2026-10-20T08:26Z).
 - Checkboxes are local-owner state: remote text cannot grant access or turn a channel on.
   An unchecked capability produces no collection and no effect; OFF disarms sensor
   listeners, vibration, network work and the wake lock; restart honors the saved choices.
@@ -58,17 +59,19 @@ ACCESS_NETWORK_STATE, VIBRATE, WAKE_LOCK, RECEIVE_BOOT_COMPLETED, FOREGROUND_SER
 FOREGROUND_SERVICE_SPECIAL_USE, POST_NOTIFICATIONS. Camera, microphone and location
 permissions are NOT requested.
 
-Present availability (2026-10-17T09:51Z, read-only deployed view):
+Present availability (2026-10-20T08:26Z, read-only deployed view):
 
-- `mode=ON_COLLECT_ONLY` (`desired_on=true`; node-state observed 09:50:55Z, age 56 s): the
-  phone stores observations and issues no HTTP requests and no actions by design; the host
-  pulls through the bridge. Transport reachable, no backlog page pending, node-state fresh.
+- `mode=ON_COLLECT_ONLY` (`desired_on=true`; node-state observed 08:26:04Z, age 1.4 s,
+  `status=ok`): the phone stores observations and issues no HTTP requests and no actions by
+  design; the host pulls through the bridge. Transport reachable, no backlog page pending,
+  node-state fresh.
 - Delivered samples are stale since 2026-10-14T06:13:24Z — by design under collect-only,
-  not a delivery fault. Collection-side spool reads are live: spool 2,601,208 B, retention
-  window 4.2 h, 18,829 rows, coverage ok, 318,079 records dropped cumulatively at the bound;
-  scan_state windows=525 phase=gap last_error=none sightings=0.
-- Phone clock runs ~24.7 s behind the host (measured offset bounds +24.2..+25.2 s, n=3,
-  age 54 s); receipt times are consumer-fetch times, not server receipts.
+  not a delivery fault. Collection-side spool reads are live: spool 3,238,880 B, retention
+  window 5.0 h, 23,447 rows, coverage ok, 618,039 records dropped cumulatively at the bound;
+  scan_state windows=2642 phase=gap last_error=none sightings=0.
+- Phone clock measured +2.8 s behind the host at 08:26Z (n=3, bounds +2.3..+3.3 s) with
+  `host_ntp_synchronized=false`, so part of that offset is host error; the split implies
+  transport latency ~24-27 s. Receipt times are consumer-fetch times, not server receipts.
 
 Supported bounded text requests (while ON; nothing executes in collect-only mode):
 
@@ -122,12 +125,13 @@ emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side 
 file is stale (`mode=UNKNOWN`, `status=stale`, reason `node-state-stale`; unknown is never
 OFF). No persisted owner choices exist yet to honor.
 
-Present availability (2026-10-17T10:06Z, read-only deployed view): delivery is frozen —
-cursor=98466, last delivered sample 2026-10-16T20:17:19Z, channel silence ~49,719 s
-(~13.8 h); the phone is flagged `stale/phone-silent-or-delayed` while the tailnet front
-answers (`transport=reachable`). The device is offline on the tailnet (tailscale last seen
-~20:57Z, ~13 h ago); the specific cause — off, lost Wi-Fi, tailnet client down, or app not
-running — is UNKNOWN from here (health DM 105877). `wifi_link_rssi_dbm` reports
+Present availability (2026-10-20T08:26Z, read-only deployed view): delivering again. Session
+`45bdac2e…` started 2026-10-20T07:18:02Z and the cursor advanced 98466 → 101732 with
+`channel-delivery [pass]: cursor=advancing transport=reachable` and
+`phone=fresh-clock-conditional`, after ~3.5 days without a delivered sample (last
+2026-10-16T20:17:19Z; the offline cause was never established from here — health DM 105877).
+Battery 0.74 (charging=false), light 92.0 lux and acceleration x=0.071 y=0.058 z=9.830 m/s²
+were `fresh-clock-conditional` at 08:26:00Z. `wifi_link_rssi_dbm` still reports
 `unavailable reason=disconnected` — an API verdict (`getNetworkId() < 0`), not proof the
 Wi-Fi link is down; the known false negative is fixed in the candidate APK. No action
 receipts observed. Collection-side spool evidence is absent (`no-spool-summary-file`), so
