@@ -12,7 +12,7 @@ present availability, supported bounded text requests, limits. Declaration is no
 a working sensor. "Present availability" always carries its observation instant; staleness
 is a property of the channel, never a silent default.
 
-Last updated 2026-10-20T17:42Z. Availability stamps below are from the read-only deployed view
+Last updated 2026-10-20T19:30Z. Availability stamps below are from the read-only deployed view
 and can go stale; each correction is stated in the card body with its evidence, and the history
 lives in Git.
 
@@ -58,23 +58,23 @@ ACCESS_NETWORK_STATE, VIBRATE, WAKE_LOCK, RECEIVE_BOOT_COMPLETED, FOREGROUND_SER
 FOREGROUND_SERVICE_SPECIAL_USE, POST_NOTIFICATIONS. Camera, microphone and location
 permissions are NOT requested.
 
-Present availability (2026-10-20T18:28Z, read-only deployed view):
+Present availability (2026-10-20T19:29Z, read-only deployed view):
 
-- `mode=ON_COLLECT_ONLY` (`desired_on=true`; node-state observed 18:28:20Z, age 18.8 s,
+- `mode=ON_COLLECT_ONLY` (`desired_on=true`; node-state observed 19:28:32Z, age 50.2 s,
   `status=ok`): the phone stores observations and issues no HTTP requests and no actions by
   design; the host pulls through the bridge. Transport reachable, no backlog page pending,
   node-state fresh.
 - Delivered samples are stale since 2026-10-14T06:13:24Z — by design under collect-only,
-  not a delivery fault. Collection-side spool reads are live: spool 2,442,723 B, retention
-  window 4.0 h, 17,610 rows, coverage ok, 660,832 records dropped cumulatively at the bound;
-  scan_state windows=2944 phase=gap last_error=none sightings=0.
-- Phone clock measured -1.1 s at 18:28Z (n=3, bounds -1.6..-0.6 s,
-  `host_ntp_synchronized=true`): by the pane's host-wall-minus-phone-wall convention the
-  phone reads ~1.1 s ahead of the host, so the offset is attributable to the phone rather
-  than shared with host error. The earlier +2.8 s reading (08:26Z) carried
-  `host_ntp_synchronized=false`, so it could not separate phone error from host error.
-  Implied transport latency ~27.5-30.5 s. Receipt times are
-  consumer-fetch times, not server receipts.
+  not a delivery fault. Collection-side spool reads are live: spool 3,191,852 B, physical-file
+  window 5.0 h, 23,086 rows, coverage ok, 665,080 records dropped cumulatively at the bound;
+  scan_state windows=2974 phase=gap last_error=none sightings=0.
+- Phone clock measured -0.9 s at 19:29Z (n=3, bounds -1.4..-0.4 s,
+  `host_ntp_synchronized=true`): by the pane's host-wall-minus-phone-wall convention the phone
+  reads ~0.9 s ahead of the host, so the offset is attributable to the phone rather than shared
+  with host error; the pane derives an implied transport latency of 27.6-30.6 s. Earlier
+  readings are history: +2.8 s at 08:26Z carried `host_ntp_synchronized=false` and could not
+  separate phone error from host error; -1.1 s at 18:28Z. Receipt times are consumer-fetch
+  times, not server receipts.
 
 Supported bounded text requests (while ON; nothing executes in collect-only mode):
 
@@ -123,42 +123,50 @@ start` (`59412b0`) and answers `eval` actions (`e69d798`, 2026-10-11T22:43Z), bu
 (`4066dd0`, 2026-10-12T22:08Z), which rules out every later emission. The interval is inferred
 from row and receipt shapes, not an APK hash: the phone has no ADB/USB channel, so its
 installed bytes are not readable from here.
+Session `af9d723f…` (start bundle received 17:41:39Z) emits the same shape — no
+`owner_checkboxes`, no class-4 `probe exec`, no `command=` receipt — so the bracket rests on two
+session-start bundles, not one.
 
 Local owner enablement: UNKNOWN. The installed APK predates the `owner_checkboxes`
 emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side node-state
 file is stale (`mode=UNKNOWN`, `status=stale`, reason `node-state-stale`; unknown is never
 OFF). No persisted owner choices exist yet to honor.
 
-Present availability (2026-10-20T17:42Z, read-only deployed view): delivering again; cause diagnosed.
-Cursor 125,900, `channel-delivery [pass]: cursor=advancing`; the latest delivered record is
-2026-10-20T17:42Z. The outage that began 14:03:03Z ended 17:39:11Z (`Stopped → Running`,
-`WantRunning=true`) and the phone drained its spool in 132 backlog writes carrying 7,914 records
-over 435.6 s (17:40:24.765Z → 17:47:40.356Z), back to 4-record writes at 17:40:38Z. Session
-`45bdac2e…` started 2026-10-20T07:18:02Z and delivered cursor 98466 → 106658 after ~3.5 days
-without a delivered sample (last 2026-10-16T20:17:19Z; that offline cause was never established from
-here — health DM 105877). The recurring halts are transport-side, not phone-side: health's
-diagnosis (wake 118178, DM 119702) matches every Redmi10 write gap today to a host tailnet
-availability window — the phone's HTTPS POST to the `tailscale serve` front
-(`https://mesh-home.tail3e4555.ts.net` → `127.0.0.1:8765`) has no route while the host daemon is
-stopped, so the app appends to its durable spool and delivers in a burst when the path returns.
-All four gaps today (09:30, 09:51, 10:08, 14:03Z) contain a tailnet stop; none is stop-less. The
-14:03:03Z halt: no accepted POST from 14:02:57.382071Z to 17:40:24.765601Z (13,047.4 s) while the
-tailnet was down 14:03:03Z–17:39:11Z (edges 5.6 s and 73.8 s). The 10:44:50Z halt: no accepted
-POST from 10:08:43.906851Z to 13:20:30.449771Z (11,506.5 s) while the tailnet was down
-10:09:09Z–13:19:31Z, then 72 backlog writes carrying 9,168 records in 8.7 s (13:20:30.449Z →
-13:20:39.127Z) as the spool
-drained — not a phone process death. Class-c is the detector's no-known-cause *class*, not a cause;
-the older class-c rows (nine since 2026-10-15, cursors 1252–106658, including the ~3.5-day 98466
-halt) have no matched tailnet window and their cause is not established from here. The recurring
-halts' resolver is the operator, who stops the host tailnet; this plant does not override a
-deliberate operator state. The rows' `host_stopped` field was the only adb-attached device's
-(Note3's) app state, not Redmi10's, and must not be read as evidence about this phone; senses fixed
-the probe (commits `7cdc70b`+`0951986`, DM 120528) so new rows carry `node`, and a node with no
-recorded serial reads `host_stopped=null` with `host_stopped_reason=no-recorded-serial-for-node`,
-while the nine pre-existing rows keep the old Note3 value as historical evidence. Scan
-lifecycle stays stale at `error reason=SecurityException` (consecutive_errors=1).
-`wifi_link_rssi_dbm`'s `disconnected` verdict is an API verdict (`getNetworkId() < 0`), not proof
-the Wi-Fi link is down; the known false negative is fixed in the candidate APK.
+Present availability (2026-10-20T19:29Z, read-only deployed view): delivering, cursor 132,616,
+`channel-delivery [pass]: cursor=advancing`. The delivery pattern changed today: 4-record POSTs
+every ~5 s until 18:53Z, then three silences — 18:53:14→19:01:56Z (522.0 s), 19:01:56→19:04:38Z
+(161.4 s), 19:04:38→19:11:02Z (384.4 s) — each ending in a 128-record page, and since 19:11Z
+128-record backlog pages every ~80 s. Current session `af9d723f…`, whose session-start bundle was
+received 17:41:39Z inside the post-outage drain; it supersedes `45bdac2e…` (started 07:18:02Z).
+
+Four halts matched a host tailnet outage: 09:30:41→09:49:35Z, 09:51:54→10:08:29Z,
+10:08:43→13:20:30Z and 14:02:57→17:40:24Z (18.9 min, 16.6 min, 191.8 min, 13,047.4 s). Each
+contains a `Running -> Stopped (WantRunning=false)` / `Stopped -> Starting` pair in the host
+`tailscaled` journal and ends in a burst of 128-record pages (9,168 records in 8.7 s at
+13:20:30Z; 132 writes / 7,914 records over 435.6 s at 17:40:24Z): the phone buffered rather than
+losing data (health wake 118178, DM 119702). The 14:03:03Z stop and 17:39:11Z restart are the
+operator's; this plant does not override a deliberate operator state.
+
+The three evening halts match no such stop: the `tailscaled` journal has no ipn-state transition
+after 17:39:11Z, and session `af9d723f…` spans both sides of each one. Rows whose phone epochs fall
+inside a silence arrived after it, so the phone stayed alive and buffered while the host accepted
+nothing. Their cause is UNKNOWN from here — phone-side pause, relay/DERP path and the serve front
+are unseparated — and they meet health's own falsifier for the transport-side account (a >60 s gap
+with no `tailscaled` stop; health DM 121551, senses DM 121552 on the detector's per-session
+dedup). The tailnet stops' resolver remains the operator; these three have none. Class-c stays the
+detector's no-known-cause class, not a cause: the nine older rows since 2026-10-15 (cursors
+1252–106658, including the ~3.5-day 98466 halt) have no matched tailnet window either.
+
+The rows' `host_stopped` field was the only adb-attached device's (Note3's) app state, not
+Redmi10's, and must not be read as evidence about this phone; senses fixed the probe (commits
+`7cdc70b`+`0951986`, DM 120528) so new rows carry `node`, and a node with no recorded serial reads
+`host_stopped=null` with `host_stopped_reason=no-recorded-serial-for-node`, while the nine
+pre-existing rows keep the old Note3 value as historical evidence. Scan lifecycle stays stale at
+`error reason=SecurityException` (consecutive_errors=1). `wifi_link_rssi_dbm`'s `disconnected`
+verdict is an API verdict (`getNetworkId() < 0`), not proof the Wi-Fi link is down; the known false
+negative is fixed in the candidate APK. A delivered row's phone epoch lags its consumer receipt by
+the backlog-dependent delivery lag (≈2 s to ≈186 s today; 13,053 s at the drain peak); the pane's
+phone/host "skew" figure is that lag, and its clock/latency split is not established.
 
 Supported bounded text requests: `eval` is exercised on this phone. Five receipts at
 2026-10-20T08:30-08:33Z: `eval identity` and `eval read /proc/self/attr/current` succeeded (the
