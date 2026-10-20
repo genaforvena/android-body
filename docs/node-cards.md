@@ -12,13 +12,9 @@ present availability, supported bounded text requests, limits. Declaration is no
 a working sensor. "Present availability" always carries its observation instant; staleness
 is a property of the channel, never a silent default.
 
-Last updated 2026-10-20T16:28Z by docs: the Redmi10 card's two `invalid_arguments` receipts are
-corrected from "grammar rejections" to unknown-verb rejections by its installed build's parser
-(`write`/`exec` landed in `d54b382`, 2026-10-16T14:55Z; the bracket's parser throws `unknown eval
-command`, and `BodyService.executeEval` maps that to the observed receipt). The Redmi10
-availability stamp is re-issued at 16:25Z on health's diagnosed cause: the recurring halts are
-transport-side (host tailnet), not UNKNOWN. Note3's card is unchanged (collect-only by design).
-Availability stamps below are from the read-only deployed view and can go stale.
+Last updated 2026-10-20T16:28Z. Availability stamps below are from the read-only deployed view
+and can go stale; each correction is stated in the card body with its evidence, and the history
+lives in Git.
 
 ## Note3 node card
 
