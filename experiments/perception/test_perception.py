@@ -2401,6 +2401,27 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(verdict["advance_interval_median_seconds"], 4.0)
         self.assertEqual(verdict["advance_interval_max_seconds"], 4.0)
 
+    def test_channel_delivery_detection_key_survives_a_state_round_trip(self):
+        # The key is persisted with the node state, and a JSON round trip turns a tuple into a
+        # list: a tuple key never matched the reloaded one, so the follower re-logged the same
+        # onset on every restart (note3 rows at 16:32:38, 19:46:22, 20:47:10 and 20:49:45 on
+        # 2026-10-20 all carry one session and one cursor).
+        state = self.state()
+        state["cursor"] = 100
+        state["error"] = None
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            now = time.time()
+            state["poll_at"] = now
+            watch.detect_channel_delivery_gap(state, log_dir, 30.0)  # seed
+            state["_channel_delivery_last_cursor_advance_at"] = now - 31.0
+            self.assertIsNotNone(watch.detect_channel_delivery_gap(state, log_dir, 30.0))
+            state = json.loads(json.dumps(state))  # as the follower's save/load does
+            self.assertIsNone(watch.detect_channel_delivery_gap(state, log_dir, 30.0))
+            rows = (log_dir / "channel-delivery-gap-detectors.jsonl").read_text(
+                encoding="utf-8").strip().split("\n")
+            self.assertEqual(len(rows), 1)
+
     def test_channel_delivery_cadence_context_drops_the_followers_downtime(self):
         # The advance clock is persisted with the node state, so the first advance after a
         # follower restart would otherwise report the host's downtime as the node's cadence.

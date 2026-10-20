@@ -1020,7 +1020,11 @@ def detect_channel_delivery_gap(state, log_dir, stale):
 
     session = state["session"]
     reason = verdict["reason"]
-    detected_key = (session, reason)
+    # A list, not a tuple: the key is persisted with the node state, and a JSON round trip
+    # turns a tuple into a list, so a tuple key never matched the reloaded one and the same
+    # onset was re-logged on every follower restart (note3 rows at 16:32:38, 19:46:22,
+    # 20:47:10 and 20:49:45 on 2026-10-20 all carry one session and cursor).
+    detected_key = [session, reason]
     if state.get("_channel_delivery_detected_key") == detected_key:
         return None
     state["_channel_delivery_detected_key"] = detected_key

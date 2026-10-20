@@ -321,8 +321,11 @@ remains `body/queues/writes.jsonl` (the host's accepted POSTs), not this verdict
 
 Detections append a bounded record to
 `SITE/body/perception/channel-delivery-gap-detectors.jsonl` (last 128 lines, atomically
-replaced). One row per `(session, reason)` onset, kept while the condition holds and across a
-return to `pass`: this log is an onset record, not a halt census. A per-episode key would log
+replaced). One row per `(session, reason)` onset, kept while the condition holds, across a
+return to `pass` and across a follower restart (the key is persisted with the node state, as a
+list so a JSON round trip preserves it — until 2026-10-20 it was a tuple, which never matched
+the reloaded key and re-logged one onset per restart): this log is an onset record, not a halt
+census. A per-episode key would log
 every page cycle of a drain instead — measured on the 2026-10-20 evening, 18 rows in 75 min
 of drain, 11 of them 75.4-83.6 s page cycles — and those rows would evict real halts from the
 bounded file. A row carries the frozen cursor, its age, the node's cadence context, the
