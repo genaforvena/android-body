@@ -834,6 +834,13 @@ def detect_class_c_delivery_gap(state, log_dir):
     (dumpsys package stopped) and is emitted only for the node the enumerated
     adb serial belongs to -- see ``_node_host_stopped``. Emits bounded JSONL to
     log_dir/class-c-delivery-gap-detectors.jsonl.
+
+    A detection fires at most once per ``(cursor, session)`` pair, and that pair
+    is already receipt-sensitive: ``apply_page`` advances ``cursor`` to the last
+    received sequence, so any new receipt after a detection necessarily changes
+    the key. A resumption followed by a new halt is therefore reported as a
+    distinct gap, and only a continuing halt with no receipt in between stays
+    suppressed -- one report per halt.
     """
     if log_dir is None:
         return None

@@ -259,7 +259,11 @@ The consumer detects a class-C delivery gap: no new record received for 120 s
 (`ble_scan error code=2`) and no class-B null-lux freeze. The cause is explicitly
 non-deterministic — phone asleep, force-stopped app, or another halt — so a row
 reports the halt, not a cause. A detection fires at most once per `(cursor,
-session)` pair and appends a bounded record to
+session)` pair, and that pair is already receipt-sensitive: `apply_page` advances
+the cursor to the last received sequence, so any new receipt after a detection
+changes the key. A resumption followed by a new halt is reported as a distinct
+gap; only a continuing halt with no receipt in between stays suppressed. Each
+detection appends a bounded record to
 `SITE/body/perception/class-c-delivery-gap-detectors.jsonl` (last 128 lines,
 atomically replaced).
 

@@ -2306,6 +2306,49 @@ class PerceptionTests(unittest.TestCase):
             detection2 = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNone(detection2)
 
+    def test_class_c_delivery_gap_detector_reports_a_second_stall_after_a_new_receipt(self):
+        # The (cursor, session) key is receipt-sensitive: a receipt advances the
+        # cursor, so a halt after a resumption is a distinct gap, not a repeat.
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
+                      received=start - 200, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            detection1 = watch.detect_class_c_delivery_gap(state, log_dir)
+            self.assertIsNotNone(detection1)
+            receipt = time.time() - watch.CLASS_C_WINDOW_SECONDS - 5
+            self.page(state, ["1000 light lux=12.5 accuracy=3 age_ms=0"],
+                      received=receipt, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            detection2 = watch.detect_class_c_delivery_gap(state, log_dir)
+            self.assertIsNotNone(detection2)
+            self.assertEqual(detection2["cursor"], detection1["cursor"] + 1)
+            self.assertEqual(detection2["last_received_epoch_s"], receipt)
+
+    def test_class_c_delivery_gap_detector_reports_a_second_stall_in_a_new_session(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
+                      received=start - 200, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            detection1 = watch.detect_class_c_delivery_gap(state, log_dir)
+            self.assertIsNotNone(detection1)
+            receipt = time.time() - watch.CLASS_C_WINDOW_SECONDS - 5
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s2",
+                              "1000 light lux=12.5 accuracy=3 age_ms=0"],
+                      received=receipt, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            detection2 = watch.detect_class_c_delivery_gap(state, log_dir)
+            self.assertIsNotNone(detection2)
+            self.assertEqual(detection2["session"], "s2")
+
+
     def test_class_c_delivery_gap_detector_bounded_output(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
