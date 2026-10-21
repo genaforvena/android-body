@@ -12,7 +12,7 @@ present availability, supported bounded text requests, limits. Declaration is no
 a working sensor. "Present availability" always carries its observation instant; staleness
 is a property of the channel, never a silent default.
 
-Last updated 2026-10-20T21:42Z. Availability stamps below are from the read-only deployed view
+Last updated 2026-10-21T00:07Z. Availability stamps below are from the read-only deployed view
 and can go stale; each correction is stated in the card body with its evidence, and the history
 lives in Git.
 
@@ -58,23 +58,25 @@ ACCESS_NETWORK_STATE, VIBRATE, WAKE_LOCK, RECEIVE_BOOT_COMPLETED, FOREGROUND_SER
 FOREGROUND_SERVICE_SPECIAL_USE, POST_NOTIFICATIONS. Camera, microphone and location
 permissions are NOT requested.
 
-Present availability (2026-10-20T19:29Z, read-only deployed view):
+Present availability (2026-10-21T00:04Z, read-only deployed view):
 
-- `mode=ON_COLLECT_ONLY` (`desired_on=true`; node-state observed 19:28:32Z, age 50.2 s,
+- `mode=ON_COLLECT_ONLY` (`desired_on=true`; node-state observed 00:04:21Z, age 7.0 s,
   `status=ok`): the phone stores observations and issues no HTTP requests and no actions by
-  design; the host pulls through the bridge. Transport reachable, no backlog page pending,
-  node-state fresh.
+  design; the host pulls through the bridge. Transport reachable, no backlog page pending
+  (delivered cursor 265,956 is the queue head), node-state fresh.
 - Delivered samples are stale since 2026-10-14T06:13:24Z — by design under collect-only,
-  not a delivery fault. Collection-side spool reads are live: spool 3,191,852 B, physical-file
-  window 5.0 h, 23,086 rows, coverage ok, 665,080 records dropped cumulatively at the bound;
-  scan_state windows=2974 phase=gap last_error=none sightings=0.
-- Phone clock measured -0.9 s at 19:29Z (n=3, bounds -1.4..-0.4 s,
+  not a delivery fault. Collection-side spool reads are live: spool 2,486,014 B, physical-file
+  window 4.0 h, 18,122 rows, coverage ok, 684,674 records dropped cumulatively at the bound
+  (665,080 at 19:29Z), and the file itself shrank 3,191,852 B → 2,486,014 B as the bound evicted
+  oldest rows and compaction rewrote it (both sizes inside the designed `(maxBytes, 2*maxBytes]`
+  window); scan_state windows=3111 phase=window last_error=none sightings=341.
+- Phone clock measured -1.2 s at 00:04Z (n=3, bounds -1.7..-0.7 s,
   `host_ntp_synchronized=true`): by the pane's host-wall-minus-phone-wall convention the phone
-  reads ~0.9 s ahead of the host, so the offset is attributable to the phone rather than shared
-  with host error; the pane derives an implied transport latency of 27.6-30.6 s. Earlier
+  reads ~1.2 s ahead of the host, so the offset is attributable to the phone rather than shared
+  with host error; the pane derives an implied transport latency of 27.6-30.7 s. Earlier
   readings are history: +2.8 s at 08:26Z carried `host_ntp_synchronized=false` and could not
-  separate phone error from host error; -1.1 s at 18:28Z. Receipt times are consumer-fetch
-  times, not server receipts.
+  separate phone error from host error; -1.1 s at 18:28Z; -0.9 s at 19:29Z. Receipt times are
+  consumer-fetch times, not server receipts.
 
 Supported bounded text requests (while ON; nothing executes in collect-only mode):
 
@@ -132,12 +134,18 @@ emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side 
 file is stale (`mode=UNKNOWN`, `status=stale`, reason `node-state-stale`; unknown is never
 OFF). No persisted owner choices exist yet to honor.
 
-Present availability (2026-10-20T21:42Z, read-only deployed view): delivering, cursor 139,108,
-`channel-delivery [pass]: cursor=advancing`, cadence 6.1 s over the last 8 advances. The delivery pattern changed today: 4-record POSTs
-every ~5 s until 18:53Z, then three silences — 18:53:14→19:01:56Z (522.0 s), 19:01:56→19:04:38Z
-(161.4 s), 19:04:38→19:11:02Z (384.4 s) — each ending in a 128-record page, and since 19:11Z
-128-record backlog pages every ~80 s. Current session `af9d723f…`, whose session-start bundle was
-received 17:41:39Z inside the post-outage drain; it supersedes `45bdac2e…` (started 07:18:02Z).
+Present availability (2026-10-21T00:04Z, read-only deployed view plus the rendezvous write log):
+delivering, cursor 145,940, `channel-delivery [pass]: cursor=advancing`, cadence 4.095 s over the
+last 8 advances (max 6.117 s), 4.1 s old at the read. The evening drain is over: `body/queues/
+writes.jsonl` shows the last ≥100-record page at 2026-10-20T19:54:29Z and one 68-record page at
+19:54:32Z, after which its remaining 2,985 writes to 00:07Z carry 4 records in 2,967 cases, with
+catch-up pages of 8–32 records (last 2026-10-20T23:06:52Z) and no gap over 60 s since 19:54:24Z.
+The earlier pattern is history: 4-record POSTs every ~5 s until 18:53Z, then three silences —
+18:53:14→19:01:56Z (522.0 s), 19:01:56→19:04:38Z (161.4 s), 19:04:38→19:11:02Z (384.4 s) — each
+ending in a 128-record page, 128-record backlog pages every ~80 s to 19:28:46Z, a further burst
+19:47:48→19:54:29Z, and the steady pattern since. Current session `af9d723f…`, whose session-start
+bundle was received 17:41:39Z inside the post-outage drain; it supersedes `45bdac2e…` (started
+07:18:02Z).
 
 Four halts matched a host tailnet outage: 09:30:41→09:49:35Z, 09:51:54→10:08:29Z,
 10:08:43→13:20:30Z and 14:02:57→17:40:24Z (18.9 min, 16.6 min, 191.8 min, 13,047.4 s). Each

@@ -1,16 +1,15 @@
 # Verification record
 
-Checked 2026-10-07; updated through 2026-10-20. Version 0.2 adds persistent ON and durable collect/upload-later behavior. Host/build evidence is separate from Android runtime and physical-device evidence.
+Checked 2026-10-07; updated through 2026-10-21. Version 0.2 adds persistent ON and durable collect/upload-later behavior. Host/build evidence is separate from Android runtime and physical-device evidence.
 
-## Current delivery observation — 2026-10-20
+## Current delivery observation — 2026-10-21
 
-At 2026-10-20T07:37:18Z the deployed perception consumer reached both configured endpoints. Redmi10 was delivering again: session `45bdac2e-a970-4a38-80d6-273e8537898a` began at 07:18:02Z and its cursor advanced 98466 → 99400 with `channel-delivery [pass]`.
-Battery, light (32.0 lux) and acceleration (magnitude 9.851 m/s²) were `fresh-clock-conditional` at 07:37:16Z. Its app-private spool summary is still absent, so no collection-side reading exists for it. Freshness here is a delivery verdict, not occupancy, motion or presence evidence.
+At 2026-10-21T00:04:28Z the deployed perception consumer reached both configured endpoints. Redmi10 was delivering: `channel-delivery [pass] cursor=advancing interval=30.0s age=4.1s cadence=4.095s(n=8,max=6.117s)`, cursor 145,940 (it read 99,400 at the 2026-10-20T07:37:18Z observation below). Battery 0.34 `charging=true` and light 20.0 lux were `fresh-clock-conditional` at 00:04:20Z; acceleration was `unavailable reason=stale` at that instant; `wifi_link_rssi_dbm` was `unavailable reason=disconnected`, the app's `getNetworkId() < 0` API verdict rather than proof the link is down. Its app-private spool summary is still absent, so no collection-side reading exists for it. Freshness here is a delivery verdict, not occupancy, motion or presence evidence.
 
-Note3 remained `ON_COLLECT_ONLY` and silent since 2026-10-14, last valid sensor records 2026-10-14T06:13:24Z (receipt 06:13:52Z); its app-private spool (2,479,849 bytes, 17,833 rows, 613,773 cumulative drops, physical-file window 4.0h) is collection-side evidence only and does not establish delivery.
+Note3 remained `ON_COLLECT_ONLY` and silent since 2026-10-14, last valid sensor records 2026-10-14T06:13:24Z (receipt 06:13:52Z); its delivered cursor is still 265,956 with no page pending. Its app-private spool (2,486,014 bytes, 18,122 rows, 684,674 cumulative drops, physical-file window 4.0h, coverage ok) is collection-side evidence only and does not establish delivery. Drops grew 613,773 → 684,674 over the 16.5h since the 07:37Z read, ≈1.2 rows/s, while the retained window stayed at 4.0h: the phone emits about as fast as the 2 MiB bound evicts, so the window is a steady few hours and the loss is explicit in the cumulative count instead of silent.
 Endpoint reachability and host service state are not phone liveness.
 
-Source: deployed `body/runtime/watch.py view --site .mishe-tauftauf`, read 2026-10-20T07:37:18Z, plus the endpoint queues under `body/queues/`.
+Source: deployed `body/runtime/watch.py view --site .mishe-tauftauf`, read 2026-10-21T00:04:28Z (re-read at 00:03:24Z with identical Note3 values), plus the endpoint queues under `body/queues/`.
 
 Checked cause of the Note3 silence (2026-10-20, genome). The delivered cursor 265956 is the *head* of `body/queues/note3.observations.log` — 265,956 lines, unchanged since 2026-10-14T08:58:03Z — so no page is pending and no parser condition is involved.
 Its last two rows are host-side test rows (`265955 invalid line here`, `265956 invalid line here`) whose envelopes are valid: replaying the whole queue through the deployed `parse_page` in 128-line pages consumes all 265,956 records with zero failures and ends at cursor 265956.
