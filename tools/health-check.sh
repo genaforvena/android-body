@@ -23,6 +23,9 @@
 # Section 2f reads this site's binding-refusal audit log
 # (tools/binding_refusal.py): a documented cross-plant command the guard rejects
 # is a dead route, and the log is the only record of it.
+# Section 10 reads the volume's free bytes (tools/disk_free.py) against the core
+# scan's own 20 GiB near threshold; the drain rate stays core-owned, and an
+# unreadable df reads UNKNOWN rather than passing.
 # Exits 0 if all invariants hold, 1 otherwise.
 set -u
 cd "$(dirname "$0")/.."
@@ -730,6 +733,34 @@ else
   echo "UNKNOWN candidate APK: no SHA256SUMS record at $SUMS"
 fi
 
+# 10. Volume free space (wake 123284). The host volume is 99% used with ~15 GiB
+# free and a ~7 GiB/day drain (measured 2026-10-21T01:26Z by android-body/discover,
+# DM 123190; this host the same minute: `df -B1 -P /` 980666998784B total,
+# 923274321920B used, 16404639744B available). The core scan already declares
+# `sense.disk.trend` DRIFT on that level, but that verdict needs the retained scan
+# corpus and runs on the discover channel, so this plant's own check named no free
+# bytes at all: exhaustion would surface as failed record-store and queue writes,
+# which is the outage, not the warning. This is the point check; the *rate* and its
+# projection stay core-owned, so the section adds no second collector or history
+# file. The bound default is the core's own 20 GiB near threshold
+# (`_DISK_TREND_NEAR_BYTES`), so a RED here agrees with the dashboard's drift
+# verdict instead of contradicting it; DISK_FREE_BOUND overrides it because a
+# threshold is policy, not measurement. An unreadable df is UNKNOWN, never a pass.
+DISK_FREE_BOUND=${DISK_FREE_BOUND:-21474836480}
+if command -v df >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 \
+    && [ -x "$PWD/tools/disk_free.py" ]; then
+  DISK_OUT=$(df -B1 -P "$PWD" 2>/dev/null \
+    | python3 "$PWD/tools/disk_free.py" --bound-bytes "$DISK_FREE_BOUND" 2>&1)
+  DISK_RC=$?
+  printf '%s\n' "$DISK_OUT"
+  case "$DISK_RC" in
+    0) ;;
+    1) FAIL=1 ;;
+    *) ;;
+  esac
+else
+  echo "UNKNOWN disk free (df, python3 or tools/disk_free.py unavailable)"
+fi
 
 echo "---"
 if [ "$FAIL" -eq 0 ]; then

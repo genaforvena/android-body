@@ -1330,3 +1330,42 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   transport, actuator, radio, cursor, queue or spool action; no `adb reverse --list`; no service
   restart; no source change outside `tools/`.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake122056-transport-gap-attribution.md`.
+
+## Volume free-space detector — the host volume at 99% (health wake 123284, 2026-10-21)
+
+- Trigger: the host volume is 99% used with ~15 GiB free and a ~7 GiB/day drain (measured
+  2026-10-21T01:26Z: `df -B1 -P /` 980666998784B total, 923274321920B used, 16404639744B
+  available). Exhaustion breaks every plant on the host, including this plant's record store and
+  the queue files the rendezvous appends to. `android-body/discover` raised it as an addressed DM
+  (123190) with the measurement and the gap: `tools/health-check.sh` had no disk section, so no
+  owned detector in this plant named the free bytes. The core scan's `sense.disk.trend` already
+  declares DRIFT on that level, but it needs the retained scan corpus and runs on the discover
+  channel, so it is not a caller inside this plant's own check.
+- Fix: §10 plus the tested helper `tools/disk_free.py`, which reads the caller's `df -B1 -P` table
+  on stdin — the same split as `queue_capacity.py` and `tailnet_peer.py`, so the caller owns the
+  invocation — and REDs when the `Available` column is at or below the bound. The bound default is
+  the core scan's own *near* threshold, 20 GiB (`_DISK_TREND_NEAR_BYTES`), not its 10 GiB *floor*
+  (`_DISK_TREND_FLOOR_BYTES`, the countdown target), so a RED here agrees with the dashboard's
+  existing drift verdict instead of contradicting it; `DISK_FREE_BOUND` overrides it because a
+  threshold is policy, not measurement. An unreadable table (absent `df`, an error line in place of
+  a table, more than one filesystem row, a non-numeric or negative `Available`) is UNKNOWN, never a
+  pass.
+- Verification: `tools/test_disk_free.py` 15 cases, including the threshold being inclusive, the
+  default bound pinned to the core's 20 GiB near value, and a `df` error line read as UNKNOWN
+  rather than as free=0. Live `sh tools/health-check.sh` → `RED    disk free …15.3GiB on / at/below
+  the bound 21474836480B/20.0GiB (76%)`. Controlled failures through the real §10:
+  `DISK_FREE_BOUND=1000` → the same section GREEN; `DISK_FREE_BOUND=abc` → `UNKNOWN disk free
+  (bound-bytes 'abc' is not a positive integer)`; a `df` stub on PATH that exits 1 with no output
+  → `UNKNOWN disk free (df printed no table)`. Failing-before: the pre-change bytes
+  (`git show HEAD:tools/health-check.sh`) print no disk line at all, and that check was already RED
+  (exit 1) on the same run for pre-existing pane-lease, restart-churn and binding-refusal REDs, so
+  this section adds a truthful line to an already-RED check rather than flipping a GREEN one.
+  `python3 -m unittest discover -s tools` → all OK.
+- Scope: the *rate* and its projection stay core-owned, so this section adds no second collector and
+  no history file, and it deletes nothing. The volume is shared with other homes, so the reading
+  names the level, not a cause and not a reclaimable path.
+- Revert: `git checkout -- tools/health-check.sh`, remove `tools/disk_free.py` and
+  `tools/test_disk_free.py`, and remove this section. `tools/health-check.sh` is not service- or
+  timer-driven; no device, transport, cursor, queue, radio, APK or frozen `body/runtime` byte is
+  touched.
+- Evidence: `.mishe-tauftauf/artifacts/health-wake123284-volume-free-detector.md`.
