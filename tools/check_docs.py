@@ -47,7 +47,7 @@ LONG_LINE_BASELINE = {
     ("docs/actions.md", "ab2a8105b4c14b32"),
     ("docs/compatibility.md", "174ea31cd73ece81"),
     ("docs/compatibility.md", "203eb6a3499f80dd"),
-    ("docs/compatibility.md", "964964830262c052"),
+    ("docs/compatibility.md", "97759f02361b48bd"),
     ("docs/compatibility.md", "d2e53070f246a533"),
     ("docs/verification.md", "0be93d3a4089da3c"),
     ("docs/verification.md", "113ff05381f9d794"),
