@@ -496,19 +496,29 @@ def emit_excursion(log_dir, state, now):
         previous = []
     atomic(path, "\n".join([*previous, line][-EXCURSION_LOG_LINES:]) + "\n")
 
-CLASS_B_MIN_NULL_LUX = 2
+CLASS_B_MIN_NO_VALUE_LIGHT = 2
+CLASS_B_LIGHT_EXCLUDED_REASONS = ("owner_off", "absent")
 CLASS_B_DETECTOR_LINES = 128
 CLASS_B_FREEZE_SECONDS = 30.0
 
 
 def detect_class_b_delivery_gap(state, log_dir, node_state=None):
-    """Detect class-B delivery gap: emission halt with null-lux reads across time.
+    """Detect class-B delivery gap: a producer halt with no-value light reads.
 
-    Fires on (session change with null-lux) OR (cursor freeze with null-lux).
-    Null-lux = light=0.0 persists across >= CLASS_B_MIN_NULL_LUX consecutive
-    retention events. Emits bounded JSONL to log_dir/class-b-delivery-gap-detectors.jsonl.
+    Fires on (session change with no-value light) OR (cursor freeze with
+    no-value light). A no-value light read is a ``light unavailable reason=...``
+    record: the light channel said it could not produce a value. A ``lux=0.0``
+    read is a real measurement of a dark room and does not count, so a
+    night-time cursor freeze is not reported as a light-channel fault. A
+    no-value read whose reason is a designed or hardware silence
+    (``CLASS_B_LIGHT_EXCLUDED_REASONS``: ``owner_off``, ``absent``) does not
+    count either, because a channel that is deliberately silent cannot
+    corroborate a producer halt; every other no-value reason -- the current
+    app's ``stale`` / ``invalid_sample`` / ``registration_failed`` and the
+    legacy ``no_sample`` an older APK emitted -- is a possible fault and
+    counts. Emits bounded JSONL to log_dir/class-b-delivery-gap-detectors.jsonl.
 
-    Dedup keys on (session, newest retained light sequence): the null-lux light
+    Dedup keys on (session, newest retained light sequence): the no-value light
     evidence is the quantity that must be unmoving for two onsets to be the
     same gap. A non-producer write (an authenticated POST of a malformed queue
     line) advances the cursor without adding light evidence, so it can no
@@ -540,8 +550,8 @@ def detect_class_b_delivery_gap(state, log_dir, node_state=None):
             session == state.get("_class_b_detected_session")):
         return None
 
-    max_consecutive = _max_consecutive_null_lux(state)
-    if max_consecutive < CLASS_B_MIN_NULL_LUX:
+    max_consecutive = _max_consecutive_no_value_light(state)
+    if max_consecutive < CLASS_B_MIN_NO_VALUE_LIGHT:
         return None
 
     session_changed = (session is not None and session != prev_session)
@@ -564,7 +574,8 @@ def detect_class_b_delivery_gap(state, log_dir, node_state=None):
         "session": session,
         "light_sequence": last_light_sequence,
         "trigger": "session-change" if session_changed else "cursor-freeze",
-        "null_lux_consecutive": max_consecutive,
+        "no_value_light_consecutive": max_consecutive,
+        "no_value_light_reasons": _no_value_light_reasons(state),
         "node_mode": (node_state or {}).get("mode", "UNKNOWN"),
         "node_state_status": (node_state or {}).get("status", "unknown"),
     }
@@ -710,19 +721,81 @@ def _last_light_sequence(state):
     return None
 
 
-def _max_consecutive_null_lux(state):
-    """Max consecutive null-lux reads across the retained light history."""
-    light_items = [item for item in state["history"] if item["kind"] == "light"]
+def _no_value_light_reason(item):
+    """The producer's reason a light read carried no value, or None.
+
+    The wire grammar (``app/src/main/java/org/androidbody/Sensors.java``,
+    ``snapshot()``) emits either ``light lux=<v> accuracy=... ...`` or
+    ``light unavailable reason=<r> ...``. A read with no ``lux`` value carries
+    the producer's own ``reason``; a read with a value -- including a dark
+    room's ``lux=0.0`` -- returns None.
+    """
+    fields = item.get("fields", {})
+    if number(fields, "lux") is not None:
+        return None
+    reason = fields.get("reason")
+    return reason if isinstance(reason, str) and reason else None
+
+
+def _light_channel_fault(item):
+    """True when a light read carries no value for a reason that is not silence
+    by design or hardware.
+
+    The producer's own reason vocabulary is open, so the rule excludes the two
+    states that cannot corroborate a producer halt: ``owner_off`` (the owner
+    turned the channel off) and ``absent`` (the device has no light sensor).
+    An unattributed absence counts too, rather than being hidden: a channel
+    that is expected to produce a value and names no designed reason is an
+    anomaly, and class-B's claim is that the channel produced no evidence.
+    """
+    fields = item.get("fields", {})
+    if number(fields, "lux") is not None:
+        return False
+    reason = fields.get("reason")
+    if isinstance(reason, str) and reason:
+        return reason not in CLASS_B_LIGHT_EXCLUDED_REASONS
+    return True
+
+
+def _max_consecutive_no_value_light(state):
+    """Max consecutive light reads with no value across the retained history.
+
+    Counts a light read only when it is a channel fault
+    (``_light_channel_fault``): the producer said it could not value the light
+    sensor. A ``lux=0.0`` read is a real measurement of a dark room and is never
+    counted; a designed or hardware silence (``owner_off``, ``absent``) is not a
+    fault, so a channel that is deliberately silent never corroborates a
+    producer halt.
+    """
     max_consecutive = 0
     current = 0
-    for item in light_items:
-        lux = number(item.get("fields", {}), "lux")
-        if lux == 0.0:
+    for item in state["history"]:
+        if item["kind"] != "light":
+            continue
+        if _light_channel_fault(item):
             current += 1
             max_consecutive = max(max_consecutive, current)
         else:
             current = 0
     return max_consecutive
+
+
+def _no_value_light_reasons(state):
+    """Sorted unique fault reasons across the retained no-value light reads.
+
+    An unattributed absence carries no reason, so it is not named here; the
+    count still includes it.
+    """
+    reasons = set()
+    for item in state["history"]:
+        if item["kind"] != "light":
+            continue
+        if not _light_channel_fault(item):
+            continue
+        reason = _no_value_light_reason(item)
+        if reason is not None:
+            reasons.add(reason)
+    return sorted(reasons)
 
 
 ACTIVATION_RECORD_NAME = "activation.json"
@@ -827,8 +900,8 @@ def detect_class_c_delivery_gap(state, log_dir):
 
     Fires when no new record has been received for CLASS_C_WINDOW_SECONDS
     while polls keep succeeding, AND the latest ble_scan is not a code=2
-    error (class-A not armed), AND the class-B null-lux condition is not
-    met (no null-lux freeze). Non-deterministic: phone asleep, force-stopped
+    error (class-A not armed), AND the class-B no-value light condition is not
+    met (no light-channel fault). Non-deterministic: phone asleep, force-stopped
     app, or other causes. The row names its node, because the log is shared by
     every followed node; ``host_stopped`` is the host-side adb complement
     (dumpsys package stopped) and is emitted only for the node the enumerated
@@ -861,7 +934,7 @@ def detect_class_c_delivery_gap(state, log_dir):
     if _latest_code2(state) is not None:
         return None
 
-    if _max_consecutive_null_lux(state) >= CLASS_B_MIN_NULL_LUX:
+    if _max_consecutive_no_value_light(state) >= CLASS_B_MIN_NO_VALUE_LIGHT:
         return None
 
     cursor = state["cursor"]
@@ -886,7 +959,7 @@ def detect_class_c_delivery_gap(state, log_dir):
         "session": session,
         "last_received_epoch_s": last_received,
         "window_seconds": CLASS_C_WINDOW_SECONDS,
-        "reason": "delivery halted with polls succeeding; no code=2, no null-lux freeze",
+        "reason": "delivery halted with polls succeeding; no code=2, no light-channel fault",
         "host_stopped": host_stopped,
         "host_stopped_device": host_stopped_device,
         "host_stopped_reason": host_stopped_reason,

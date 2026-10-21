@@ -230,22 +230,35 @@ survive the baseline steps above.
 ## Class-B delivery-gap detection
 
 The consumer detects a class-B delivery gap: a cursor freeze or session change
-with two or more consecutive null-lux (`0.0` lux) reads. A detection fires at
-most once per `(session, newest retained light sequence)` pair — the null-lux
-light evidence is the quantity that must be unmoving for two onsets to be the
-same gap — and appends a bounded record to
+with two or more consecutive no-value light reads. A no-value light read is a
+`light unavailable reason=...` record: the light channel said it could not
+produce a value. A `light lux=0.0` read is a real measurement of a dark room and
+is never a no-value read, so a night-time cursor freeze is not reported as a
+light-channel fault. A no-value read whose reason is a designed or hardware
+silence (`owner_off`, `absent`) is not counted either, because a channel that is
+deliberately silent cannot corroborate a producer halt; every other no-value
+reason is a possible fault and counts. The producer's reason vocabulary is open,
+so this is an exclusion of the two designed silences rather than a closed list
+of faults: the current app emits `stale` / `invalid_sample` /
+`registration_failed`, and the connected Note3's older APK emitted the legacy
+`no_sample`, which is counted rather than dropped. A detection
+fires at most once per `(session, newest retained light sequence)` pair — the
+no-value light evidence is the quantity that must be unmoving for two onsets
+to be the same gap — and appends a bounded record to
 `SITE/body/perception/class-b-delivery-gap-detectors.jsonl` (last 128 lines,
 atomically replaced). The record includes the trigger type (`cursor-freeze` or
-`session-change`), the consecutive null-lux count, the frozen cursor, the
-`light_sequence` join key, and the session. The cursor's observed state is
-recorded as provenance (`cursor_state`: `frozen`, `advanced`, `unknown`), never
-as identity: a non-producer write (an authenticated POST of a malformed queue
-line) advances the cursor without adding light evidence and therefore cannot
-re-arm a spurious second onset for one continuous gap. A genuine resumption
-followed by a new halt adds a new light observation and is reported as a
-distinct gap. A freeze without null-lux reads is not class-B; the detector is
-armed for the next qualifying occurrence. Historical rows written before this
-dedup change keep `kind=class-b-stop` and carry no `light_sequence`.
+`session-change`), the consecutive no-value count, the fault reasons counted,
+the frozen cursor, the `light_sequence` join key, and the session. The cursor's
+observed state is recorded as provenance (`cursor_state`: `frozen`, `advanced`,
+`unknown`), never as identity: a non-producer write (an authenticated POST of a
+malformed queue line) advances the cursor without adding light evidence and
+therefore cannot re-arm a spurious second onset for one continuous gap. A
+genuine resumption followed by a new halt adds a new light observation and is
+reported as a distinct gap. A freeze without no-value light reads is not
+class-B; the detector is armed for the next qualifying occurrence. Historical
+rows written before this dedup change keep `kind=class-b-stop` and carry no
+`light_sequence`; rows written while the predicate counted `lux=0.0` carry
+`null_lux_consecutive` and record a dark room, not a null channel.
 
 Each record also carries `node_mode` and `node_state_status` read from the
 host-side node-state file (below), so a gap names *why* the producer is silent
@@ -256,10 +269,10 @@ provenance and never take part in the dedup identity.
 
 The consumer detects a class-C delivery gap: no new record received for 120 s
 (`CLASS_C_WINDOW_SECONDS`) while polls keep succeeding, with no class-A arming
-(`ble_scan error code=2`) and no class-B null-lux freeze. The cause is explicitly
-non-deterministic — phone asleep, force-stopped app, or another halt — so a row
-reports the halt, not a cause. A detection fires at most once per `(cursor,
-session)` pair, and that pair is already receipt-sensitive: `apply_page` advances
+(`ble_scan error code=2`) and no class-B no-value light condition. The cause is
+explicitly non-deterministic — phone asleep, force-stopped app, or another halt
+— so a row reports the halt, not a cause. A detection fires at most once per
+`(cursor, session)` pair, and that pair is already receipt-sensitive: `apply_page` advances
 the cursor to the last received sequence, so any new receipt after a detection
 changes the key. A resumption followed by a new halt is reported as a distinct
 gap; only a continuing halt with no receipt in between stays suppressed. Each

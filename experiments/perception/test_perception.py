@@ -1925,66 +1925,72 @@ class PerceptionTests(unittest.TestCase):
         self.assertIn("status=pinned-axis samples=6 pinned_axes=x", pinned_text)
         self.assertIn("accel leg indeterminate", pinned_text)
 
-    def test_class_b_delivery_gap_detector_fires_on_cursor_freeze_with_null_lux(self):
+    def test_class_b_delivery_gap_detector_fires_on_cursor_freeze_with_no_value_light(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
-            # Session s1: two null-lux reads
+            # Session s1: two light reads the producer could not value
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                              "1000 light unavailable reason=stale age_ms=60012",
+                              "1000 light unavailable reason=stale age_ms=61000"],
                       received=1000, log_dir=log_dir)
             # First call seeds prev state
             watch.detect_class_b_delivery_gap(state, log_dir)
             # Simulate cursor frozen for > CLASS_B_FREEZE_SECONDS
             state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
-            # Second poll: cursor frozen, still null-lux
+            # Second poll: cursor frozen, still no-value light
             detection = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNotNone(detection)
             self.assertEqual(detection["trigger"], "cursor-freeze")
-            self.assertEqual(detection["null_lux_consecutive"], 2)
+            self.assertEqual(detection["no_value_light_consecutive"], 2)
+            self.assertEqual(detection["no_value_light_reasons"], ["stale"])
             self.assertEqual(detection["cursor"], state["cursor"])
 
-    def test_class_b_delivery_gap_detector_fires_on_session_change_with_null_lux(self):
+    def test_class_b_delivery_gap_detector_fires_on_session_change_with_no_value_light(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
-            # Session s1 with null-lux
+            # Session s1: one no-value light read
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000"],
+                              "1000 light unavailable reason=stale age_ms=60012"],
                       received=1000, log_dir=log_dir)
             watch.detect_class_b_delivery_gap(state, log_dir)
-            # Session s2 with null-lux (session change)
-            # Session s2 with 2 null-lux reads (session change)
+            # Session s2: two no-value light reads (session change)
             self.page(state, ["1000 hello node=note3 protocol=1 session=s2",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=3000"],
+                              "1000 light unavailable reason=stale age_ms=61000",
+                              "1000 light unavailable reason=invalid_sample"],
                       received=1001, log_dir=log_dir)
             detection = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNotNone(detection)
             self.assertEqual(detection["trigger"], "session-change")
-            self.assertEqual(detection["null_lux_consecutive"], 2)
+            self.assertEqual(detection["no_value_light_consecutive"], 2)
 
-    def test_class_b_delivery_gap_detector_silent_without_null_lux(self):
+    def test_class_b_delivery_gap_detector_silent_on_a_dark_room(self):
+        """Regression (health DM 123242): a dark room reads lux=0.0, which is
+        a measurement, not a null read. Two dark reads must not make class-B
+        claim the light channel produced no evidence.
+        """
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
-            # Session s1: non-null-lux
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=12.5 accuracy=3 age_ms=0 phone_elapsed_ms=1000"],
+                              "1000 light lux=0.0 accuracy=3 age_ms=0",
+                              "1000 light lux=0.0 accuracy=3 age_ms=0"],
                       received=1000, log_dir=log_dir)
             watch.detect_class_b_delivery_gap(state, log_dir)
-            # Cursor frozen but no null-lux
-            detection = watch.detect_class_b_delivery_gap(state, log_dir)
-            self.assertIsNone(detection)
+            state["_class_b_last_cursor_advance_at"] = (
+                time.time() - watch.CLASS_B_FREEZE_SECONDS - 1)
+            self.assertIsNone(watch.detect_class_b_delivery_gap(state, log_dir))
+            self.assertEqual(
+                (log_dir / "class-b-delivery-gap-detectors.jsonl").exists(), False)
 
     def test_class_b_delivery_gap_detector_no_repeat_for_same_session_and_light(self):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                              "1000 light unavailable reason=stale age_ms=60012",
+                              "1000 light unavailable reason=stale age_ms=61000"],
                       received=1000, log_dir=log_dir)
             watch.detect_class_b_delivery_gap(state, log_dir)
             # Simulate cursor frozen for > CLASS_B_FREEZE_SECONDS
@@ -2003,8 +2009,8 @@ class PerceptionTests(unittest.TestCase):
             for i in range(watch.CLASS_B_DETECTOR_LINES + 5):
                 state["cursor"] = 100 + i
                 state["session"] = f"s{i}"
-                state["history"] = [{"kind": "light", "fields": {"lux": 0.0}},
-                                     {"kind": "light", "fields": {"lux": 0.0}}]
+                state["history"] = [{"kind": "light", "fields": {"reason": "stale"}},
+                                     {"kind": "light", "fields": {"reason": "stale"}}]
                 state.pop("_class_b_detected_light_sequence", None)
                 state.pop("_class_b_detected_session", None)
                 watch.detect_class_b_delivery_gap(state, log_dir)
@@ -2022,10 +2028,10 @@ class PerceptionTests(unittest.TestCase):
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
-            # Session s1: two null-lux reads
+            # Session s1: two no-value light reads
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                              "1000 light unavailable reason=stale age_ms=60012",
+                              "1000 light unavailable reason=stale age_ms=61000"],
                       received=1000, log_dir=log_dir)
             # Seed prev state
             watch.detect_class_b_delivery_gap(state, log_dir)
@@ -2039,7 +2045,7 @@ class PerceptionTests(unittest.TestCase):
             state["cursor"] = 1008  # advanced +4 again
             detection = watch.detect_class_b_delivery_gap(state, log_dir)
             self.assertIsNone(detection)
-            # Even after many polls with null-lux, advancing cursor = no freeze
+            # Even after many polls with no-value light, advancing cursor = no freeze
             for i in range(10):
                 state["cursor"] = 1008 + (i + 1) * 4
                 detection = watch.detect_class_b_delivery_gap(state, log_dir)
@@ -2059,8 +2065,8 @@ class PerceptionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                              "1000 light unavailable reason=stale age_ms=60012",
+                              "1000 light unavailable reason=stale age_ms=61000"],
                       received=1000, log_dir=log_dir)
             watch.detect_class_b_delivery_gap(state, log_dir)  # seed prev state
             state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
@@ -2084,14 +2090,14 @@ class PerceptionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                              "1000 light unavailable reason=stale age_ms=60012",
+                              "1000 light unavailable reason=stale age_ms=61000"],
                       received=1000, log_dir=log_dir)
             watch.detect_class_b_delivery_gap(state, log_dir)
             state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
             self.assertIsNotNone(watch.detect_class_b_delivery_gap(state, log_dir))
-            # Delivery resumes: a fresh null-lux light observation arrives.
-            self.page(state, ["1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=3000"],
+            # Delivery resumes: a fresh no-value light observation arrives.
+            self.page(state, ["1000 light unavailable reason=stale age_ms=62000"],
                       received=1001, log_dir=log_dir)
             watch.detect_class_b_delivery_gap(state, log_dir)
             state["_class_b_last_cursor_advance_at"] = time.time() - watch.CLASS_B_FREEZE_SECONDS - 1
@@ -2109,8 +2115,8 @@ class PerceptionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "note3.json"
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                              "1000 light unavailable reason=stale age_ms=60012",
+                              "1000 light unavailable reason=stale age_ms=61000"],
                       received=1000)
             state["_class_b_detected_session"] = "s1"
             state["_class_b_detected_cursor"] = state["cursor"]
@@ -2124,6 +2130,50 @@ class PerceptionTests(unittest.TestCase):
                 loaded["_class_b_last_cursor_advance_at"] = (
                     time.time() - watch.CLASS_B_FREEZE_SECONDS - 1)
                 self.assertIsNone(watch.detect_class_b_delivery_gap(loaded, log_dir))
+
+    def test_max_consecutive_no_value_light_excludes_designed_and_absent_channels(self):
+        """A deliberately silent light channel is not evidence of a producer
+        halt: ``owner_off`` and ``absent`` do not count and a dark measurement
+        does not count, while every other no-value reason does. The producer's
+        reason vocabulary is open, so the legacy ``no_sample`` an older APK
+        emitted (5 rows in the retained Note3 queue) and an unattributed
+        absence both count; a real measurement resets the run and the count is
+        over light reads, so an interleaved non-light record does not break it.
+        """
+        state = self.state()
+        state["history"] = [
+            {"kind": "light", "fields": {"lux": "0.0", "accuracy": "3"}},
+            {"kind": "light", "fields": {"reason": "owner_off"}},
+            {"kind": "light", "fields": {"reason": "absent"}},
+            {"kind": "light", "fields": {"reason": "stale", "age_ms": "60012"}},
+            {"kind": "light", "fields": {"reason": "invalid_sample"}},
+        ]
+        self.assertEqual(watch._max_consecutive_no_value_light(state), 2)
+        self.assertEqual(watch._no_value_light_reasons(state),
+                         ["invalid_sample", "stale"])
+        state["history"] = [
+            {"kind": "light", "fields": {"reason": "stale", "age_ms": "60012"}},
+            {"kind": "battery", "fields": {"level": "0.5"}},
+            {"kind": "light", "fields": {"reason": "stale", "age_ms": "61000"}},
+        ]
+        self.assertEqual(watch._max_consecutive_no_value_light(state), 2)
+        state["history"] = [
+            {"kind": "light", "fields": {"reason": "stale", "age_ms": "60012"}},
+            {"kind": "light", "fields": {"lux": "5.0", "accuracy": "3"}},
+            {"kind": "light", "fields": {"reason": "stale", "age_ms": "61000"}},
+        ]
+        self.assertEqual(watch._max_consecutive_no_value_light(state), 1)
+        # The connected Note3's older APK emitted this reason; it is counted,
+        # not dropped, because the vocabulary is an exclusion list.
+        state["history"] = [
+            {"kind": "light", "fields": {"reason": "no_sample"}},
+            {"kind": "light", "fields": {"reason": "no_sample"}},
+        ]
+        self.assertEqual(watch._max_consecutive_no_value_light(state), 2)
+        self.assertEqual(watch._no_value_light_reasons(state), ["no_sample"])
+        # An unattributed absence is treated as a possible fault, not hidden.
+        state["history"] = [{"kind": "light", "fields": {}}]
+        self.assertEqual(watch._max_consecutive_no_value_light(state), 1)
 
     def test_class_a_detector_freeze_on_code2_cursor_halt(self):
         state = self.state()
@@ -2241,7 +2291,7 @@ class PerceptionTests(unittest.TestCase):
             self.assertIsNotNone(detection)
             self.assertEqual(detection["kind"], "class-c-delivery-gap")
             self.assertEqual(detection["reason"],
-                             "delivery halted with polls succeeding; no code=2, no null-lux freeze")
+                             "delivery halted with polls succeeding; no code=2, no light-channel fault")
 
     def test_class_c_delivery_gap_detector_silent_before_window(self):
         state = self.state()
@@ -2268,14 +2318,32 @@ class PerceptionTests(unittest.TestCase):
             detection = watch.detect_class_c_delivery_gap(state, log_dir)
             self.assertIsNone(detection)
 
-    def test_class_c_delivery_gap_detector_silent_when_null_lux_condition_met(self):
+    def test_class_c_delivery_gap_detector_fires_on_a_dark_room_halt(self):
+        """Regression (health DM 123242): class-C defers to class-B only on a
+        real no-value light read. Two dark reads (lux=0.0) are measurements,
+        so a night-time halt must still be reported with no known cause.
+        """
         state = self.state()
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
             start = time.time()
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=0 accuracy=3 age_ms=0",
-                              "1000 light lux=0 accuracy=3 age_ms=0"],
+                              "1000 light lux=0.0 accuracy=3 age_ms=0",
+                              "1000 light lux=0.0 accuracy=3 age_ms=0"],
+                      received=start - 200, log_dir=log_dir)
+            state["ok_at"] = time.time()
+            detection = watch.detect_class_c_delivery_gap(state, log_dir)
+            self.assertIsNotNone(detection)
+            self.assertEqual(detection["kind"], "class-c-delivery-gap")
+
+    def test_class_c_delivery_gap_detector_silent_when_no_value_light_condition_met(self):
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            log_dir = Path(folder)
+            start = time.time()
+            self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
+                              "1000 light unavailable reason=stale age_ms=60012",
+                              "1000 light unavailable reason=stale age_ms=61000"],
                       received=start - 200, log_dir=log_dir)
             state["ok_at"] = time.time()
             detection = watch.detect_class_c_delivery_gap(state, log_dir)
@@ -3495,8 +3563,8 @@ class PerceptionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             log_dir = Path(folder)
             self.page(state, ["1000 hello node=note3 protocol=1 session=s1",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=1000",
-                              "1000 light lux=0 accuracy=3 age_ms=0 phone_elapsed_ms=2000"],
+                              "1000 light unavailable reason=stale age_ms=60012",
+                              "1000 light unavailable reason=stale age_ms=61000"],
                       received=1000, log_dir=log_dir)
             mode = {"status": "ok", "mode": "ON_COLLECT_ONLY"}
             watch.detect_class_b_delivery_gap(state, log_dir, mode)
