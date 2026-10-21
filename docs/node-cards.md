@@ -137,7 +137,7 @@ emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side 
 file is stale (`mode=UNKNOWN`, `status=stale`, reason `node-state-stale`; unknown is never
 OFF). No persisted owner choices exist yet to honor.
 
-Present availability (2026-10-21T12:19Z, read-only deployed view plus the rendezvous write log).
+Present availability (2026-10-21T12:52Z, read-only deployed view plus the rendezvous write log).
 Two detectors, and they are not interchangeable: the accepted-POST gap census over
 `body/queues/writes.jsonl` (consecutive `redmi10` rows, gap > 60 s) reports **completed** gaps
 only — an ongoing silence has no closing row, so the census cannot see one — while the consumer's
@@ -145,18 +145,23 @@ own `channel-delivery` verdict and its `body/perception/class-c-delivery-gap-det
 rows report the open case. A `channel-delivery [pass]` verdict is not a no-gap verdict, and a
 clean census is not a no-open-silence verdict.
 
-- **Not reliable at the read.** The phone has been silent since 2026-10-21T11:32:06Z — 47.2 min
-  and counting — with the consumer reporting `channel-delivery [fail]: cursor=frozen` at cursor
-  179,340; its class-c detector fired 11:34:07Z. The census's last completed gap ended
-  11:31:06Z, so this open silence is outside it, which is why both detectors are named above.
-  The cause is unattributed here; health owns that lane.
-- Behind that, same census: **27** ≥60 s gaps with onset since 00:00Z today, worst
-  **618.6 s** (`08:02:50.226 → 08:13:08.822`, resuming as a 128-record page) — larger than the
-  386.6 s the previous stamp cited. 23 ran from the first onset 2026-10-21T00:27:26Z through
+- **Delivering again, but not dependable.** The silence that began 2026-10-21T11:32:06Z **closed
+  at 12:41:06Z after 4,139.7 s (69.0 min)**, resuming as a 128-record page and draining 37 writes /
+  3,592 records / 367,385 B of buffered backlog by 12:44:30Z. The consumer now reports
+  `channel-delivery [pass]: cursor=advancing` at cursor 183,296 (cadence 6.9 s, n=8, max 20.6 s);
+  the 12:19Z stamp read `[fail]: cursor=frozen` at 179,340. The census also carries a 73.2 s gap
+  between that window and the drain and a 69.3 s gap inside it — both below the class-c detector's
+  120 s window, so it does not report them. The window's cause is unattributed here; health owns
+  that lane, and the phone's spool summary is unread (`no-spool-summary-file`), so whether the
+  window cost it records is unknown.
+- Behind that, same census: **30** ≥60 s gaps with onset since 00:00Z today, worst
+  **4,139.7 s** (`11:32:06.312 → 12:41:06.056`, resuming as a 128-record page) — far larger than
+  the 618.6 s the previous stamp cited. 23 ran from the first onset 2026-10-21T00:27:26Z through
   06:08:21Z (worst 386.6 s, `04:08:50→04:15:16`; also 377.5 s, 311.3 s, 275.9 s, 249.2 s,
-  247.2 s, 228.2 s), then 08:02:50Z, 09:10:00Z (63.8 s), 11:23:52Z (114.7 s) and 11:27:18Z
-  (228.1 s). The evening drain's clean window ran 2026-10-20T19:54:32Z → 00:27:26Z.
-- Attribution of those 27, by health's journal census (`tools/transport_gap.py` over the host
+  247.2 s, 228.2 s), then 08:02:50Z (618.6 s), 09:10:00Z (63.8 s), 11:23:52Z (114.7 s), 11:27:18Z
+  (228.1 s), the 11:32:06Z window and the two beside its drain. The evening drain's clean window
+  ran 2026-10-20T19:54:32Z → 00:27:26Z.
+- Attribution of the windows through 11:31:06Z, by health's journal census (`tools/transport_gap.py` over the host
   `tailscaled` journal; A = no line for the phone's tailnet address in-window, B = a failure
   line from that address, C = the `ipn` state left `Running`, D = address present with no
   failure line), re-derived here from a frozen capture of the retained journal: the morning 23
