@@ -1369,3 +1369,34 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   timer-driven; no device, transport, cursor, queue, radio, APK or frozen `body/runtime` byte is
   touched.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake123284-volume-free-detector.md`.
+
+
+## Gap-attribution count named for what it counts, not one reason (health wake 123547, 2026-10-21)
+
+- Trigger: `tools/transport_gap.py` printed its `CreateEndpoint` count as `create_endpoint_refused=`,
+  while `CREATE_ENDPOINT_RE` matches every `CreateEndpoint error for <ip>` line whatever the
+  reason. Measured on the 2026-10-20 324.8 s window: 7 such lines, **4 `connection was refused`
+  and 3 `operation timed out`**, so the name misdescribed 3 of the 7. docs DM 123321 named the
+  misleading name with a correct classification.
+- Fix: the field is renamed to `create_endpoint_errors` (JSON key, `--human` line, local counter)
+  and the docstring states the count is reason-agnostic, with the reason carried in the in-window
+  evidence lines. Class B is unchanged — "a failure line from the node's address", refused or
+  timed out alike — so no class changes on real evidence.
+- Verification: `cd tools && python3 -m unittest test_transport_gap -v` -> **42 tests OK** (41
+  before, plus `test_a_create_endpoint_timeout_from_the_node_address_is_counted_not_named_a_refusal`,
+  which pins the reason-agnostic semantics so the misleading name cannot return); `python3 -m
+  unittest discover -s tools` -> 493 OK; `tools/check_docs.py` GREEN;
+  `tools/check_ci_coverage.py` GREEN. Live, read-only, the 2026-10-20 Redmi10 evening
+  (`--journal live --node redmi10 --ip 100.103.99.16 --min-gap 120 --since 2026-10-20T18:00:00+00:00
+  --until 2026-10-20T20:00:00+00:00 --human`) prints the same five windows and classes B/D/B/B/B,
+  with `create_endpoint_errors=7` on the 324.8 s row. Failing-before: `git show
+  HEAD:tools/transport_gap.py` carries the old key at lines 354 and 463.
+- Reading: the B/D/B/B/B verdicts and the UNKNOWN split inside B (host DERP egress vs the serve
+  front's accept) are unchanged; only the count's name and its documented semantics changed. The
+  measured 4 refused / 3 timed out split corrects the peer's DM prose (docs DM 123321), which read
+  the window's 7 lines as timeouts; `docs/node-cards.md` already names both reasons and was not
+  edited.
+- Revert: `git checkout -- tools/transport_gap.py tools/test_transport_gap.py` and remove this
+  section. No service, timer, device, transport, cursor, queue, radio, APK or frozen `body/runtime`
+  byte is touched.
+- Evidence: `.mishe-tauftauf/artifacts/health-wake123547-create-endpoint-count-name.md`.

@@ -189,7 +189,20 @@ class ClassificationTest(unittest.TestCase):
              "connection was refused"),
         ])
         self.assertEqual(row["class"], "B")
-        self.assertEqual(row["create_endpoint_refused"], 1)
+        self.assertEqual(row["create_endpoint_errors"], 1)
+        self.assertEqual(row["tls_handshake_errors"], 0)
+
+
+    def test_a_create_endpoint_timeout_from_the_node_address_is_counted_not_named_a_refusal(self):
+        """The count is reason-agnostic: a timeout is B, and not a refusal census."""
+        row = self._run([
+            (at("2026-10-20T17:39:11+00:00"), RUNNING),
+            (at("2026-10-20T18:54:24+00:00"),
+             "CreateEndpoint error for 100.103.99.16:50014 -> 100.81.222.19:443: "
+             "operation timed out"),
+        ])
+        self.assertEqual(row["class"], "B")
+        self.assertEqual(row["create_endpoint_errors"], 1)
         self.assertEqual(row["tls_handshake_errors"], 0)
 
     def test_a_failure_line_from_another_address_does_not_classify_this_node(self):
@@ -204,7 +217,7 @@ class ClassificationTest(unittest.TestCase):
         self.assertEqual(row["class"], "A")
         self.assertEqual(row["address_lines"], 0)
         self.assertEqual(row["tls_handshake_errors"], 0)
-        self.assertEqual(row["create_endpoint_refused"], 0)
+        self.assertEqual(row["create_endpoint_errors"], 0)
 
     def test_a_netstack_line_without_a_failure_is_connected_no_separating_failure(self):
         row = self._run([

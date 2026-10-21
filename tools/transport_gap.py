@@ -44,6 +44,12 @@ gap — positive evidence that does not depend on the window being fully read.
 the serve front; it is reported, not used to classify, because §5 names only the
 two device-address failure lines. It is host-global, not node-scoped, so it is a
 hint about the serve front and never a reason for this node's class.
+``create_endpoint_errors`` counts every ``CreateEndpoint error for <ip>:<port>``
+line from the node's address, *whatever the reason* — ``connection was refused``
+and ``operation timed out`` both — because class B is "a failure line from that
+address", not a refusal census. The reason is carried in the in-window evidence
+lines, which are capped at 8 address lines; a reason the cap dropped is read from
+the journal, not inferred from the count's name.
 ``address_lines`` counts every journal line naming the node's address — a netstack
 in-flight line, a TLS handshake or a CreateEndpoint error — matched on token
 boundaries so a neighbouring address cannot be counted, so class A means nothing
@@ -328,7 +334,7 @@ def classify(lines, start, end, ip, spans, covers_window):
     address_re = re.compile(ADDRESS_MATCH.format(re.escape(ip)))
     attempt = 0
     tls = 0
-    refused = 0
+    create_endpoint = 0
     proxy = 0
     samples = []
     for moment, text in lines:
@@ -343,7 +349,7 @@ def classify(lines, start, end, ip, spans, covers_window):
             tls += 1
         match = CREATE_ENDPOINT_RE.search(text)
         if match is not None and match.group(1) == ip:
-            refused += 1
+            create_endpoint += 1
         if PROXY_ERROR_RE.search(text) is not None:
             proxy += 1
     down, covered, down_detail = tailnet_down(
@@ -351,7 +357,7 @@ def classify(lines, start, end, ip, spans, covers_window):
     counts = {
         "address_lines": attempt,
         "tls_handshake_errors": tls,
-        "create_endpoint_refused": refused,
+        "create_endpoint_errors": create_endpoint,
         "serve_proxy_errors": proxy,
         "ipn": down_detail,
     }
@@ -364,7 +370,7 @@ def classify(lines, start, end, ip, spans, covers_window):
         klass = CLASS_C
     elif not covers_window:
         klass = CLASS_UNKNOWN
-    elif tls or refused:
+    elif tls or create_endpoint:
         klass = CLASS_B
     elif attempt == 0:
         klass = CLASS_A
@@ -460,7 +466,7 @@ def main(argv=None):
             print(f"{row['class']:<7} {row['node']} {row['start']} -> {row['end']} "
                   f"{row['duration_s']}s addresses={row['address_lines']} "
                   f"tls_eof={row['tls_handshake_errors']} "
-                  f"create_endpoint_refused={row['create_endpoint_refused']} "
+                  f"create_endpoint_errors={row['create_endpoint_errors']} "
                   f"serve_proxy_errors={row['serve_proxy_errors']} "
                   f"ipn={row['ipn']}")
         else:
