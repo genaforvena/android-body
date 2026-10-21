@@ -41,10 +41,8 @@ EXTERNAL = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 # text above a baseline line does not produce false-RED, and a new long line
 # at a previously-baseline position is still flagged.
 LONG_LINE_BASELINE = {
-    ("README.md", "9101ddacd2e63e05"),
     ("ble-probe/README.md", "d73dd1715d7003a1"),
     ("docs/actions.md", "8676e78e68f1355f"),
-    ("docs/actions.md", "ab2a8105b4c14b32"),
     ("docs/compatibility.md", "174ea31cd73ece81"),
     ("docs/compatibility.md", "203eb6a3499f80dd"),
     ("docs/compatibility.md", "dde1530c6b08f616"),
@@ -55,10 +53,8 @@ LONG_LINE_BASELINE = {
     ("docs/verification.md", "1c694a26d40adb39"),
     ("docs/verification.md", "6655994c50437919"),
     ("docs/verification.md", "4dbfdc322aaf9d18"),
-    ("docs/verification.md", "db12ada776b64e86"),
     ("docs/verification.md", "5b14966dad3520b6"),
     ("docs/verification.md", "61a5a2877dac1c1c"),
-    ("docs/verification.md", "6dd89120828f6584"),
     ("docs/verification.md", "707a606c9a5c1476"),
     ("docs/verification.md", "7ea229a9b6ba9dc1"),
     ("docs/verification.md", "82189260e7776e5e"),

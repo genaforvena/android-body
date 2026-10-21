@@ -171,6 +171,33 @@ class DetectorTest(unittest.TestCase):
                         detector.LONG_LINE_BASELINE,
                         f"{rel}:{lineno} long line not in baseline",
                     )
+    def test_baseline_entries_match_repo_long_lines(self):
+        """Every baseline entry must still match a tracked long line.
+
+        The forward direction (``test_repo_long_lines_match_baseline``) stops a
+        new long line passing unkeyed. This is the reverse: a content-keyed
+        baseline keeps no entry for a line that was edited, shortened or
+        removed. Four such dead entries (``README.md 9101ddacd2e63e05``,
+        ``docs/actions.md ab2a8105b4c14b32``, ``docs/verification.md
+        6dd89120828f6584``/``db12ada776b64e86``) had accumulated by 2026-10-21,
+        so the gate could not tell a maintained baseline from a stale one.
+        """
+        listed = subprocess.run(
+            ["git", "-C", str(detector.REPO), "ls-files", "--", "*.md"],
+            capture_output=True, text=True,
+        )
+        live = set()
+        for path in [detector.REPO / rel for rel in listed.stdout.split()]:
+            rel = str(path.relative_to(detector.REPO))
+            for line in path.read_text(encoding="utf-8").split("\n"):
+                if len(line) > 768:
+                    live.add((rel, hashlib.sha256(line.encode("utf-8")).hexdigest()[:16]))
+        self.assertEqual(
+            sorted(set(detector.LONG_LINE_BASELINE) - live),
+            [],
+            "baseline entries with no matching tracked long line",
+        )
+
 
     def test_short_line_is_green(self):
         # A line <= 768 chars is NOT flagged.
@@ -179,7 +206,7 @@ class DetectorTest(unittest.TestCase):
         self.assertEqual(code, detector.GREEN, lines)
 
     def test_baseline_is_nonempty(self):
-        # The baseline must be non-empty (41 entries as of 2026-10-17).
+        # The baseline must be non-empty (it carries the known long lines).
         self.assertTrue(len(detector.LONG_LINE_BASELINE) > 0)
 
 
