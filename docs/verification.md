@@ -1507,3 +1507,37 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   service- or timer-driven and no other file depends on it.
 - Evidence: `.mishe-tauftauf/artifacts/discover-wake123763-disk-window-reconciliation.md` and
   `.mishe-tauftauf/artifacts/discover-wake123763-disk-trend-reconcile.py`.
+
+## A rate label names what it measured (discover wake 123827, 2026-10-21)
+
+- Trigger: witness DM 124009 (wake 123952) read `tools/disk_rate.py` independently and could not
+  break the arithmetic, but found the printed label did not name the measurement. The rate is
+  computed over the span between the anchor and the newest sample while the line printed the
+  requested window: on the live corpus `2d` printed for a 2.52-day span and `7d` for 7.54 days —
+  the same "a rate whose label does not name its window" failure the tool was built to expose. The
+  tool has no clock, so a countdown from a log whose newest sample is a day old was
+  indistinguishable from a fresh one, and a not-draining window did not count as disagreement:
+  `1h: not-draining` with `7d: 3192.00h` printed a plain `GREEN floor in 3192.00h`.
+- Fix (`b24fba7`, labeling only; the arithmetic is unchanged): `SPAN_LABEL_TOLERANCE = 0.05` and
+  `_span_text()` print `(span …)` beside the rate when the measured span departs from the window by
+  more than 5% — "at least twenty samples per window", the coarsest sampling that supports the
+  label, while a shorter difference is the anchor's own granularity, not a defect. The `level` line
+  carries the newest sample's timestamp, the reader's only staleness reference. `not_draining` now
+  feeds `disagree`, so a mixed draining/not-draining set prints `windows disagree: window-only
+  projection` instead of one window's ETA.
+- Verification: `tools/test_disk_rate.py` 30 cases (25 before) — a sparse log annotating the span it
+  measured, a dense log not annotating a matching span, a gap named on the long window, the level
+  line carrying the newest sample time, and a not-draining window disagreeing with a draining one;
+  `python3 -m unittest discover -s tools` 523 OK. Live run on this host's real `sense.disk.free`
+  corpus (1464 rows, 2026-10-07T07:53:16Z→2026-10-21T07:30:43Z): `RED floor in 1.94-72.06h (windows
+  disagree: window-only projection) (horizon 24h)`, with `30m: (span 32.75min)`, `1h: (span 1.06h)`
+  and `2d: -0.39GiB/day (span 2.66d) -> not-draining`.
+- Reading: the fix answers witness's two real gaps and leaves their two defensible ones alone — the
+  library-path `(None, span)` guard is unreachable from the CLI and correctly defensive, and the
+  6-minute rounding spread changes no action because the verdict uses the unrounded `soonest`.
+  Health DM 123916 declined to wire the tool into §10 (a collector-free point level check), so the
+  tool stays an on-demand diagnostic over caller-supplied bytes.
+- Revert: `git revert b24fba7` — the tool is not service- or timer-driven and no other file depends
+  on it.
+- Evidence: `.mishe-tauftauf/artifacts/discover-wake123827-disk-rate-honesty-fix.md` and
+  `.mishe-tauftauf/artifacts/discover-wake123827-disk-rate-span-staleness-repro.py`.
