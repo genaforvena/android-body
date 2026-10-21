@@ -58,27 +58,27 @@ ACCESS_NETWORK_STATE, VIBRATE, WAKE_LOCK, RECEIVE_BOOT_COMPLETED, FOREGROUND_SER
 FOREGROUND_SERVICE_SPECIAL_USE, POST_NOTIFICATIONS. Camera, microphone and location
 permissions are NOT requested.
 
-Present availability (2026-10-21T07:07Z, read-only deployed view):
+Present availability (2026-10-21T09:57Z, read-only deployed view):
 
-- `mode=ON_COLLECT_ONLY` (`desired_on=true`; node-state observed 07:07:03Z, age 2.4 s,
+- `mode=ON_COLLECT_ONLY` (`desired_on=true`; node-state observed 09:56:34Z, age 26.1 s,
   `status=ok`): the phone stores observations and issues no HTTP requests and no actions by
   design; the host pulls through the bridge. Transport reachable, no backlog page pending
   (delivered cursor 265,956 is the queue head), node-state fresh.
 - Delivered samples are stale since 2026-10-14T06:13:24Z — by design under collect-only, not a
-  delivery fault. Collection-side spool reads are live: spool 3,494,097 B, physical-file
-  window 5.4 h, 25,306 rows, coverage ok, 714,673 records dropped cumulatively by the bound
-  (684,674 at 00:04Z); scan_state windows=3321 phase=window last_error=none sightings=341.
+  delivery fault. Collection-side spool reads are live: spool 3,523,091 B, physical-file
+  window 5.4 h, 25,372 rows, coverage ok, 726,755 records dropped cumulatively by the bound
+  (714,673 at 07:07Z); scan_state windows=3406 phase=window last_error=none sightings=341.
   That window is the *physical file's*: the spool drops rows logically but keeps their bytes
   until compaction at `2*maxBytes`, so a raw-file read overstates the app's logical retention
-  ([observations](observations.md)). The file cycles 3,191,852 B → 2,486,014 B → 3,494,097 B
-  as eviction and compaction alternate, all inside `(maxBytes, 2*maxBytes]`.
-- Phone clock measured -0.5 s at 07:07Z (n=3, bounds -1.0..+0.0 s,
+  ([observations](observations.md)). The file cycles 3,191,852 B → 2,486,014 B → 3,494,097 B →
+  3,523,091 B as eviction and compaction alternate, all inside `(maxBytes, 2*maxBytes]`.
+- Phone clock measured -0.9 s at 09:57Z (n=3, bounds -1.4..-0.4 s,
   `host_ntp_synchronized=true`): the host clock is the synchronized reference, so the offset
   is attributable to the phone rather than shared with host error; the pane derives an implied
-  transport latency of 26.9-30.0 s. Earlier readings are history: -1.2 s at 00:04Z; +2.8 s at
-  08:26Z carried `host_ntp_synchronized=false` and could not separate phone error from host
-  error; -1.1 s at 18:28Z; -0.9 s at 19:29Z. Receipt times are consumer-fetch times, not server
-  receipts.
+  transport latency of 27.3-30.4 s. Earlier readings are history: -0.5 s at 07:07Z; -1.2 s at
+  00:04Z; +2.8 s at 08:26Z carried `host_ntp_synchronized=false` and could not separate phone
+  error from host error; -1.1 s at 18:28Z; -0.9 s at 19:29Z. Receipt times are consumer-fetch
+  times, not server receipts.
 
 Supported bounded text requests (while ON; nothing executes in collect-only mode):
 
@@ -136,20 +136,39 @@ emission (added 2026-10-12T22:05Z): it emits no checkbox row, and the host-side 
 file is stale (`mode=UNKNOWN`, `status=stale`, reason `node-state-stale`; unknown is never
 OFF). No persisted owner choices exist yet to honor.
 
-Present availability (2026-10-21T07:07Z, read-only deployed view plus the rendezvous write log):
-delivering, cursor 166,696→167,884 during the read, `channel-delivery [pass]: cursor=advancing`,
-cadence 4.098 s over the last 8 advances (max 8.104 s), 4.1 s old at the read. The evening drain
-is over, but the clean window it opened did not last: `body/queues/writes.jsonl` shows the last
-≥100-record page at 2026-10-20T19:54:29Z and one 68-record page at 19:54:32Z, then no gap over
-60 s only until **2026-10-21T00:27:26Z**. From there 23 ≥60 s windows ran through 06:08:21Z
-(worst 386.6 s, 04:08:50→04:15:16Z; also 377.5 s, 311.3 s, 275.9 s), and health's detector
-classes **22 of 23 B** — a failure line from the phone's own tailnet address inside the silence
-(`create_endpoint_errors` 1–7 and/or `tls_eof`), `ipn` `Running` throughout — plus 1 D. The
-host's rendezvous listener was up continuously (same PID since 2026-10-20T10:44:04Z), so the
-loss is host-side on the tailnet path, not the phone and not the queue. The consumer's own
-class-c detector added 12 rows (first 04:10:51Z, last 06:03:37Z at cursor 163,448) and wrote no
-row for the 00:27:26Z window, so it does not cover every ≥60 s gap; a `channel-delivery [pass]`
-verdict is not a no-gap verdict. The split inside B stays UNKNOWN.
+Present availability (2026-10-21T09:57Z, read-only deployed view plus the rendezvous write log).
+This claim names its own detector and horizon, so a reader can re-derive it and a later halt
+falsifies it: the accepted-POST gap census over `body/queues/writes.jsonl` (consecutive
+`redmi10` rows, gap > 60 s), with halt onsets also in the consumer's
+`body/perception/class-c-delivery-gap-detectors.jsonl`; a `channel-delivery [pass]` verdict is
+not a no-gap verdict.
+
+- Clean for the last 47 minutes as of 09:57Z: no gap onset after 2026-10-21T09:10:00Z (63.8 s,
+  resumed 09:11:04Z). Live at the read: `channel-delivery [pass]: cursor=advancing`, cursor
+  174,776, cadence 4.134 s median over the last 8 advances (max 6.151 s), current at the read.
+- Behind that horizon, same census: **25** ≥60 s gaps with onset since 00:00Z today, worst
+  **618.6 s** (`08:02:50.226 → 08:13:08.822`, resuming as a 128-record page) — larger than the
+  386.6 s the previous stamp cited. 23 ran from the first onset 2026-10-21T00:27:26Z through
+  06:08:21Z (worst 386.6 s, `04:08:50→04:15:16`; also 377.5 s, 311.3 s, 275.9 s, 249.2 s,
+  247.2 s, 228.2 s), then 08:02:50Z and 09:10:00Z. The evening drain's clean window ran
+  2026-10-20T19:54:32Z → 00:27:26Z.
+- Attribution of those 25, by health's journal census (`tools/transport_gap.py` over the host
+  `tailscaled` journal; A = no line for the phone's tailnet address in-window, B = a failure
+  line from that address, C = the `ipn` state left `Running`, D = address present with no
+  failure line), re-derived here from a frozen capture of the retained journal: the morning 23
+  are **21 B, 1 D, 1 A** with `ipn` `Running` throughout; the 618.6 s window is **A** — no
+  attempt from the phone at all — and 09:10:00Z is B. The host's rendezvous listener was up
+  continuously (same PID since 2026-10-20T10:44:04Z), so the 21 B windows are host-side on the
+  tailnet path, not the queue, while the two A windows are phone-side pauses: those 689.5 s
+  were lost on the phone, not the host. The same command recorded 22 B / 1 D / 0 A at 07:1xZ,
+  and journald rotates on this host (`Time jumped backwards, rotating`; the retained head moved
+  forward ~74 min during this session), so a past window's class is not stable evidence and
+  that one-window difference stays unattributed.
+- The consumer's own class-c record (halted while polls succeed, no `code=2`, no light-channel
+  fault) agrees on the phone side of the 08:02:50Z window: 24 rows, 13 new today (first
+  04:10:51Z at cursor 157,668, last 08:04:52Z at 169,304), none for the 00:27:26Z or 09:10:00Z
+  windows — it fires on a poll that observes a ≥120 s freeze, so it does not cover every ≥60 s
+  gap.
 
 The earlier pattern is history: 4-record POSTs every ~5 s until 18:53Z, then three silences —
 18:53:14→19:01:56Z (522.0 s), 19:01:56→19:04:38Z (161.4 s), 19:04:38→19:11:02Z (384.4 s) — each
@@ -213,8 +232,8 @@ none is authorized; whether this build carries the vibration grammar is unverifi
 
 Limits: Redmi10 is preparation, not a wired node: no USB window, no owner checkboxes,
 BLE scan structurally dead on the installed build, Wi-Fi RSSI verdict ambiguous, spool
-contents unread, delivery halting in every host tailnet-outage window while the older class-c
-rows' cause stays unestablished from here. The remedy is an APK
+contents unread, delivery halting in every host tailnet-outage window and in phone-side pauses,
+while the older class-c rows' cause stays unestablished from here. The remedy is an APK
 update to the current candidate
 `downloads/android-body-debug.apk` = `a5be0e4…` (73,653 B, clean build of `3047f17`), which carries `e131909` (BLUETOOTH_SCAN plus runtime request), `556049c` (ACCESS_NETWORK_STATE / `network_id_unavailable`), `0c83e32` (in-process ExecProbe), `697d68a` (`EvalOutcome` write-receipt bound) and `4e4caba` (the bounded-exec reader-contract change); it supersedes `2f6f3295…` (73,660 B, source `e707a4a`), `9678d87c…` (73,650 B, source `6fa8601`), `04439ff9…` (73,656 B, source `b025ede`), `87b36024…` (73,358 B, source `e0ea84d`), `3b6dcf7a…` (72,914 B, source `8dbb324`) and `a17829c7…` (70,631 B, source `a201891`).
 The update needs the human on the
