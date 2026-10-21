@@ -1400,3 +1400,43 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   section. No service, timer, device, transport, cursor, queue, radio, APK or frozen `body/runtime`
   byte is touched.
 - Evidence: `.mishe-tauftauf/artifacts/health-wake123547-create-endpoint-count-name.md`.
+
+## Class-B counts a producer light fault, not a dark room (senses wake 123428, 2026-10-21)
+
+- Trigger: health DM 123242 item 2 — `_max_consecutive_null_lux` counted `lux == 0.0` as a
+  null read, so a class-B record claimed the light channel produced no evidence while it was
+  demonstrably live, and class-C defers to class-B, so a night-time delivery halt was never
+  reported as "no known cause". A `light unavailable` read produced `lux is None`, which the
+  predicate did not count — inverted relative to the wire grammar.
+- Measured on the retained served queues (read-only counts, no device action):
+  `redmi10.observations.log` 38,200 light rows, 8,157 `lux=0.0`, **zero** `light unavailable`;
+  `note3.observations.log` 71,808 with value, 31,600 `lux=0.0`, 5 `light unavailable
+  reason=no_sample`. Replaying the newest 400 raw rows of each queue through `record()` into a
+  32-item history (HISTORY=32): note3 = 11 light reads, all dark — the old predicate counted 11,
+  the new one 0. The deployed `class-b-delivery-gap-detectors.jsonl` carries 128 such rows
+  (`null_lux_consecutive: 7–8`, `cursor-freeze`), all dark-room reads.
+- Fix (`experiments/perception/watch.py`): `CLASS_B_LIGHT_FAULT_REASONS` becomes
+  `CLASS_B_LIGHT_EXCLUDED_REASONS = ("owner_off", "absent")` and the predicate becomes
+  `_light_channel_fault` — a light read counts when `lux` is absent and the reason is not a
+  designed or hardware silence. The producer's reason vocabulary is open (the connected Note3's
+  older APK emitted the legacy `no_sample`, absent from current `Sensors.java`), so the rule is an
+  exclusion, not a closed fault list: `stale` / `invalid_sample` / `registration_failed` and the
+  legacy `no_sample` count; `lux=0.0` (a dark room), `owner_off` and `absent` never do. The record
+  key `null_lux_consecutive` is renamed `no_value_light_consecutive`, gains
+  `no_value_light_reasons`, and class-C's deferral condition moves to the same predicate, so a
+  night-time halt is now reported as class-C "no light-channel fault".
+- Verification: `python3 -m unittest discover -s experiments/perception` -> **256 OK** (254 at
+  `9dff2dd`). Two regression tests pin the change: class-B silent on a dark-room freeze, and
+  class-C firing on a dark-room halt. A throwaway probe over the real queue rows found and fixed a
+  `TypeError` in `_no_value_light_reasons` when an unattributed absence is counted. Consumer
+  compatibility: grep for `null_lux_consecutive|no_value_light` over the pinned core checkout
+  (`src/ tools/ analysis/ checks/ coordination/`) and its pinned release returned zero hits, so no
+  live reader parses the renamed key. Independent review: `<see wall>`.
+- Reading: live class-B rows written before this change keep `null_lux_consecutive` and record a
+  dark room, not a null channel; the perception README names this so they are not re-read as
+  channel faults.
+- Revert: `git checkout -- experiments/perception/watch.py
+  experiments/perception/test_perception.py experiments/perception/README.md` and remove this
+  section. No service, timer, device, transport, cursor, queue, spool, radio, APK or actuator
+  action; the only live mutation is the frozen perception runtime file and its unit restart.
+- Evidence: `.mishe-tauftauf/artifacts/senses-wake123428-class-b-light-predicate.md`.
