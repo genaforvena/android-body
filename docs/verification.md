@@ -1408,13 +1408,15 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   demonstrably live, and class-C defers to class-B, so a night-time delivery halt was never
   reported as "no known cause". A `light unavailable` read produced `lux is None`, which the
   predicate did not count — inverted relative to the wire grammar.
-- Measured on the retained served queues (read-only counts, no device action):
-  `redmi10.observations.log` 38,200 light rows, 8,157 `lux=0.0`, **zero** `light unavailable`;
-  `note3.observations.log` 71,808 with value, 31,600 `lux=0.0`, 5 `light unavailable
-  reason=no_sample`. Replaying the newest 400 raw rows of each queue through `record()` into a
-  32-item history (HISTORY=32): note3 = 11 light reads, all dark — the old predicate counted 11,
-  the new one 0. The deployed `class-b-delivery-gap-detectors.jsonl` carries 128 such rows
-  (`null_lux_consecutive: 7–8`, `cursor-freeze`), all dark-room reads.
+- Measured on the retained served queues (read-only counts, no device action), **measured
+  2026-10-21T04:50:50Z**: `redmi10.observations.log` 39,903 light rows, 8,609 `lux=0.0`,
+  **zero** `light unavailable`; `note3.observations.log` 71,813 with value, 31,600 `lux=0.0`,
+  5 `light unavailable reason=no_sample`. (The earlier 38,200 / 8,157 pair was measured before
+  the queue grew ~630 rows; the record carries this timestamp so it does not read as current.)
+  Replaying the newest 400 raw rows of each queue through `record()` into a 32-item history
+  (HISTORY=32): note3 = 11 light reads, all dark — the old predicate counted 11, the new one 0.
+  The deployed `class-b-delivery-gap-detectors.jsonl` carried such rows (`null_lux_consecutive:
+  7–8`, `cursor-freeze`), all dark-room reads.
 - Fix (`experiments/perception/watch.py`): `CLASS_B_LIGHT_FAULT_REASONS` becomes
   `CLASS_B_LIGHT_EXCLUDED_REASONS = ("owner_off", "absent")` and the predicate becomes
   `_light_channel_fault` — a light read counts when `lux` is absent and the reason is not a
@@ -1431,14 +1433,40 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   `TypeError` in `_no_value_light_reasons` when an unattributed absence is counted. Consumer
   compatibility: grep for `null_lux_consecutive|no_value_light` over the pinned core checkout
   (`src/ tools/ analysis/ checks/ coordination/`) and its pinned release returned zero hits, so no
-  live reader parses the renamed key. Independent review: `<see wall>`.
+  live reader parses the renamed key. Independent review: `artifacts/senses-wake123428-class-b-light-predicate.md`
+  (reviewer subagent, wake 123428; verdict *correct*, one P2 — the revert command — fixed below).
+- Deployed and verified live (senses wake 123428, 2026-10-21T04:40Z). The committed bytes were
+  **not** running: `body/runtime/watch.py` was still `ded531fd65ebb08e` (the `8ed8ccf` blob),
+  so `tools/runtime_manifest.py check` read `RED watch.py: deployed != source … (source
+  0f5dee9282b08ddc)` and the live class-B predicate still counted `lux=0.0`. Activation:
+  pre-deploy backup `watch.py.pre-deploy-20261021T043943Z` hash-verified equal to the deployed
+  file before copy-in; `experiments/perception/watch.py` copied over `body/runtime/watch.py`
+  (sha256 `0f5dee9282b08ddc8a3833a8866a04ee869f2a9fd7ae8e69050a7e749a4b73f3` == HEAD blob);
+  `systemctl --user restart android-body-perception.service` at 04:40:08Z; `runtime_manifest.py
+  record --file watch.py` -> `GREEN … deployed == source … (sha256 0f5dee9282b08ddc)`, exit 0,
+  and the unit start (04:40:08Z) is after the bytes (04:39:58Z).
+- Live evidence (post-restart): the journal carries **zero** `class-b-delivery-gap` /
+  `class-c-delivery-gap` lines since 04:40:08Z; the running module on the live `redmi10` and
+  `note3` state reports `no_value_light=0` on both (neither is a light-channel fault). The
+  pre-activation replay on the same live states read `_max_consecutive_null_lux = 3` (redmi10) and
+  `6` (note3) — the dark-room misfire, reproduced before the copy-in.
+- Deterministic contrast (`.mishe-tauftauf/scratch/class-b-class-c-darkroom-replay.py`, run
+  04:49Z): one state with a real dark-room light sequence (`lux=0.0`) and a >120 s delivery halt —
+  **deployed**: class-B fires `null_lux_consecutive: 12`, class-C silent (halt never reported);
+  **source**: class-B silent, class-C fires `reason=delivery halted with polls succeeding; no
+  code=2, no light-channel fault`.
 - Reading: live class-B rows written before this change keep `null_lux_consecutive` and record a
   dark room, not a null channel; the perception README names this so they are not re-read as
   channel faults.
-- Revert: `git checkout -- experiments/perception/watch.py
-  experiments/perception/test_perception.py experiments/perception/README.md` and remove this
-  section. No service, timer, device, transport, cursor, queue, spool, radio, APK or actuator
-  action; the only live mutation is the frozen perception runtime file and its unit restart.
+- Revert: the change is **committed** at HEAD (`a1adf5a`), so `git checkout -- <paths>` restores
+  the fixed bytes and is a no-op. Source revert: `git revert a1adf5a` (or
+  `git checkout 801c991 -- experiments/perception/watch.py experiments/perception/test_perception.py
+  experiments/perception/README.md`). Runtime revert: restore
+  `.mishe-tauftauf/body/runtime/watch.py.pre-deploy-20261021T043943Z` over
+  `body/runtime/watch.py`, `systemctl --user restart android-body-perception.service`, and
+  `python3 tools/runtime_manifest.py record --file watch.py`. No device, transport, cursor, queue,
+  spool, radio, APK or actuator action; the only live mutation is the frozen perception runtime file
+  and its unit restart.
 - Evidence: `.mishe-tauftauf/artifacts/senses-wake123428-class-b-light-predicate.md`.
 
 
