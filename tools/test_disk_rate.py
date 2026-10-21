@@ -160,6 +160,47 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("below the floor by 2.00GiB", "\n".join(lines))
 
+    def test_a_sparse_log_annotates_the_span_it_measured(self):
+        # A 10-minute log cannot support a 1m label: the anchor is the newest sample
+        # at or before newest - 1m, which is 10 minutes back. The rate is a 10-minute
+        # rate, so the span is printed rather than a window the label overstates.
+        samples = [(T0, 20 * GIB), (T0 + timedelta(minutes=10), 19 * GIB)]
+        lines, _code = disk_rate.report(samples, 10 * GIB, [60], 24.0)
+        self.assertIn("1m: +144.00GiB/day (span 10.00min)", "\n".join(lines))
+
+    def test_a_dense_log_does_not_annotate_a_matching_span(self):
+        # The anchor's own granularity is not a defect: an hourly sample measured over
+        # a 1h window keeps its label.
+        samples = [(T0, 13 * GIB), (T0 + timedelta(hours=1), 12 * GIB),
+                   (T0 + timedelta(hours=2), 11 * GIB)]
+        lines, _code = disk_rate.report(samples, 10 * GIB, [3600], 24.0)
+        self.assertNotIn("(span", "\n".join(lines))
+
+    def test_a_gap_in_the_log_is_named_on_the_long_window(self):
+        # The newest sample at or before newest - 2d is 2.52d back, so the span
+        # crosses a gap and the label must not read as a 2-day measurement.
+        samples = [(T0, 30 * GIB), (T0 + timedelta(days=0.48), 20 * GIB),
+                   (T0 + timedelta(days=3), 12 * GIB)]
+        lines, _code = disk_rate.report(samples, 10 * GIB, [2 * 86400], 24.0)
+        self.assertIn("(span 2.52d)", "\n".join(lines))
+
+    def test_the_level_line_carries_the_newest_sample_time(self):
+        # The tool has no clock, so this timestamp is the reader's staleness reference.
+        samples = [(T0, 13 * GIB), (T0 + timedelta(hours=1), 12 * GIB)]
+        lines, _code = disk_rate.report(samples, 10 * GIB, [3600], 24.0)
+        self.assertIn("newest sample 2026-10-21T03:00:00Z", lines[0])
+
+    def test_a_not_draining_window_disagrees_with_a_draining_one(self):
+        # Witness wake 123952 case G: 1h flat, 7d draining. The countdown used to
+        # print as unanimous; now the disagreement is named.
+        samples = [(T0, 30 * GIB), (T0 + timedelta(hours=1), 29 * GIB),
+                   (T0 + timedelta(days=7), 29 * GIB)]
+        lines, code = disk_rate.report(samples, 10 * GIB, [3600, 604800], 24.0)
+        body = "\n".join(lines)
+        self.assertEqual(code, 0)
+        self.assertIn("not-draining", body)
+        self.assertIn("windows disagree: window-only projection", body)
+
 
 class CliTest(unittest.TestCase):
     def test_a_burst_log_exits_red(self):
@@ -194,7 +235,7 @@ class CliTest(unittest.TestCase):
         result = run_stdin(log((0, 20 * GIB), (10, 19 * GIB)), "--windows", "1m,7d")
         self.assertEqual(result.returncode, 1)
         self.assertIn("log shorter than the window", result.stdout)
-        self.assertIn("1m: +144.00GiB/day", result.stdout)
+        self.assertIn("1m: +144.00GiB/day (span 10.00min)", result.stdout)
 
 
 if __name__ == "__main__":

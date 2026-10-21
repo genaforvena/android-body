@@ -17,11 +17,19 @@ that appends one line per tick (the same split as ``disk_free.py``: the caller
 owns the invocation and its failure handling) gets a countdown that moves with the
 disk instead of a 7-day average that does not.
 
-The projection is a statement about the named window only. When the windows
-disagree the tool prints every rate and marks the ETA ``window-only`` rather than
-picking one, because a countdown taken from the wrong window sends a reader to
-prune the wrong thing. A volume that is not draining has no ETA: ``not-draining``
-is printed as such, never as a large number of hours.
+The projection is a statement about the named window only, and a rate is computed
+over the span between the anchor and the newest sample. When that span differs from
+the named window by more than :data:`SPAN_LABEL_TOLERANCE`, the span is printed beside
+the rate: the label would otherwise name a window the rate did not measure (``2d``
+printed for a 2.52-day span). When the windows disagree -- whether in their ETAs or
+about whether the volume is draining at all -- the tool prints every rate and marks
+the ETA ``window-only`` rather than picking one, because a countdown taken from the
+wrong window sends a reader to prune the wrong thing. A volume that is not draining
+has no ETA: ``not-draining`` is printed as such, never as a large number of hours.
+
+The tool has no clock, so the newest sample's timestamp is printed on the ``level``
+line: that is the reader's only staleness reference. Without it, a countdown from a
+log whose newest sample is a day old is indistinguishable from a fresh one.
 
 Usage: ``disk_rate.py [--floor-bytes N] [--windows 10m,1h,6h,24h,7d] < samples``
 
@@ -135,6 +143,28 @@ def _label(window_seconds):
     return f"{window_seconds}s"
 
 
+#: A rate is labelled with its requested window, but it is measured over the span
+#: between the anchor and the newest sample. The anchor is the newest sample at or
+#: before ``newest - window``, so a uniformly sampled log measures the window to
+#: within one sample interval; a sparse or gapped log does not. When the measured
+#: span differs from the window by more than this fraction the span is printed with
+#: the rate, because the label would otherwise overstate what was measured. 5% is
+#: "at least twenty samples per window", the coarsest sampling that supports the
+#: label; a shorter difference is the anchor's own granularity, not a defect.
+SPAN_LABEL_TOLERANCE = 0.05
+
+
+def _span_text(span_seconds):
+    """``'2.52d'``/``'19.15min'``/``'30s'``: the span a rate was measured over."""
+    if span_seconds >= 86400:
+        return f"{span_seconds / 86400:.2f}d"
+    if span_seconds >= 3600:
+        return f"{span_seconds / 3600:.2f}h"
+    if span_seconds >= 60:
+        return f"{span_seconds / 60:.2f}min"
+    return f"{span_seconds:.0f}s"
+
+
 def report(samples, floor_bytes, windows, horizon_hours):
     """The printed lines and the exit code. Separated from ``main`` so the
     verdict is testable without a stdin, a clock, or an exit."""
@@ -142,8 +172,10 @@ def report(samples, floor_bytes, windows, horizon_hours):
     headroom = newest_b - floor_bytes
     lines = [f"level {newest_b}B/{newest_b / 2**30:.2f}GiB headroom "
              f"{headroom}B/{headroom / 2**30:.2f}GiB to floor "
-             f"{floor_bytes / 2**30:.1f}GiB"]
+             f"{floor_bytes / 2**30:.1f}GiB "
+             f"(newest sample {newest_t:%Y-%m-%dT%H:%M:%SZ})"]
     rates = []
+    not_draining = False
     for window in windows:
         rate, span = drain_per_day(samples, window)
         name = _label(window)
@@ -151,13 +183,22 @@ def report(samples, floor_bytes, windows, horizon_hours):
             lines.append(f"  {name:>4}: log shorter than the window" if span is None
                          else f"  {name:>4}: no anchor (span {span:.0f}s)")
             continue
+        # The label names the requested window; the rate is measured over the span
+        # from the anchor to the newest sample. Print that span when it departs from
+        # the label, so a sparse or gapped log cannot present a short window as the
+        # measurement (witness wake 123952: ``2d`` printed for a 2.52-day span).
+        annotated = ""
+        if abs(span - window) > window * SPAN_LABEL_TOLERANCE:
+            annotated = f" (span {_span_text(span)})"
         rates.append((name, rate))
         if rate <= 0:
-            lines.append(f"  {name:>4}: {rate / 2**30:+6.2f}GiB/day -> not-draining")
+            not_draining = True
+            lines.append(f"  {name:>4}: {rate / 2**30:+6.2f}GiB/day{annotated} "
+                         "-> not-draining")
             continue
         hours = eta_hours(headroom, rate)
         target = (f"{hours:5.2f}h to floor" if hours is not None else "at/below floor")
-        lines.append(f"  {name:>4}: {rate / 2**30:+6.2f}GiB/day -> {target}")
+        lines.append(f"  {name:>4}: {rate / 2**30:+6.2f}GiB/day{annotated} -> {target}")
     if headroom <= 0:
         lines.append(f"RED    below the floor by {-headroom / 2**30:.2f}GiB")
         return lines, 1
@@ -173,8 +214,14 @@ def report(samples, floor_bytes, windows, horizon_hours):
         lines.append("GREEN  no window is draining; no floor ETA")
         return lines, 0
     soonest = drainings[0]
-    disagree = len({round(eta, 1) for eta in drainings}) > 1
-    span_text = f"{soonest:.2f}-{drainings[-1]:.2f}h" if disagree else f"{soonest:.2f}h"
+    # Two ways the windows can disagree: their ETAs round apart, or one window says
+    # the volume is not draining while another yields a countdown. The second used to
+    # print as a unanimous ETA (witness wake 123952 case G: ``1h: not-draining`` with
+    # ``7d: 3192.00h`` printed a plain ``GREEN floor in 3192.00h``).
+    etas_differ = len({round(eta, 1) for eta in drainings}) > 1
+    disagree = etas_differ or not_draining
+    span_text = (f"{soonest:.2f}-{drainings[-1]:.2f}h" if etas_differ
+                 else f"{soonest:.2f}h")
     note = " (windows disagree: window-only projection)" if disagree else ""
     verdict = "RED   " if soonest < horizon_hours else "GREEN "
     lines.append(f"{verdict} floor in {span_text}{note} "
