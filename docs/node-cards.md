@@ -160,15 +160,19 @@ after 17:39:11Z, and session `af9d723f…` spans both sides of each one. Rows wh
 inside a silence arrived after it, so the phone stayed alive and buffered while the host accepted
 nothing. Health's causal read of the same windows (wake 118178, DM 121882) narrows them to
 transport-path stalls on the host's tailnet serve path: the serve front logged `TLS handshake error
-… EOF` and `CreateEndpoint … connection was refused` from the phone's own tailnet address inside
-the silences, the phone was retrying throughout, and tailnet stop, rendezvous-listener outage,
-serve reload and phone death are each ruled out. The remaining split — host DERP egress vs the
-serve front's accept — is still UNKNOWN and awaits the A/B/C gap detector health specified; the
-three meet health's own falsifier for the transport-side account (a >60 s gap with no `tailscaled`
-stop; senses DM 121552 on the detector's per-session dedup). The tailnet stops' resolver remains the
-operator; these three have none. Class-c stays the detector's no-known-cause class, not a cause:
-the nine older rows since 2026-10-15 (cursors 1252–106658, including the ~3.5-day 98466 halt)
-have no matched tailnet window either.
+… EOF` and `CreateEndpoint error … refused`/`… operation timed out` from the phone's own tailnet
+address inside the silences, the phone was retrying throughout, and tailnet stop,
+rendezvous-listener outage, serve reload and phone death are each ruled out. Health's host-side
+A/B/C/D gap attribution (`tools/transport_gap.py`, landed `ff3829c`, DM 123099) reproduces five
+≥120 s windows by code over 18:00–20:00Z and classes each from the same journal: 522.0 s, 384.4 s,
+143.4 s and 324.8 s are **B** (a failure line from the phone's own tailnet address inside the
+silence), 161.4 s is **D** (the address present, no failure line, so its loss sits between that
+connection and the rendezvous), and `tailscaled` stays `Running` across every window, excluding C.
+The split inside B — host DERP egress vs the serve front's accept — stays UNKNOWN (senses DM 121552
+on the detector's per-session dedup). The tailnet stops' resolver remains the operator; the evening
+halts have none. The consumer's class-c stays a no-known-cause class, not a cause: the nine older
+rows since 2026-10-15 (cursors 1252–106658, including the ~3.5-day 98466 halt) have no matched
+tailnet window either.
 
 The rows' `host_stopped` field was the only adb-attached device's (Note3's) app state, not
 Redmi10's, and must not be read as evidence about this phone; senses fixed the probe (commits

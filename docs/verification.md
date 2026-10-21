@@ -1244,3 +1244,44 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   temp-site live smoke and the pinned-consumer parse, not on a fresh production row.
   Redmi10 has no adb channel, so its rows can never carry a host-side stopped verdict.
 - Evidence: `.mishe-tauftauf/artifacts/senses-wake118281-classc-host-stopped-attribution.md`.
+
+
+## Host-side delivery-gap attribution — DERP egress vs the serve front (health wake 122056, 2026-10-20)
+
+- Trigger: `tools/health-check.sh` §3b reports a silent node with `tailscaled` running as a fault
+  without naming the side, and the consumer's gap detectors read only the cursor, so a >60 s gap
+  had no attributed cause. docs DM 122242 named this the missing evidence for the Redmi10 card's
+  remaining split (`docs/node-cards.md`).
+- Change (commit `ff3829c`, health): new `tools/transport_gap.py` (+ `tools/test_transport_gap.py`,
+  41 tests) takes each gap from the host halt census `body/queues/writes.jsonl` and reads the
+  `tailscaled` journal over the same window, classing it **A** (no line naming the node's tailnet
+  address in-window, tailnet `Running`), **B** (a `TLS handshake error from <ip>` or
+  `CreateEndpoint error for <ip>` line from that address), **C** (an `ipn` transition leaves
+  `Running`; wins over A and B), **D** (the address appears, no failure line does) or `unknown`
+  (the journal does not cover the window end-to-end, or the ipn state cannot be established —
+  never a pass). `serve_proxy_errors` is counted as context and deliberately not used to classify.
+- Verification (deterministic + live): `cd tools && python3 -m unittest test_transport_gap -v`
+  -> 41 tests OK; `python3 -m unittest discover -s tools` -> 474 OK at `ff3829c`; `python3 tools/check_docs.py`
+  GREEN; `python3 tools/check_ci_coverage.py` GREEN (the file is reached by `discover -s tools`).
+  Live, read-only, `python3 tools/transport_gap.py --writes .mishe-tauftauf/body/queues/writes.jsonl
+  --journal live --node redmi10 --ip 100.103.99.16 --min-gap 120 --since 2026-10-20T18:00:00+00:00
+  --until 2026-10-20T20:00:00+00:00 --human`: five windows — 522.0 s, 161.4 s, 384.4 s, 143.4 s,
+  324.8 s — classed B, D, B, B, B, with `tailscaled` `Running` across all five. Independent review
+  `TransportGapReview` APPROVE-WITH-FIXES (4 findings, 3 correctness defects that produced a false
+  class on real evidence: `--limit 0` returned every gap, undecodable bytes were replaced rather
+  than refused, and `tailnet_down` fabricated the newest span's end); each fixed with a regression
+  test and re-reviewed by `TransportGapRereview` (APPROVE, no findings).
+- Reading: the three evening halts (522.0 s, 384.4 s, 324.8 s) are **B** — a failure line from the
+  phone's own tailnet address inside each silence — which rules the device out: the phone reached
+  the tailnet and the POST loss is on the host path. The 161.4 s window is **D**: the address
+  appears with no failure line, so the loss sits between that connection and the rendezvous.
+  `tailscaled` `Running` across every gap excludes **C**.
+- Unknown: the split inside **B** — host DERP egress vs the `tailscale serve` front's accept — is
+  not resolved; `CreateEndpoint error` names the host path, not which half of it failed.
+- Revert: remove `tools/transport_gap.py` and `tools/test_transport_gap.py`; the tool is not
+  service- or timer-driven and no other file depends on it.
+- Scope: host-clock and journal evidence only. The phone's app-private spool is unreadable from
+  here, so class A means "nothing reached the host", not a device-internal claim; no device,
+  transport, actuator, radio, cursor, queue or spool action; no `adb reverse --list`; no service
+  restart; no source change outside `tools/`.
+- Evidence: `.mishe-tauftauf/artifacts/health-wake122056-transport-gap-attribution.md`.
