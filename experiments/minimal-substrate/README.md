@@ -31,7 +31,7 @@ Probes: `host-identity` (`id`), `host-environment` (`dumpsys sensorservice`),
 text script written to app-private scratch via run-as, run twice, deleted,
 source+SHA-256+provenance retained).
 
-Since the 2026-10-16 install the APK itself also emits a class-4 session-start row —
+Since the 2026-10-16 install the APK itself also emits an in-process session-start row —
 `probe exec uid=<app uid> cmd=<files>/probe.txt output=hello exit=0` — executing the
 app-written 0700 script under the app UID: SELinux `untrusted_app` ALLOW on the Note3
 (API 21). It is bounded (≤4,096 B merged output, ≤5 s, one file, child destroyed on

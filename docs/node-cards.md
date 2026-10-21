@@ -40,7 +40,7 @@ phone can scan but cannot advertise, which is why the space-perception advertise
 on the host dongle. No tracking of other people's devices.
 
 Session-start probe rows are not `cap` rows either: `probe identity` on every session, and
-since the 2026-10-16 install a class-4 `probe exec` row that executes the app-written 0700
+since the 2026-10-16 install an in-process `probe exec` row that executes the app-written 0700
 `files/probe.txt` under the app UID (SELinux ALLOW on this firmware). Both run at session
 start including collect-only, make no network request and request no actuator.
 
@@ -89,7 +89,7 @@ Supported bounded text requests (while ON; nothing executes in collect-only mode
   hello capabilities and is skipped in collect-only mode. Exercised on Note3 (2026-10-13,
   prior install `5e7fa255…`): identity/clock/read/env receipts retained, uid=10225. The
   current Note3 install (2026-10-16T16:16:48Z, APK `87b36024…`) carries the consumer
-  `eval write`/`eval exec` verbs. The session-start class-4
+  `eval write`/`eval exec` verbs. The session-start in-process
   `probe exec` row exercises the same write-then-exec machinery on device: the
   post-install session `d4438183` (16:17:15Z) emitted
   `probe exec uid=10225 cmd=/data/data/org.androidbody/files/probe.txt output=hello
@@ -126,7 +126,7 @@ start` (`59412b0`) and answers `eval` actions (`e69d798`, 2026-10-11T22:43Z), bu
 from row and receipt shapes, not an APK hash: the phone has no ADB/USB channel, so its
 installed bytes are not readable from here.
 Session `af9d723f…` (start bundle received 17:41:39Z) emits the same shape — no
-`owner_checkboxes`, no class-4 `probe exec`, no `command=` receipt — so the bracket rests on two
+`owner_checkboxes`, no in-process `probe exec`, no `command=` receipt — so the bracket rests on two
 session-start bundles, not one.
 
 Local owner enablement: UNKNOWN. The installed APK predates the `owner_checkboxes`
@@ -201,7 +201,7 @@ BLE scan structurally dead on the installed build, Wi-Fi RSSI verdict ambiguous,
 contents unread, delivery halting in every host tailnet-outage window while the older class-c
 rows' cause stays unestablished from here. The remedy is an APK
 update to the current candidate
-`downloads/android-body-debug.apk` = `a5be0e4…` (73,653 B, clean build of `3047f17`), which carries `e131909` (BLUETOOTH_SCAN plus runtime request), `556049c` (ACCESS_NETWORK_STATE / `network_id_unavailable`), `0c83e32` (class-4 ExecProbe), `697d68a` (`EvalOutcome` write-receipt bound) and `4e4caba` (the bounded-exec reader-contract change); it supersedes `2f6f3295…` (73,660 B, source `e707a4a`), `9678d87c…` (73,650 B, source `6fa8601`), `04439ff9…` (73,656 B, source `b025ede`), `87b36024…` (73,358 B, source `e0ea84d`), `3b6dcf7a…` (72,914 B, source `8dbb324`) and `a17829c7…` (70,631 B, source `a201891`).
+`downloads/android-body-debug.apk` = `a5be0e4…` (73,653 B, clean build of `3047f17`), which carries `e131909` (BLUETOOTH_SCAN plus runtime request), `556049c` (ACCESS_NETWORK_STATE / `network_id_unavailable`), `0c83e32` (in-process ExecProbe), `697d68a` (`EvalOutcome` write-receipt bound) and `4e4caba` (the bounded-exec reader-contract change); it supersedes `2f6f3295…` (73,660 B, source `e707a4a`), `9678d87c…` (73,650 B, source `6fa8601`), `04439ff9…` (73,656 B, source `b025ede`), `87b36024…` (73,358 B, source `e0ea84d`), `3b6dcf7a…` (72,914 B, source `8dbb324`) and `a17829c7…` (70,631 B, source `a201891`).
 The update needs the human on the
 phone (no ADB channel): either `adb install -r` in a USB window or copying the APK across
 and opening it. An install alone still leaves the scanner dead — `BLUETOOTH_SCAN` is
