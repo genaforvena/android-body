@@ -508,7 +508,12 @@ reading is what separates the two terms of an acquisition span (`transport laten
 + host wall − phone wall`), which this consumer can only bound from above on its
 own. A missing document is `unknown/no-clock-domain-file` — never a zero-offset
 assumption — and the node's readings stay labelled `fresh-clock-conditional`
-until it exists.
+until it exists. A document that exists and declares `status="unavailable"` (the
+producer ran and could not measure the device) is the same *absent* reading, not
+an invalid one: it is reported as `clock-domain-unavailable` and carries the
+producer's own bounded reason, so the pane and the `space` consumer say why there
+is no offset instead of claiming a defect in a well-formed document. A reason
+that is not a bounded printable string falls back to the bare class token.
 
 The document also names the device it measured: `device_serial`/`device_model` are
 the device's own `getprop ro.serialno`/`ro.product.model`, read in the same run and
@@ -542,7 +547,10 @@ synchronized, and a pane with no measured offset at all carries no host clause.
   `offset_nominal_s` 25.085 inside `24.585..25.585`, `samples` 3,
   `validity_seconds` 3600, `device_serial` `4d00553d61ab90b7`, `device_model`
   `SM-N900`.
-- **Redmi10**: no document, so `unknown/no-clock-domain-file`. Cause: the
+- **Redmi10**: `unknown/clock-domain-unavailable: no adb path to the redmi10 from
+  this host…` — the producer publishes a well-formed `status="unavailable"`
+  document with that reason (live 2026-10-21T01:30Z), so the reading is absent
+  *and* says why, rather than appearing as a missing file or as invalid. Cause: the
   producer's only method is an adb round trip, and Redmi10 is not on USB (tailnet
   HTTPS only); the protocol exposes no phone wall-clock request surface — the
   action grammar's `clock` is `elapsedRealtime`, and an observation row carries

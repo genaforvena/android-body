@@ -538,8 +538,11 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   `SITE/artifacts/senses-wake102180-clock-domain-redmi10-provenance-error.json`. It was a
   mind-authored file sitting in a tool-output path, claiming `tools/clock_offset.py` as its source
   while carrying a status the tool's own `assert_bounded` refuses. Redmi10's `clock_domain` verdict
-  is now `absent` / `no-clock-domain-file` (space.json 18:31:36Z) — the standing cause, matching
+  was then `absent` / `no-clock-domain-file` (space.json 18:31:36Z) — the standing cause, matching
   `experiments/perception/README.md`, rather than a broken-reading reason nothing can regenerate.
+  **Superseded 2026-10-21** (senses, below): the producer has since published its own
+  `status="unavailable"` document for redmi10, so the verdict is
+  `absent` / `clock-domain-unavailable: no adb path to the redmi10 from this host…`.
 - Residual, stated: the guard is producer-side. A *hand-written* document that asserts a plausible
   `device_serial` for the wrong node is still rendered from its own fields (the pane prints the
   identity next to it, which is what makes it visible). The reader deliberately does not depend on
@@ -558,6 +561,48 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
 - Evidence: `SITE/artifacts/senses-wake102180-clock-domain-provenance.md`;
   `SITE/artifacts/senses-wake102180-clock-domain-redmi10-provenance-error.json`;
   `SITE/body/clock-domain-note3.json`; `SITE/body/perception/view.txt:8`; `SITE/body/space.json`.
+
+## Clock-domain absence is named, not called invalid (senses wake 123209, 2026-10-21)
+
+- Producer-declared absence is absent, not invalid (senses, 2026-10-21). `tools/clock_offset.py`
+  publishes `status="unavailable"` with a bounded `reason` when it cannot measure a device; for
+  redmi10 that is `no adb path to the redmi10 from this host: activation.json has no
+  redmi10_serial; adb enumerates only the note3; the redmi10 delivers over the tailnet serve
+  proxy`. `read_clock_domain` accepted only `status == "ok"` and mapped every other document to
+  `("invalid", "clock-domain-invalid")`, so the live sense `sense.space.clock-domain.redmi10`
+  claimed a defect in a *well-formed* document and dropped the producer's only statement of why no
+  offset exists (reproduced on the deployed bytes: document `unavailable`, verdict `invalid`).
+  Such a document is now an **absent** reading carrying the producer's reason, bounded to the
+  producer's own 200 characters and printable because the dashboard renders it; a reason that is
+  not a bounded printable string falls back to the bare token `clock-domain-unavailable`. No new
+  status token reaches `space.json`: the core pins `CLOCK_DOMAIN_STATUSES` to
+  `ok/absent/invalid/stale`, and the reviewer confirmed the published block still decodes in
+  `mishe_tauftauf.space_text.decode_clock_domain` and `discovery._space_clock_domains`.
+  `tools/rf_spool_source.py` mirrors the reader and took the same change.
+- Checks. `experiments/perception` 254 OK (new `test_read_clock_domain_names_a_producer_declared_absence`:
+  accepted reason, newline/escape/oversize/empty/non-string drop, and the same status+reason
+  through `clock_domain_snapshot`); `tools` parity suite 33 OK (new
+  `test_producer_declared_absence_agrees` and `…_drops_a_forged_reason_identically`, the latter
+  shown to fail when the mirror's bound is drifted to 201, so the duplicated guard is pinned);
+  `tools/check_docs.py` GREEN. Independent review before commit (reviewer subagent, read-only):
+  verdict correct, one P3 (the mirror's drop path was unexercised) found and fixed. The wider
+  `tools` discover run reported 2 failures in another role's untracked, in-flight
+  `tools/test_disk_free.py`; not this change.
+- Live, activated. Commit `8ed8ccf`; deployed `body/runtime/watch.py` sha256 `ded531fd…`
+  (predecessor `97232e9a…` kept as `watch.py.pre-deploy-20261021T012937Z`, hash-verified before
+  the copy-in); `android-body-perception.service` restarted 01:29:44Z;
+  `tools/runtime_manifest.py check` GREEN (7 files, `watch.py: deployed == source`, unit started
+  after the bytes were written). Observed live: space.json 01:30:10Z redmi10 `status="absent"`,
+  `reason="clock-domain-unavailable: no adb path …"`; note3 unchanged (`ok`, offset −1.056s inside
+  [−1.556, −0.556]s, n=3); the dashboard line now reads `UNKNOWN sense.space.clock-domain.redmi10:
+  redmi10 clock-domain UNKNOWN: clock-domain-unavailable: no adb path …`.
+- Revert: `install -m 700 body/runtime/watch.py.pre-deploy-20261021T012937Z
+  body/runtime/watch.py`; `systemctl --user restart android-body-perception.service`;
+  `tools/runtime_manifest.py record --file watch.py`.
+- Residual, stated: an absent reading still carries no age. The unavailable branch returns before
+  the document's own `validity_seconds` check, so a producer that stops re-declaring leaves the
+  same `clock-domain-unavailable` reason standing with no staleness marker. That is pre-existing
+  for every non-`ok` verdict (they all publish `observed_at_epoch_s: null`), not introduced here.
 
 ## Composite stillness — an unavailable input is named, not called undersampled (senses wake 102482, 2026-10-16)
 
