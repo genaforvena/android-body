@@ -82,6 +82,11 @@ MAX_DOC_BYTES = 65536
 #: (``watch.CLOCK_DOMAIN_MAX_AGE_SECONDS``).
 CLOCK_DOMAIN_MAX_AGE_S = 3600.0
 
+#: ``tools/clock_offset.py`` bounds its own ``reason`` to 200 characters; this
+#: reader carries it only inside that bound and only when it is printable, as
+#: ``watch.read_clock_domain`` does.
+CLOCK_DOMAIN_REASON_MAX_CHARS = 200
+
 #: Admissible ``ble_scan_state`` phase tokens (BleScanEvents.stateEvent).
 SCAN_STATE_PHASES = frozenset({"none", "window", "gap"})
 
@@ -125,13 +130,30 @@ def read_document(path, limit=MAX_DOC_BYTES):
         return None, "malformed"
 
 
+def clock_domain_absence_reason(document):
+    """The producer's own reason for an explicitly unavailable reading, or a token.
+
+    Mirrors ``watch.clock_domain_absence_reason``: a well-formed document that
+    declares ``status="unavailable"`` says the producer ran and could not measure
+    the device, which is not the same claim as an invalid document. A reason that
+    is not a bounded printable string is replaced by the bare class token.
+    """
+    reason = document.get("reason")
+    if (not isinstance(reason, str) or not reason or not reason.isprintable()
+            or len(reason) > CLOCK_DOMAIN_REASON_MAX_CHARS):
+        return "clock-domain-unavailable"
+    return f"clock-domain-unavailable: {reason}"
+
+
 def read_clock_domain(path, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_S):
     """The bounded phone/host clock-offset reading for ``node``, or an unknown.
 
     Mirrors ``watch.read_clock_domain``'s result shape and status vocabulary so
     the age resolver below can be checked against the consumer on the same
     fixtures. A missing, unreadable, oversized, malformed, foreign, invalid or
-    expired document never yields an offset.
+    expired document never yields an offset, and a document that declares
+    ``status="unavailable"`` is an absent reading carrying the producer's reason,
+    not an invalid one.
     """
     def unknown(status, reason):
         return {"status": status, "offset_min_s": None, "offset_max_s": None,
@@ -144,8 +166,11 @@ def read_clock_domain(path, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_S):
         if reason == "absent":
             return unknown("absent", "no-clock-domain-file")
         return unknown("invalid", "clock-domain-unreadable")
-    if (not isinstance(document, dict) or document.get("node") != node
-            or document.get("status") != "ok"):
+    if not isinstance(document, dict) or document.get("node") != node:
+        return unknown("invalid", "clock-domain-invalid")
+    if document.get("status") == "unavailable":
+        return unknown("absent", clock_domain_absence_reason(document))
+    if document.get("status") != "ok":
         return unknown("invalid", "clock-domain-invalid")
 
     numbers = {key: _finite(document.get(key)) for key in

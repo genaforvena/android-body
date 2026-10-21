@@ -2343,6 +2343,10 @@ NODE_STATE_MAX_REASON_CHARS = 200
 #: there would be parsed as a state and crash the consumer.
 CLOCK_DOMAIN_PREFIX = "clock-domain-"
 CLOCK_DOMAIN_MAX_AGE_SECONDS = 3600.0
+#: tools/clock_offset.py bounds its own ``reason`` to 200 characters; the reader
+#: carries it only inside that bound and only when it is printable, because the
+#: pane is a rendered surface.
+CLOCK_DOMAIN_REASON_MAX_CHARS = 200
 SPOOL_SUMMARY_PREFIX = "spool-summary-"
 SPOOL_SUMMARY_MAX_AGE_SECONDS = 600.0
 
@@ -2475,6 +2479,25 @@ def read_node_state(directory, node, now, max_age=NODE_STATE_MAX_AGE_SECONDS):
             "reasons": _bounded_reasons(document.get("reasons"))}
 
 
+def clock_domain_absence_reason(document):
+    """The producer's own reason for an explicitly unavailable reading, or a token.
+
+    tools/clock_offset.py publishes ``status="unavailable"`` with a bounded
+    explanation when it could not measure a device (no adb path, an unreadable
+    device). That document is well formed and says so, so the reader reports the
+    reading as absent *and* carries the producer's words: without them a caller
+    cannot tell "this host has no path to the node" from "a reading failed
+    validation", and the second sends a reader looking for a defect that is not
+    there. A reason that is not a bounded printable string is replaced by the bare
+    class token rather than printed into the pane.
+    """
+    reason = document.get("reason")
+    if (not isinstance(reason, str) or not reason or not reason.isprintable()
+            or len(reason) > CLOCK_DOMAIN_REASON_MAX_CHARS):
+        return "clock-domain-unavailable"
+    return f"clock-domain-unavailable: {reason}"
+
+
 def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS):
     """Read the bounded host-side phone/host clock-offset reading for one node.
 
@@ -2484,7 +2507,11 @@ def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS
     null offsets: the reader never invents an offset, and a stale reading is not a
     current one. The document's own ``validity_seconds`` bounds the reading, capped
     by ``max_age``, so a long-past measurement cannot keep resolving the
-    skew/latency split.
+    skew/latency split. A well-formed document that itself declares
+    ``status="unavailable"`` -- the producer ran and could not measure the device --
+    is an *absent* reading, not an invalid one, and carries the producer's own
+    bounded reason so a caller names why no offset exists instead of only that
+    there is none.
 
     ``device_serial``/``device_model`` are carried through verbatim (``None`` when
     the document does not name one). They are the *device's* own answer, not the
@@ -2524,7 +2551,12 @@ def read_clock_domain(directory, node, now, max_age=CLOCK_DOMAIN_MAX_AGE_SECONDS
         # or a terminal escape is dropped rather than printed as if it were the pane's.
         identity[key] = (value if isinstance(value, str) and 0 < len(value) <= 64
                          and value.isprintable() else None)
-    if document.get("node") != node or document.get("status") != "ok":
+    status = document.get("status")
+    if document.get("node") != node:
+        return unknown("invalid", "clock-domain-invalid")
+    if status == "unavailable":
+        return unknown("absent", clock_domain_absence_reason(document))
+    if status != "ok":
         return unknown("invalid", "clock-domain-invalid")
 
     def finite(key):

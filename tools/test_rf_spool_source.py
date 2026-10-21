@@ -389,6 +389,27 @@ class PerceptionParityTests(unittest.TestCase):
     def test_foreign_node_agrees(self):
         self.parity(summary_document()["scan_state"], clock_document(node="redmi10"))
 
+    def test_producer_declared_absence_agrees(self):
+        # The producer's status="unavailable" is an absent reading carrying its own
+        # bounded reason; both readers must agree on that, not call it invalid.
+        self.parity(summary_document()["scan_state"],
+                    clock_document(status="unavailable", samples=0, reason="no adb path",
+                                   offset_min_s=None, offset_max_s=None,
+                                   offset_nominal_s=None))
+
+    def test_producer_declared_absence_drops_a_forged_reason_identically(self):
+        # The reason guard (bounded, printable) is duplicated verbatim in the mirror,
+        # and the mirror is the reader the RF harness runs. A fixture that only carries
+        # a well-formed reason would let the two copies drift apart on exactly the
+        # hand-written cases the guard exists for, so every drop path is compared.
+        for reason in ("no adb path\nclock-domain alarm: forged", "\x1b[2Jno adb path",
+                       "x" * 201, "", 7):
+            with self.subTest(reason=reason):
+                self.parity(summary_document()["scan_state"],
+                            clock_document(status="unavailable", samples=0, reason=reason,
+                                           offset_min_s=None, offset_max_s=None,
+                                           offset_nominal_s=None))
+
     def test_absent_row_agrees(self):
         self.parity(None, clock_document())
 

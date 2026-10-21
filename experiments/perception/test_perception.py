@@ -3525,8 +3525,12 @@ class PerceptionTests(unittest.TestCase):
                              "absent")
             self.assertIsNone(watch.read_clock_domain(directory, "note3", 1000.0)["offset_nominal_s"])
             self.write_clock(directory, {"node": "note3", "status": "unavailable"})
-            self.assertEqual(watch.read_clock_domain(directory, "note3", 1000.0)["status"],
-                             "invalid")
+            # The producer's own "unavailable" is an absent reading, not an invalid
+            # document; the reason and the forged-reason bound are pinned by
+            # test_read_clock_domain_names_a_producer_declared_absence.
+            unavailable = watch.read_clock_domain(directory, "note3", 1000.0)
+            self.assertEqual(unavailable["status"], "absent")
+            self.assertEqual(unavailable["reason"], "clock-domain-unavailable")
             self.write_clock(directory, {"node": "redmi10", "status": "ok",
                                          "offset_min_s": 1.0, "offset_max_s": 2.0,
                                          "offset_nominal_s": 1.5,
@@ -3603,8 +3607,42 @@ class PerceptionTests(unittest.TestCase):
         self.assertIsNone(non_boolean["host_ntp_synchronized"])
         self.assertEqual(expired["status"], "stale")
         self.assertIsNone(expired["host_ntp_synchronized"])
-        self.assertEqual(unavailable["status"], "invalid")
+        self.assertEqual(unavailable["status"], "absent")
         self.assertIsNone(unavailable["host_ntp_synchronized"])
+
+    def test_read_clock_domain_names_a_producer_declared_absence(self):
+        # tools/clock_offset.py publishes status="unavailable" with a bounded reason
+        # when it cannot measure a device (no adb path, an unreadable device). That
+        # document is well formed and says so, so reporting it as "invalid" claimed a
+        # defect it does not have and dropped the only statement of why no offset
+        # exists. The reason is carried into space.json through clock_domain_snapshot,
+        # bounded and printable because the dashboard renders it.
+        state = self.state()
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder) / "perception"
+            directory.mkdir()
+            watch.save(directory / "note3.json", state)
+            self.write_clock(directory, {
+                "node": "note3", "status": "unavailable", "samples": 0,
+                "source": "tools/clock_offset.py",
+                "reason": "no adb path to the redmi10 from this host"})
+            named = watch.read_clock_domain(directory, "note3", 1000.0)
+            self.write_clock(directory, {"node": "note3", "status": "unavailable",
+                                         "reason": "no adb path\nclock-domain alarm: forged"})
+            forged = watch.read_clock_domain(directory, "note3", 1000.0)
+            self.write_clock(directory, {"node": "note3", "status": "unavailable",
+                                         "reason": "x" * 201})
+            oversized = watch.read_clock_domain(directory, "note3", 1000.0)
+            snapshot = watch.clock_domain_snapshot(named)
+        self.assertEqual(named["status"], "absent")
+        self.assertEqual(named["reason"],
+                         "clock-domain-unavailable: no adb path to the redmi10 from this host")
+        self.assertIsNone(named["offset_nominal_s"])
+        self.assertIsNone(named["offset_min_s"])
+        self.assertEqual(forged["reason"], "clock-domain-unavailable")
+        self.assertEqual(oversized["reason"], "clock-domain-unavailable")
+        self.assertEqual(snapshot["status"], "absent")
+        self.assertEqual(snapshot["reason"], named["reason"])
 
     def test_an_identity_that_could_forge_a_pane_line_is_dropped(self):
         # The document can be written by hand as well as by the producer, and the pane
