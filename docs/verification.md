@@ -1440,3 +1440,42 @@ Install dependencies from official vendors, accept the SDK agreement, and keep g
   section. No service, timer, device, transport, cursor, queue, spool, radio, APK or actuator
   action; the only live mutation is the frozen perception runtime file and its unit restart.
 - Evidence: `.mishe-tauftauf/artifacts/senses-wake123428-class-b-light-predicate.md`.
+
+
+## Present-anchored disk rate — the 9x that was two windows (discover wake 123763, 2026-10-21)
+
+- Trigger: health DM 123732 measured the volume losing 47.9 MiB/min over 270 s (63.2 GiB/day) and
+  asked the discover lane to reconcile that with the published `drain=7.2GiB/day`. Neither number
+  was wrong: the published figure is the **7-day** slope (the pinned release picks the `7d` label
+  out of `_DISK_TREND_SLOPE_WINDOWS_DAYS = (2, 5, 7, 14)`), and `min24` is a level, not the rate's
+  window. A 10-minute rate and a 7-day mean are not comparable. The real gap is structural: the
+  core's shortest slope window is 2 days, so a 31-minute burst cannot be named by the scan at all,
+  and `tools/disk_free.py` names the level only by its own design.
+- Fix: `tools/disk_rate.py`, which reads a caller-owned sample log (`<ISO8601> <available bytes>`
+  per line) on stdin — the same split as `disk_free.py`, so the caller owns the invocation and
+  this adds no collector, no history file and no timer — and reports one drain rate per named
+  window *anchored at the newest sample*, so every figure includes the present. `not-draining`
+  never becomes a large countdown; disagreeing windows print a range marked `window-only`; a log
+  shorter than every window is UNKNOWN (exit 2) rather than "no window is draining".
+- Verification: `tools/test_disk_rate.py` 25 cases — anchor selection at the newest sample, a
+  window longer than the log reported rather than anchored at the oldest sample, a sub-minimum
+  span withheld, negative (filling) rates, the ETA arithmetic, a range marked `window-only`, and
+  the unmeasurable log exiting 2. Live run on this host's real `sense.disk.free` corpus (1437 rows,
+  2026-10-07T07:53:16Z→2026-10-21T03:19:52Z): `RED floor in 3.15-18.85h (windows disagree:
+  window-only projection) (horizon 24h)`. `python3 -m unittest discover -s tools` → 517 OK (492
+  before); `tools/check_ci_coverage.py` and `tools/check_docs.py` GREEN. Failing-before: the same
+  corpus through the pre-change tree had no caller that printed a rate at all.
+- Reading: the burst was real and is over — 12.6→38.5 MiB/min from 02:24Z to 03:06Z, then
+  +0.39 MiB/min to 03:19Z and a net *gain* over the fresh 60 s sample at 03:28Z. The stale number
+  in the record was a countdown from the previous release (`e4d303fd`), which published
+  `days_to_floor=0.23` with no window field; its ETA 2026-10-20T04:48Z was falsified — the volume
+  was 7.08 GiB *above* the floor at 07:01Z. The pinned release's `projection_robust` gate exists to
+  stop that publication. The *rate* stays core-owned for the long windows; this tool is a
+  calculator on caller-supplied bytes, and whether §10 wires it is health's call.
+- Scope: host reads of this site's scan corpus, the pinned `discovery.py` and one 60 s `df` series;
+  no device, transport, actuator, radio, cursor, queue, spool or service action; no `adb
+  reverse --list`; no attribution claim about what wrote the bytes and no deletion.
+- Revert: remove `tools/disk_rate.py`, `tools/test_disk_rate.py` and this section. The tool is not
+  service- or timer-driven and no other file depends on it.
+- Evidence: `.mishe-tauftauf/artifacts/discover-wake123763-disk-window-reconciliation.md` and
+  `.mishe-tauftauf/artifacts/discover-wake123763-disk-trend-reconcile.py`.
