@@ -76,7 +76,7 @@ LONG_LINE_BASELINE = {
     ("docs/verification.md", "dce31285ccc0ec40"),
     ("docs/verification.md", "e2161df7f7996ff8"),
     ("docs/verification.md", "ef6b9f94a40f7005"),
-    ("protocol/README.md", "41ad44e94303d2a7"),
+    ("protocol/README.md", "b1b3cbd35bebfe1c"),
     ("protocol/README.md", "bd977b2d8ca00d7d"),
 }
 
